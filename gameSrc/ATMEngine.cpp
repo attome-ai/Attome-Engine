@@ -17,6 +17,10 @@ EntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,
   next_sibling_ids = new uint32_t[capacity];
   x_positions = new float[capacity];
   y_positions = new float[capacity];
+
+  // Allocate cell tracking arrays
+  cell_x = new uint16_t[capacity];
+  cell_y = new uint16_t[capacity];
 }
 
 EntityContainer::~EntityContainer() {
@@ -28,6 +32,8 @@ EntityContainer::~EntityContainer() {
   delete[] parent_ids;
   delete[] first_child_ids;
   delete[] next_sibling_ids;
+  delete[] cell_x;
+  delete[] cell_y;
 }
 
 uint32_t EntityContainer::createEntity() {
@@ -38,13 +44,15 @@ uint32_t EntityContainer::createEntity() {
   }
 
   size_t index = count++;
-  x_positions[index] = 0.0f; // Changed from 0 to 0.0f
-  y_positions[index] = 0.0f; // Changed from 0 to 0.0f
+  x_positions[index] = 0.0f;
+  y_positions[index] = 0.0f;
   flags[index] = static_cast<uint8_t>(EntityFlag::NONE);
   entity_ids[index] = index;
   parent_ids[index] = INVALID_ID;
   first_child_ids[index] = INVALID_ID;
   next_sibling_ids[index] = INVALID_ID;
+  cell_x[index] = UINT16_MAX; // Invalid cell marker
+  cell_y[index] = UINT16_MAX;
 
   return index;
 }
@@ -64,6 +72,8 @@ void EntityContainer::removeEntity(size_t index) {
     parent_ids[index] = parent_ids[last];
     first_child_ids[index] = first_child_ids[last];
     next_sibling_ids[index] = next_sibling_ids[last];
+    cell_x[index] = cell_x[last];
+    cell_y[index] = cell_y[last];
   }
 
   count--;
@@ -446,7 +456,8 @@ void engine_update(Engine *engine) {
   // Smooth FPS calculation
   engine->fps = 0.95f * engine->fps + 0.05f * (1.0f / delta_time);
 
-  engine->grid.rebuild_grid(engine);
+  // Grid is now updated incrementally during entity updates - no full rebuild
+  // needed!
 
   // Update all entity layers
   engine->entityManager.update(delta_time);

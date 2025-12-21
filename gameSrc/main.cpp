@@ -325,8 +325,7 @@ public:
       std::iota(indices.begin(), indices.end(), 0);
     }
 
-    // Use C++20 parallel for_each to saturate 32 threads with zero
-    // thread-creation overhead
+    // Use C++20 parallel for_each to saturate 32 threads
     std::for_each(std::execution::par, indices.begin(), indices.begin() + count,
                   [&](uint32_t i) {
                     float &px = x_positions[i];
@@ -335,6 +334,11 @@ public:
                     float &dy = dir_y[i];
                     const float speed = speeds[i] * delta_time;
 
+                    // Store old cell
+                    uint16_t oldCellX = cell_x[i];
+                    uint16_t oldCellY = cell_y[i];
+
+                    // Move entity
                     px += dx * speed;
                     py += dy * speed;
 
@@ -353,6 +357,21 @@ public:
                     } else if (py > WORLD_HEIGHT - OBSTACLE_SIZE) {
                       py = WORLD_HEIGHT - OBSTACLE_SIZE;
                       dy = -dy;
+                    }
+
+                    // Compute new cell
+                    uint16_t newCellX =
+                        static_cast<uint16_t>(px * INV_GRID_CELL_SIZE);
+                    uint16_t newCellY =
+                        static_cast<uint16_t>(py * INV_GRID_CELL_SIZE);
+
+                    // Update grid only if cell changed
+                    if (oldCellX != newCellX || oldCellY != newCellY) {
+                      EntityRef ref = {(uint8_t)type_id, i};
+                      engine->grid.moveEntity(ref, oldCellX, oldCellY, newCellX,
+                                              newCellY);
+                      cell_x[i] = newCellX;
+                      cell_y[i] = newCellY;
                     }
                   });
   }
@@ -483,6 +502,22 @@ int main(int argc, char *argv[]) {
   game_state.current_fps = 0.0f;
 
   setup_game(engine, &game_state);
+
+  // --- Initial Grid Population ---
+  // Populate grid and set initial cell tracking for all entities
+  engine->grid.rebuild_grid(engine);
+
+  // Initialize cell tracking for all entities
+  for (uint32_t cIdx = 0; cIdx < engine->entityManager.containers.size();
+       ++cIdx) {
+    auto &container = engine->entityManager.containers[cIdx];
+    for (int i = 0; i < container->count; ++i) {
+      container->cell_x[i] =
+          static_cast<uint16_t>(container->x_positions[i] * INV_GRID_CELL_SIZE);
+      container->cell_y[i] =
+          static_cast<uint16_t>(container->y_positions[i] * INV_GRID_CELL_SIZE);
+    }
+  }
 
   if (game_state.player_entity_index != INVALID_ID) {
     // Set camera position to player
