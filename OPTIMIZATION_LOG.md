@@ -17,6 +17,7 @@
 | **Batch Grid Updates** | **671 → 530 FPS** (-21%) | Collecting cell changes in thread-local buffers and merging them caused mutex contention that outweighed the cost of simple atomic operations. |
 | **SIMD (AVX2)** | **671 → 188 FPS** (-72%) | **Reason 1**: Ran on a single thread, losing 32x parallelism.<br>**Reason 2**: Separating movement (SIMD) from grid logic (Scalar) doubled the iteration overhead and cache pressure. |
 | **Parallel Render Batching** | **671 → 605 FPS** (-10%) | The cost of merging thread-local instruction buffers (`memcpy` + offset math) was higher than the extremely fast serial pointer increments. |
+| **Memory Prefetching** | **671 → 586 FPS** (-13%) | **Reason**: `_mm_prefetch` instructions added instruction overhead without hiding enough latency. The CPU's hardware prefetcher was likely already doing a good job on the sequential streams, and the "gather" prefetch was too late or interfered with the pipeline. |
 
 ---
 

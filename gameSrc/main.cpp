@@ -1,12 +1,12 @@
 #include "../game/ATMEngine.h"
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <execution>
 #include <future>
-#include <immintrin.h> // AVX2 SIMD intrinsics
 #include <iostream>
 #include <memory>
 #include <numeric>
