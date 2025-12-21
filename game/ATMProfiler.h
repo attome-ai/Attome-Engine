@@ -451,7 +451,7 @@ void print_visible_entities_grid(Engine* engine) {
 #define print_active_entities_grid(y)
 #endif
 
-#if 1
+#if 0
 // Easy macro for automatic function profiling
 #define PROFILE_FUNCTION() ScopedProfiler profiler(__FUNCTION__)
 #define PROFILE_SCOPE(name) ScopedProfiler profiler(name)

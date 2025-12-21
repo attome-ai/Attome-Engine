@@ -2,6 +2,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
@@ -261,11 +262,10 @@ public:
     speeds[index] =
         50.0f + static_cast<float>(rand() % 101); // 50-150 pixels/sec
 
-    float dx = 15;
-    float dy = 0.3;
-    float len = sqrt(dx * dx + dy * dy);
-    dir_x[index] = (len > 0.001f) ? dx / len : 1.0f;
-    dir_y[index] = (len > 0.001f) ? dy / len : 0.0f;
+    // Random initial direction vector (uniform random angle)
+    float angle = static_cast<float>(rand()) / RAND_MAX * 2.0f * 3.14159265f;
+    dir_x[index] = cosf(angle);
+    dir_y[index] = sinf(angle);
 
     flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
     z_indices[index] = 5;
@@ -326,7 +326,15 @@ public:
       std::iota(indices.begin(), indices.end(), 0);
     }
 
-    // Use C++20 parallel for_each with O(1) grid updates
+    // Buffer for deferred grid updates (thread-safe collection)
+    static std::vector<uint32_t> pending_moves;
+    static std::atomic<uint32_t> pending_count{0};
+    if (pending_moves.size() < (size_t)count) {
+      pending_moves.resize(count);
+    }
+    pending_count.store(0, std::memory_order_relaxed);
+
+    // Parallel phase: update positions, collect entities that changed cells
     std::for_each(std::execution::par, indices.begin(), indices.begin() + count,
                   [&](uint32_t i) {
                     float &px = x_positions[i];
@@ -366,15 +374,23 @@ public:
                     uint16_t newCellY =
                         static_cast<uint16_t>(py * INV_GRID_CELL_SIZE);
 
-                    // O(1) grid update - only if cell changed
+                    // If cell changed, add to pending buffer (atomic)
                     if (oldCellX != newCellX || oldCellY != newCellY) {
-                      int32_t nodeIdx = grid_node_indices[i];
-                      engine->grid.move(nodeIdx, px, py);
-
+                      uint32_t slot =
+                          pending_count.fetch_add(1, std::memory_order_relaxed);
+                      pending_moves[slot] = i;
                       cell_x[i] = newCellX;
                       cell_y[i] = newCellY;
                     }
                   });
+
+    // Serial phase: apply grid moves (safe - no concurrent access)
+    uint32_t num_moves = pending_count.load(std::memory_order_relaxed);
+    for (uint32_t j = 0; j < num_moves; ++j) {
+      uint32_t i = pending_moves[j];
+      int32_t nodeIdx = grid_node_indices[i];
+      engine->grid.move(nodeIdx, x_positions[i], y_positions[i]);
+    }
   }
 
 protected:
@@ -738,9 +754,14 @@ void setup_game(Engine *engine, GameState *game_state) {
 
         bool is_damaging = (rand() % 4 == 0);
         float speed = 50.0f + static_cast<float>(rand() % 101);
+        // Random direction for each obstacle
+        float angle =
+            static_cast<float>(rand()) / RAND_MAX * 2.0f * 3.14159265f;
+        float dir_x = cosf(angle);
+        float dir_y = sinf(angle);
         oCont->createEntity(x_pos, y_pos, OBSTACLE_SIZE, OBSTACLE_SIZE,
-                            game_state->obstacle_texture_id, is_damaging, 15,
-                            15.0f, 0.0f);
+                            game_state->obstacle_texture_id, is_damaging, speed,
+                            dir_x, dir_y);
       }
     }
   }
@@ -822,6 +843,18 @@ void handle_input(const Uint8 *keyboard_state, Engine *engine,
                  next_y));
     pCont->x_positions[player_idx] = next_x;
     pCont->y_positions[player_idx] = next_y;
+
+    // Update grid position for correct spatial queries
+    uint16_t oldCellX = pCont->cell_x[player_idx];
+    uint16_t oldCellY = pCont->cell_y[player_idx];
+    uint16_t newCellX = static_cast<uint16_t>(next_x * INV_GRID_CELL_SIZE);
+    uint16_t newCellY = static_cast<uint16_t>(next_y * INV_GRID_CELL_SIZE);
+    if (oldCellX != newCellX || oldCellY != newCellY) {
+      int32_t nodeIdx = pCont->grid_node_indices[player_idx];
+      engine->grid.move(nodeIdx, next_x, next_y);
+      pCont->cell_x[player_idx] = newCellX;
+      pCont->cell_y[player_idx] = newCellY;
+    }
 
     // Update camera
     engine->camera.x = next_x + pCont->widths[player_idx] / 2.0f;
