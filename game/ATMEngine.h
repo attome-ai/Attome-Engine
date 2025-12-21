@@ -15,7 +15,8 @@
 
 #include "VulkanRenderer.h"
 
-static constexpr bool useVulkan = 0; // Use SDL3 renderer instead of Vulkan
+static constexpr bool useVulkan = false; // Set to false to use the optimized
+                                         // SDL3 Batching Renderer (Engine 20)
 // Spatial grid implementation
 static constexpr uint32_t WORLD_WIDTH = 50000;
 static constexpr uint32_t WORLD_HEIGHT = 50000;
@@ -360,6 +361,7 @@ private:
   // Use a 64-bit key to combine texture_id and z_index for faster lookup
   using BatchKey = uint64_t;
   static inline BatchKey createKey(int textureId, int zIndex) {
+    PROFILE_FUNCTION();
     return (static_cast<uint64_t>(textureId) << 32) |
            static_cast<uint64_t>(zIndex);
   };
