@@ -63,5 +63,20 @@ target_link_libraries(Template PRIVATE
     cfgmgr32.lib
     imm32.lib
 )
+# Copy assets to build directory
+file(COPY "${CMAKE_SOURCE_DIR}/shaders" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+file(COPY "${CMAKE_SOURCE_DIR}/textures" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+file(COPY "${CMAKE_SOURCE_DIR}/fonts" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 
-
+# Optional: Add post-build command to ensure assets are always up to date
+add_custom_command(TARGET Template POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/shaders"
+        "$<TARGET_FILE_DIR:Template>/shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/textures"
+        "$<TARGET_FILE_DIR:Template>/textures"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/fonts"
+        "$<TARGET_FILE_DIR:Template>/fonts"
+)
