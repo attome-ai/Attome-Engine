@@ -21,6 +21,7 @@ EntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,
   // Allocate cell tracking arrays
   cell_x = new uint16_t[capacity];
   cell_y = new uint16_t[capacity];
+  cell_slot = new uint16_t[capacity];
 }
 
 EntityContainer::~EntityContainer() {
@@ -34,6 +35,7 @@ EntityContainer::~EntityContainer() {
   delete[] next_sibling_ids;
   delete[] cell_x;
   delete[] cell_y;
+  delete[] cell_slot;
 }
 
 uint32_t EntityContainer::createEntity() {
@@ -53,6 +55,7 @@ uint32_t EntityContainer::createEntity() {
   next_sibling_ids[index] = INVALID_ID;
   cell_x[index] = UINT16_MAX; // Invalid cell marker
   cell_y[index] = UINT16_MAX;
+  cell_slot[index] = UINT16_MAX;
 
   return index;
 }
@@ -74,6 +77,7 @@ void EntityContainer::removeEntity(size_t index) {
     next_sibling_ids[index] = next_sibling_ids[last];
     cell_x[index] = cell_x[last];
     cell_y[index] = cell_y[last];
+    cell_slot[index] = cell_slot[last];
   }
 
   count--;
@@ -891,8 +895,7 @@ void SpatialGrid::rebuild_grid(Engine *engine) {
   PROFILE_FUNCTION();
   clearAll();
 
-  // Saturate all 32 threads with a flat parallel loop over all entity
-  // containers
+  // Populate grid and store slot indices for O(1) removal
   for (uint32_t cIdx = 0; cIdx < engine->entityManager.containers.size();
        ++cIdx) {
     auto &container = engine->entityManager.containers[cIdx];
@@ -909,7 +912,8 @@ void SpatialGrid::rebuild_grid(Engine *engine) {
                     uint16_t cy = static_cast<uint16_t>(
                         container->y_positions[i] * INV_GRID_CELL_SIZE);
                     if (cx < GRID_CELL_WIDTH && cy < GRID_CELL_HEIGHT) {
-                      add2({(uint8_t)cIdx, i}, cx, cy);
+                      uint32_t slot = add2({(uint8_t)cIdx, i}, cx, cy);
+                      container->cell_slot[i] = (uint16_t)slot;
                     }
                   });
   }

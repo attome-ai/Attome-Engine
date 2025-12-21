@@ -6,6 +6,7 @@
 #include <ctime>
 #include <execution>
 #include <future>
+#include <immintrin.h> // AVX2 SIMD intrinsics
 #include <iostream>
 #include <memory>
 #include <numeric>
@@ -325,7 +326,7 @@ public:
       std::iota(indices.begin(), indices.end(), 0);
     }
 
-    // Use C++20 parallel for_each to saturate 32 threads
+    // Use C++20 parallel for_each with O(1) grid updates
     std::for_each(std::execution::par, indices.begin(), indices.begin() + count,
                   [&](uint32_t i) {
                     float &px = x_positions[i];
@@ -365,13 +366,16 @@ public:
                     uint16_t newCellY =
                         static_cast<uint16_t>(py * INV_GRID_CELL_SIZE);
 
-                    // Update grid only if cell changed
+                    // O(1) grid update - only if cell changed
                     if (oldCellX != newCellX || oldCellY != newCellY) {
                       EntityRef ref = {(uint8_t)type_id, i};
-                      engine->grid.moveEntity(ref, oldCellX, oldCellY, newCellX,
-                                              newCellY);
+                      uint16_t oldSlot = cell_slot[i];
+                      uint32_t newSlot = engine->grid.moveEntityBySlot(
+                          ref, oldCellX, oldCellY, oldSlot, newCellX, newCellY,
+                          engine->entityManager.containers);
                       cell_x[i] = newCellX;
                       cell_y[i] = newCellY;
+                      cell_slot[i] = (uint16_t)newSlot;
                     }
                   });
   }

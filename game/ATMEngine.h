@@ -124,6 +124,8 @@ public:
   // Cell tracking for incremental grid updates
   uint16_t *cell_x;
   uint16_t *cell_y;
+  uint16_t
+      *cell_slot; // Entity's index within its current cell for O(1) removal
 
   uint8_t containerFlag;
   int type_id;
@@ -225,19 +227,40 @@ public:
     add2(entity, cellX, cellY);
   }
 
-  void add2(const EntityRef &entity, const uint16_t x, const uint16_t y) {
+  uint32_t add2(const EntityRef &entity, const uint16_t x, const uint16_t y) {
     Cell &cell = cells[y][x];
 
-    // Atomically increment the counter and get the previous value
-    uint32_t index = cell.count.fetch_add(1, std::memory_order_relaxed);
+    // Atomically increment the counter and get the slot index
+    uint32_t slot = cell.count.fetch_add(1, std::memory_order_relaxed);
 
     // Ensure we don't exceed cell capacity
-    if (index < MAX_ENTITIES_PER_CELL) {
-      cell.entities[index] = entity;
+    if (slot < MAX_ENTITIES_PER_CELL) {
+      cell.entities[slot] = entity;
+    }
+    return slot; // Return slot for caller to store
+  }
+
+  // O(1) removal using slot index
+  void removeFromCellBySlot(
+      uint16_t cellX, uint16_t cellY, uint16_t slot,
+      std::vector<std::unique_ptr<EntityContainer>> &containers) {
+    if (cellX >= GRID_CELL_WIDTH || cellY >= GRID_CELL_HEIGHT)
+      return;
+
+    Cell &cell = cells[cellY][cellX];
+    int lastIdx = cell.count.fetch_sub(1, std::memory_order_relaxed) - 1;
+
+    if (slot < (uint16_t)lastIdx) {
+      // Swap with last entity
+      cell.entities[slot] = cell.entities[lastIdx];
+      // Update the swapped entity's slot tracking
+      auto &ref = cell.entities[slot];
+      containers[ref.type]->cell_slot[ref.index] = slot;
     }
   }
 
-  // Remove an entity from a specific cell (for incremental updates)
+  // Remove an entity from a specific cell (for incremental updates) - Legacy
+  // O(n) version
   void removeFromCell(const EntityRef &entity, uint16_t cellX, uint16_t cellY) {
     if (cellX >= GRID_CELL_WIDTH || cellY >= GRID_CELL_HEIGHT)
       return;
@@ -260,10 +283,20 @@ public:
   }
 
   // Move an entity from one cell to another (for incremental updates)
-  void moveEntity(const EntityRef &entity, uint16_t oldCellX, uint16_t oldCellY,
-                  uint16_t newCellX, uint16_t newCellY) {
+  uint32_t moveEntity(const EntityRef &entity, uint16_t oldCellX,
+                      uint16_t oldCellY, uint16_t newCellX, uint16_t newCellY) {
     removeFromCell(entity, oldCellX, oldCellY);
-    add2(entity, newCellX, newCellY);
+    return add2(entity, newCellX, newCellY);
+  }
+
+  // O(1) move using slot
+  uint32_t
+  moveEntityBySlot(const EntityRef &entity, uint16_t oldCellX,
+                   uint16_t oldCellY, uint16_t oldSlot, uint16_t newCellX,
+                   uint16_t newCellY,
+                   std::vector<std::unique_ptr<EntityContainer>> &containers) {
+    removeFromCellBySlot(oldCellX, oldCellY, oldSlot, containers);
+    return add2(entity, newCellX, newCellY);
   }
 
   inline void getCellCoords(const float &x, const float &y, uint16_t &outCellX,
