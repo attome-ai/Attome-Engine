@@ -138,10 +138,10 @@ struct VulkanVertex {
         attributeDescriptions[1].format = VK_FORMAT_R32G32_SFLOAT;
         attributeDescriptions[1].offset = offsetof(VulkanVertex, texU);
 
-        // Color (packed RGBA8 as uint32)
+        // Color (packed RGBA8)
         attributeDescriptions[2].binding = 0;
         attributeDescriptions[2].location = 2;
-        attributeDescriptions[2].format = VK_FORMAT_R32_UINT;  // Changed from VK_FORMAT_R8G8B8A8_UNORM
+        attributeDescriptions[2].format = VK_FORMAT_R8G8B8A8_UNORM;
         attributeDescriptions[2].offset = offsetof(VulkanVertex, color);
 
         return attributeDescriptions;
@@ -189,26 +189,6 @@ struct VulkanBatch {
         VulkanVertex* globalVertices, uint32_t* globalIndices);
     void clear();
 };
-
-
-class VulkanPipelineBase
-{
-public:
-
-    virtual void init();
-    //load static
-
-    virtual void loadStatic();
-    virtual void unloadStaticAll();
-
-    //load dynamic
-    virtual void addDynamic();
-
-    virtual void load();
-    virtual void registerEntity();
-    void unloadAll();
-};
-
 // VulkanRenderer class
 class VulkanRenderer {
 public:

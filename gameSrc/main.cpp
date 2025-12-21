@@ -1,13 +1,14 @@
-#include "ATMEngine.h"
+#include "../game/ATMEngine.h"
 #include <SDL3/SDL.h>
-#include <VulkanLoader.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <execution>
 #include <future>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 // --- Constants ---
@@ -311,66 +312,49 @@ public:
     RenderableEntityContainer::removeEntity(index);
   }
 
-  void update(float delta_time) {
+  void update(float delta_time) override {
     PROFILE_FUNCTION();
-    delta_time = std::min(delta_time, 0.1f); // Cap delta time
+    if (count == 0)
+      return;
+    delta_time = std::min(delta_time, 0.1f);
 
-    // Determine number of hardware threads available
-    const unsigned int num_threads = std::thread::hardware_concurrency();
-    const int entities_per_thread = (count + num_threads - 1) / num_threads;
-
-    // Define worker function that processes a range of entities
-    auto process_entities = [&](int start, int end) {
-      // Precompute constants to avoid recalculation in loop
-      const float delta_time_half = delta_time * 0.5f;
-      const float max_x = WORLD_WIDTH - 32; // Assuming OBSTACLE_SIZE is 32
-      const float max_y = WORLD_HEIGHT - 32;
-
-      for (int i = start; i < end && i < count; ++i) {
-        flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-
-        float &pos_x = x_positions[i];
-        float &pos_y = y_positions[i];
-        float &direction_x = dir_x[i];
-        float &direction_y = dir_y[i];
-        const float speed = speeds[i];
-
-        // Vectorizable operations - no branching in core calculation
-        pos_x += direction_x * speed * delta_time_half;
-        pos_y += direction_y * speed * delta_time_half;
-
-        // Vectorizable boundary checks with branchless adjustments
-        const bool hit_x_boundary = (pos_x < 0) | (pos_x > max_x);
-        const bool hit_y_boundary = (pos_y < 0) | (pos_y > max_y);
-
-        // Apply boundary reflections when needed
-        if (hit_x_boundary) {
-          direction_x = -direction_x;
-          pos_x = std::clamp(pos_x, 0.0f, max_x);
-        }
-
-        if (hit_y_boundary) {
-          direction_y = -direction_y;
-          pos_y = std::clamp(pos_y, 0.0f, max_y);
-        }
-      }
-    };
-
-    // Launch worker threads
-    std::vector<std::future<void>> futures;
-    futures.reserve(num_threads);
-
-    for (unsigned int t = 0; t < num_threads; ++t) {
-      int start = t * entities_per_thread;
-      int end = start + entities_per_thread;
-      futures.push_back(
-          std::async(std::launch::async, process_entities, start, end));
+    // Define a vector of indices for parallel processing
+    static std::vector<uint32_t> indices;
+    if (indices.size() < (size_t)count) {
+      indices.resize(count);
+      std::iota(indices.begin(), indices.end(), 0);
     }
 
-    // Wait for all threads to complete
-    for (auto &future : futures) {
-      future.wait();
-    }
+    // Use C++20 parallel for_each to saturate 32 threads with zero
+    // thread-creation overhead
+    std::for_each(std::execution::par, indices.begin(), indices.begin() + count,
+                  [&](uint32_t i) {
+                    float &px = x_positions[i];
+                    float &py = y_positions[i];
+                    float &dx = dir_x[i];
+                    float &dy = dir_y[i];
+                    const float speed = speeds[i] * delta_time;
+
+                    px += dx * speed;
+                    py += dy * speed;
+
+                    // Fast boundary checks
+                    if (px < 0) {
+                      px = 0;
+                      dx = -dx;
+                    } else if (px > WORLD_WIDTH - OBSTACLE_SIZE) {
+                      px = WORLD_WIDTH - OBSTACLE_SIZE;
+                      dx = -dx;
+                    }
+
+                    if (py < 0) {
+                      py = 0;
+                      dy = -dy;
+                    } else if (py > WORLD_HEIGHT - OBSTACLE_SIZE) {
+                      py = WORLD_HEIGHT - OBSTACLE_SIZE;
+                      dy = -dy;
+                    }
+                  });
   }
 
 protected:
@@ -447,10 +431,27 @@ int main(int argc, char *argv[]) {
     std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
     return 1;
   }
-
   srand(static_cast<unsigned int>(time(nullptr)));
 
-  // Create engine with Vulkan renderer enabled
+  SDL_Window *window =
+      SDL_CreateWindow("2D Game Engine - SDL3", WINDOW_WIDTH, WINDOW_HEIGHT, 0);
+  if (!window) {
+    std::cerr << "Failed to create window: " << SDL_GetError() << std::endl;
+    SDL_Quit();
+    return 1;
+  }
+
+  SDL_Renderer *renderer = SDL_CreateRenderer(window, NULL);
+  if (!renderer) {
+    std::cerr << "Failed to create renderer: " << SDL_GetError() << std::endl;
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+    return 1;
+  }
+
+  SDL_DestroyRenderer(renderer);
+  SDL_DestroyWindow(window);
+
   Engine *engine = engine_create(WINDOW_WIDTH, WINDOW_HEIGHT, WORLD_WIDTH,
                                  WORLD_HEIGHT, GRID_CELL_SIZE);
   if (!engine) {
@@ -557,7 +558,9 @@ int main(int argc, char *argv[]) {
 
     engine_update(engine);
 
-    // Render scene using Vulkan
+    // Rendering
+    SDL_SetRenderDrawColor(engine->renderer, 0, 0, 0, 255);
+    SDL_RenderClear(engine->renderer);
     engine_render_scene(engine);
     engine_present(engine);
 
