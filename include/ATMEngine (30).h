@@ -1,0 +1,359 @@
+#ifndef ENGINE_H
+#define ENGINE_H
+
+#include <SDL3/SDL.h>
+#include <stdbool.h>
+#include <vector>
+#include <memory>
+#include <algorithm>
+#include <cstring>
+#include <cassert>
+// Forward declarations
+typedef struct Engine Engine;
+typedef struct EntityManager EntityManager;
+typedef struct SpatialGrid SpatialGrid;
+typedef struct RenderBatch RenderBatch;
+typedef struct TextureAtlas TextureAtlas;
+typedef struct Camera Camera;
+typedef struct BufferPool BufferPool;
+typedef struct EntityChunk EntityChunk;
+
+// Alignment for memory
+#define CACHE_LINE_SIZE 64
+#define ENTITY_CHUNK_SIZE (256) // 16K entities per chunk for better memory management
+
+// Entity type update function typedef
+typedef void (*EntityTypeUpdateFunc)(EntityChunk* chunk, int count, float delta_time);
+
+// Configuration for each entity type
+typedef struct EntityTypeConfig {
+    int type_id;
+    EntityTypeUpdateFunc update_func;
+    size_t extra_data_size;  // Size of any type-specific data per entity
+
+    // Performance tracking
+    int instance_count;
+    float last_update_time;
+
+    // Linked list of chunks containing this type (for faster updates)
+    int first_chunk_idx;
+} EntityTypeConfig;
+
+// Modify EntityChunk structure to include type_id and z_index
+typedef struct EntityChunk {
+    int type_id;            // Type of entities in this chunk
+    int next_chunk_of_type; // Next chunk with the same type (-1 if none)
+    // Existing fields
+    float* x;               // x positions - aligned
+    float* y;               // y positions - aligned
+    float* right;           // x + width (precomputed) - aligned
+    float* bottom;          // y + height (precomputed) - aligned
+    int* width;             // widths - aligned
+    int* height;            // heights - aligned
+    int* texture_id;        // texture IDs - aligned
+    int* layer;             // layer for updates - aligned
+    int* z_index;           // z-index for render ordering - aligned
+    bool* active;           // is entity active for updates - aligned
+    bool* visible;          // is entity visible for rendering - aligned 
+    int** grid_cell;        // grid cell references for each entity - aligned
+
+    // Hierarchy fields
+    int* parent_id;         // parent entity id (-1 for root entities) - aligned
+    int* first_child_id;    // id of first child (-1 if no children) - aligned
+    int* next_sibling_id;   // id of next sibling (-1 if last child) - aligned
+    float* local_x;         // local x position - aligned
+    float* local_y;         // local y position - aligned
+
+    // Type-specific data (optional, dynamically sized)
+    void* type_data;        // Array of type-specific component data
+
+    // Existing fields
+    int count;              // number of entities in this chunk
+    int capacity;           // capacity of this chunk
+
+    EntityChunk(int type_id, int capacity, size_t extra_data_size = 0);
+    ~EntityChunk();
+} EntityChunk;
+
+
+// Entity manager using chunked Structure of Arrays (SoA) for better memory management
+typedef struct EntityManager {
+    EntityChunk** chunks;      // Array of entity chunks
+    int chunk_count;           // Number of chunks
+    int chunks_capacity;       // Total capacity of chunks array
+    int total_count;           // Total entity count
+    int* free_indices;         // Pool of free entity indices for reuse
+    int free_count;            // Number of free indices
+    int free_capacity;         // Capacity of free indices array
+
+    EntityManager();
+    ~EntityManager();
+    // Helpers to get chunk and local index from entity index
+    inline void getChunkIndices(int entity_idx, int* chunk_idx, int* local_idx) const {
+
+        *chunk_idx = entity_idx / ENTITY_CHUNK_SIZE;
+        *local_idx = entity_idx % ENTITY_CHUNK_SIZE;
+    }
+} EntityManager;
+
+// Optimized spatial grid for efficient entity queries with sparse storage
+typedef struct SpatialGrid {
+    int*** cells;              // 3D array: [cell_y][cell_x][entity_indices]
+    int** cell_counts;         // Counts per cell
+    int** cell_capacities;     // Capacities per cell
+    float cell_size;           // Size of each cell
+    int width, height;         // Grid dimensions
+    int total_cells;           // Total number of cells
+} SpatialGrid;
+
+// Rendering batch (groups by texture and z-index)
+typedef struct RenderBatch {
+    int texture_id;
+    int z_index;               // Changed from layer to z_index for rendering
+    SDL_Vertex* vertices;      // Vertex data for batch
+    int* indices;              // Index data for batch
+    int vertex_count;
+    int index_count;
+    int vertex_capacity;
+    int index_capacity;
+} RenderBatch;
+
+// Texture atlas
+typedef struct TextureAtlas {
+    SDL_Texture* texture;
+    SDL_FRect* regions;        // UV regions for each subtexture
+    int region_count;
+    int region_capacity;
+} TextureAtlas;
+
+// Camera for culling
+typedef struct Camera {
+    float x, y;                // Position
+    float width, height;       // Viewport dimensions
+    float zoom;                // Zoom level
+} Camera;
+
+// Improved buffer pool for temporary allocations
+class FixedBufferPool {
+public:
+    class BufferHandle {
+    private:
+        uint8_t* buffer_;
+        FixedBufferPool* pool_;
+
+    public:
+        BufferHandle() noexcept : buffer_(nullptr), pool_(nullptr) {}
+
+        inline BufferHandle(uint8_t* buffer, FixedBufferPool* pool) noexcept
+            : buffer_(buffer), pool_(pool) {}
+
+        inline BufferHandle(BufferHandle&& other) noexcept
+            : buffer_(other.buffer_), pool_(other.pool_) {
+            other.buffer_ = nullptr;
+            other.pool_ = nullptr;
+        }
+
+        inline BufferHandle& operator=(BufferHandle&& other) noexcept {
+            if (this != &other) {
+                release();
+                buffer_ = other.buffer_;
+                pool_ = other.pool_;
+                other.buffer_ = nullptr;
+                other.pool_ = nullptr;
+            }
+            return *this;
+        }
+
+        BufferHandle(const BufferHandle&) = delete;
+        BufferHandle& operator=(const BufferHandle&) = delete;
+
+        inline ~BufferHandle() {
+            release();
+        }
+
+        inline void release() {
+            if (buffer_ && pool_) {
+                pool_->returnBuffer(buffer_);
+                buffer_ = nullptr;
+                pool_ = nullptr;
+            }
+        }
+
+        inline uint8_t* data() const noexcept {
+            return buffer_;
+        }
+
+        inline bool valid() const noexcept {
+            return buffer_ != nullptr;
+        }
+
+        inline operator bool() const noexcept {
+            return valid();
+        }
+    };
+
+private:
+    struct MemoryChunk {
+        std::unique_ptr<uint8_t[]> memory;
+        size_t buffer_count;
+
+        MemoryChunk(size_t total_size, size_t count)
+            : memory(new uint8_t[total_size]), buffer_count(count) {}
+    };
+
+    const size_t buffer_size_;
+    std::vector<MemoryChunk> memory_chunks_;
+    std::vector<uint8_t*> free_buffers_;
+
+    static constexpr size_t DEFAULT_CAPACITY = 16;
+    static constexpr size_t CHUNK_SIZE = 64; // Allocate 64 buffers per chunk
+
+public:
+    explicit FixedBufferPool(size_t buffer_size, size_t initial_count = 0)
+        : buffer_size_(buffer_size) {
+        // Reserve capacity to avoid reallocations
+        free_buffers_.reserve(initial_count > 0 ? initial_count : DEFAULT_CAPACITY);
+
+        // Calculate initial chunks needed
+        size_t initial_chunks = (initial_count + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        if (initial_chunks == 0 && initial_count > 0) initial_chunks = 1;
+
+        // Pre-allocate chunks
+        for (size_t i = 0; i < initial_chunks; ++i) {
+            allocateChunk();
+        }
+    }
+
+    inline BufferHandle getBuffer() {
+        if (free_buffers_.empty()) {
+            allocateChunk();
+        }
+
+        uint8_t* buffer = free_buffers_.back();
+        free_buffers_.pop_back();
+        return BufferHandle(buffer, this);
+    }
+
+    inline size_t getTotalBuffers() const noexcept {
+        size_t total = 0;
+        for (const auto& chunk : memory_chunks_) {
+            total += chunk.buffer_count;
+        }
+        return total;
+    }
+
+    inline size_t getAvailableBuffers() const noexcept {
+        return free_buffers_.size();
+    }
+
+    inline size_t getBufferSize() const noexcept {
+        return buffer_size_;
+    }
+
+private:
+    void allocateChunk() {
+        // Calculate total memory needed for the chunk
+        size_t total_size = buffer_size_ * CHUNK_SIZE;
+
+        // Allocate a new chunk
+        memory_chunks_.emplace_back(total_size, CHUNK_SIZE);
+        uint8_t* base_ptr = memory_chunks_.back().memory.get();
+
+        // Add all buffers from the chunk to the free list
+        for (size_t i = 0; i < CHUNK_SIZE; ++i) {
+            uint8_t* buffer = base_ptr + (i * buffer_size_);
+            free_buffers_.push_back(buffer);
+        }
+    }
+
+    inline void returnBuffer(uint8_t* buffer) {
+        free_buffers_.push_back(buffer);
+    }
+
+    friend class BufferHandle;
+};
+
+// Main engine struct
+// Main engine struct with optimizations
+typedef struct Engine {
+    SDL_Window* window;
+    SDL_Renderer* renderer;
+    EntityManager entities;
+    SpatialGrid grid;
+    RenderBatch* batches;
+    int batch_count;
+    TextureAtlas atlas;
+    Camera camera;
+    SDL_FRect world_bounds;
+    float grid_cell_size;
+    bool** grid_loaded;
+    int grid_width, grid_height;
+    Uint64 last_frame_time;
+    float fps;
+
+    // Entity type system optimized for direct access
+    std::vector<int> type_id_to_index; // Maps type_id to index in entity_types array (direct lookup)
+    EntityTypeConfig* entity_types;
+    int entity_type_count;
+    int entity_type_capacity;
+
+    // New field to track next available type ID
+    int next_type_id;
+
+    // Performance tracking
+    int active_entity_count;
+    float update_time;
+    float render_time;
+
+    // Reusable buffer pools
+    FixedBufferPool entity_indices_pool;
+    FixedBufferPool screen_coords_pool;
+} Engine;
+
+// Engine initialization and management
+Engine* engine_create(int window_width, int window_height, int world_width, int world_height, int cell_size);
+void engine_destroy(Engine* engine);
+void engine_update(Engine* engine);
+void engine_render(Engine* engine);
+inline void engine_present(Engine* engine) {
+    // Present renderer
+    SDL_RenderPresent(engine->renderer);
+}
+void engine_set_camera_position(Engine* engine, float x, float y);
+void engine_set_camera_zoom(Engine* engine, float zoom);
+
+// Entity management - Updated to include z_index parameters with default values
+int engine_add_entity(Engine* engine, float x, float y, int width, int height,
+    int texture_id, int layer, int z_index = 0);
+void engine_set_entity_position(Engine* engine, int entity_idx, float x, float y);
+void engine_set_entity_active(Engine* engine, int entity_idx, bool active);
+void engine_set_entity_visible(Engine* engine, int entity_idx, bool visible);
+void engine_set_entity_z_index(Engine* engine, int entity_idx, int z_index);
+
+// Resource management
+int engine_add_texture(Engine* engine, SDL_Surface* surface, int x, int y);
+
+SDL_FRect engine_get_visible_rect(Engine* engine);
+int engine_get_visible_entities_count(Engine* engine);
+
+void engine_set_parent(Engine* engine, int entity_id, int parent_id);
+void engine_remove_parent(Engine* engine, int entity_id);
+int engine_get_parent(Engine* engine, int entity_id);
+int engine_get_first_child(Engine* engine, int entity_id);
+int engine_get_next_sibling(Engine* engine, int entity_id);
+void engine_set_entity_local_position(Engine* engine, int entity_id, float x, float y);
+int engine_add_child_entity(Engine* engine, int parent_id, float local_x, float local_y,
+    int width, int height, int texture_id, int layer, int z_index = 0);
+void spatial_grid_query(SpatialGrid* grid, SDL_FRect query_rect,
+    int* result_indices, int* result_count, int max_results,
+    EntityManager* entities);
+
+// Modified function to auto-generate type IDs
+int engine_register_entity_type(Engine* engine, EntityTypeUpdateFunc update_func, size_t extra_data_size = 0);
+int engine_add_entity_with_type(Engine* engine, int type_id, float x, float y, int width, int height,
+    int texture_id, int layer, int z_index = 0);
+void engine_update_entity_types(Engine* engine, float delta_time);
+void* engine_get_entity_type_data(Engine* engine, int entity_idx);
+
+void rebuild_spatial_grid(Engine* engine);
+#endif // ENGINE_H
