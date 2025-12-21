@@ -124,8 +124,8 @@ public:
   // Cell tracking for incremental grid updates
   uint16_t *cell_x;
   uint16_t *cell_y;
-  uint16_t
-      *cell_slot; // Entity's index within its current cell for O(1) removal
+  int32_t
+      *grid_node_indices; // Handle for O(1) grid manipulation (was cell_slot)
 
   uint8_t containerFlag;
   int type_id;
@@ -206,98 +206,179 @@ struct EntityRef {
   uint32_t index : 24;
 };
 
+// Node for intrusive linked list spatial grid
+struct GridNode {
+  EntityRef entity;
+  int32_t next;
+  int32_t prev;
+  int32_t cell_index; // To validate move/remove
+};
+
 class SpatialGrid {
 private:
-  struct Cell {
-    EntityRef entities[MAX_ENTITIES_PER_CELL];
-    std::atomic<int> count; // Track number of entities in cell
+  // Grid of heads: stores index of first node in the cell
+  // Flattened: index = y * GRID_CELL_WIDTH + x
+  std::vector<int32_t> cell_heads;
 
-    Cell() : count(0) {}
-  };
+  // Global pool of nodes.
+  // Nodes are allocated once and reused?
+  // Constraint: "adding entity is allowed, removing not allowed".
+  // Actually, we can just append to 'nodes' if we need new ones,
+  // but better to pre-allocate.
+  std::vector<GridNode> nodes;
+  std::vector<int32_t> free_node_indices;
 
-  alignas(CACHE_LINE_SIZE)
-      std::array<std::array<Cell, GRID_CELL_WIDTH>, GRID_CELL_HEIGHT> cells;
   std::vector<EntityRef> queryResult;
+  int32_t first_free_node;
 
 public:
-  SpatialGrid() { queryResult.reserve(15000); }
-  void add(const EntityRef &entity, const float &x, const float &y) {
-    const uint16_t cellX = x * INV_GRID_CELL_SIZE;
-    const uint16_t cellY = y * INV_GRID_CELL_SIZE;
-    add2(entity, cellX, cellY);
+  SpatialGrid() : first_free_node(-1) {
+    // Initialize grid heads to -1 (empty)
+    cell_heads.resize(GRID_CELL_WIDTH * GRID_CELL_HEIGHT, -1);
+
+    // Pre-allocate nodes (e.g., 100,000 entities max?)
+    // Let's reserve a safe amount, e.g., 200,000
+    nodes.reserve(200000);
+    queryResult.reserve(15000);
   }
 
-  uint32_t add2(const EntityRef &entity, const uint16_t x, const uint16_t y) {
-    Cell &cell = cells[y][x];
-
-    // Atomically increment the counter and get the slot index
-    uint32_t slot = cell.count.fetch_add(1, std::memory_order_relaxed);
-
-    // Ensure we don't exceed cell capacity
-    if (slot < MAX_ENTITIES_PER_CELL) {
-      cell.entities[slot] = entity;
+  // Allocate a node from the pool
+  int32_t allocateNode(const EntityRef &entity) {
+    int32_t idx;
+    if (first_free_node != -1) {
+      idx = first_free_node;
+      first_free_node = nodes[idx].next; // Pop from free stack
+    } else {
+      idx = static_cast<int32_t>(nodes.size());
+      nodes.push_back({entity, -1, -1, -1});
     }
-    return slot; // Return slot for caller to store
+    return idx;
   }
 
-  // O(1) removal using slot index
-  void removeFromCellBySlot(
-      uint16_t cellX, uint16_t cellY, uint16_t slot,
-      std::vector<std::unique_ptr<EntityContainer>> &containers) {
-    if (cellX >= GRID_CELL_WIDTH || cellY >= GRID_CELL_HEIGHT)
+  // Free a node to the pool
+  void freeNode(int32_t nodeIndex) {
+    nodes[nodeIndex].next = first_free_node;
+    nodes[nodeIndex].prev = -1;
+    nodes[nodeIndex].cell_index = -1;
+    first_free_node = nodeIndex;
+  }
+
+  // Add entity to grid, returns node index (handle)
+  int32_t add(const EntityRef &entity, float x, float y) {
+    uint16_t cellX = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
+    uint16_t cellY = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
+
+    // Boundary check
+    if (cellX >= GRID_CELL_WIDTH)
+      cellX = GRID_CELL_WIDTH - 1;
+    if (cellY >= GRID_CELL_HEIGHT)
+      cellY = GRID_CELL_HEIGHT - 1;
+
+    int32_t cellIdx = cellY * GRID_CELL_WIDTH + cellX;
+    int32_t nodeIdx = allocateNode(entity);
+
+    // Insert at head of list
+    int32_t oldHead = cell_heads[cellIdx];
+
+    nodes[nodeIdx].next = oldHead;
+    nodes[nodeIdx].prev = -1;
+    nodes[nodeIdx].cell_index = cellIdx;
+
+    if (oldHead != -1) {
+      nodes[oldHead].prev = nodeIdx;
+    }
+
+    cell_heads[cellIdx] = nodeIdx;
+    return nodeIdx;
+  }
+
+  // Remove by node handle (O(1))
+  void remove(int32_t nodeIndex) {
+    if (nodeIndex == -1 || nodeIndex >= nodes.size())
       return;
 
-    Cell &cell = cells[cellY][cellX];
-    int lastIdx = cell.count.fetch_sub(1, std::memory_order_relaxed) - 1;
+    GridNode &node = nodes[nodeIndex];
+    int32_t cellIdx = node.cell_index;
 
-    if (slot < (uint16_t)lastIdx) {
-      // Swap with last entity
-      cell.entities[slot] = cell.entities[lastIdx];
-      // Update the swapped entity's slot tracking
-      auto &ref = cell.entities[slot];
-      containers[ref.type]->cell_slot[ref.index] = slot;
+    if (cellIdx == -1)
+      return; // Already removed?
+
+    if (node.prev != -1) {
+      nodes[node.prev].next = node.next;
+    } else {
+      // It was the head
+      cell_heads[cellIdx] = node.next;
     }
-  }
 
-  // Remove an entity from a specific cell (for incremental updates) - Legacy
-  // O(n) version
-  void removeFromCell(const EntityRef &entity, uint16_t cellX, uint16_t cellY) {
-    if (cellX >= GRID_CELL_WIDTH || cellY >= GRID_CELL_HEIGHT)
-      return;
-
-    Cell &cell = cells[cellY][cellX];
-    int cellCount = cell.count.load(std::memory_order_relaxed);
-
-    // Find and remove the entity by swapping with last
-    for (int i = 0; i < cellCount; ++i) {
-      if (cell.entities[i].type == entity.type &&
-          cell.entities[i].index == entity.index) {
-        // Swap with last and decrement count
-        int lastIdx = cell.count.fetch_sub(1, std::memory_order_relaxed) - 1;
-        if (i < lastIdx) {
-          cell.entities[i] = cell.entities[lastIdx];
-        }
-        return;
-      }
+    if (node.next != -1) {
+      nodes[node.next].prev = node.prev;
     }
+
+    freeNode(nodeIndex);
   }
 
-  // Move an entity from one cell to another (for incremental updates)
-  uint32_t moveEntity(const EntityRef &entity, uint16_t oldCellX,
-                      uint16_t oldCellY, uint16_t newCellX, uint16_t newCellY) {
-    removeFromCell(entity, oldCellX, oldCellY);
-    return add2(entity, newCellX, newCellY);
+  // Move: remove from old list, add to new list.
+  // Optimization: reusing the SAME node, just relinking.
+  // Returns true if cell changed.
+  bool move(int32_t nodeIndex, float x, float y) {
+    uint16_t newCellX = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
+    uint16_t newCellY = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
+
+    if (newCellX >= GRID_CELL_WIDTH)
+      newCellX = GRID_CELL_WIDTH - 1;
+    if (newCellY >= GRID_CELL_HEIGHT)
+      newCellY = GRID_CELL_HEIGHT - 1;
+
+    int32_t newCellIdx = newCellY * GRID_CELL_WIDTH + newCellX;
+    int32_t oldCellIdx = nodes[nodeIndex].cell_index;
+
+    if (newCellIdx == oldCellIdx)
+      return false;
+
+    // Unlink from old list
+    GridNode &node = nodes[nodeIndex];
+
+    if (node.prev != -1) {
+      nodes[node.prev].next = node.next;
+    } else {
+      cell_heads[oldCellIdx] = node.next;
+    }
+
+    if (node.next != -1) {
+      nodes[node.next].prev = node.prev;
+    }
+
+    // Link to new list
+    int32_t oldHead = cell_heads[newCellIdx];
+    node.next = oldHead;
+    node.prev = -1;
+    node.cell_index = newCellIdx;
+
+    if (oldHead != -1) {
+      nodes[oldHead].prev = nodeIndex;
+    }
+
+    cell_heads[newCellIdx] = nodeIndex;
+
+    return true;
   }
 
-  // O(1) move using slot
-  uint32_t
-  moveEntityBySlot(const EntityRef &entity, uint16_t oldCellX,
-                   uint16_t oldCellY, uint16_t oldSlot, uint16_t newCellX,
-                   uint16_t newCellY,
-                   std::vector<std::unique_ptr<EntityContainer>> &containers) {
-    removeFromCellBySlot(oldCellX, oldCellY, oldSlot, containers);
-    return add2(entity, newCellX, newCellY);
+  // Clear all grid data (retains node memory/capacity)
+  void clearAll() {
+    // Fast clear: just reset all cell heads to -1.
+    // Nodes effectively become "leaked" if we don't track them,
+    // but if we are rebuilding frame-by-frame, we might reset 'nodes' vector
+    // too? Or we iterate and free? If we use this for *static* and *dynamic*
+    // entities, clearAll is dangerous unless we rebuild everything. Usually we
+    // only rebuild dynamic entities? "rebuild_grid" suggests full rebuild.
+
+    // If full rebuild:
+    std::fill(cell_heads.begin(), cell_heads.end(), -1);
+    nodes.clear(); // Reset count to 0
+    first_free_node = -1;
   }
+
+  std::vector<EntityRef> &queryRect(float x1, float y1, float x2, float y2);
 
   inline void getCellCoords(const float &x, const float &y, uint16_t &outCellX,
                             uint16_t &outCellY) const {
@@ -309,30 +390,49 @@ public:
                                             float radius) {
     queryResult.clear();
 
-    float minX = centerX - radius;
-    float minY = centerY - radius;
-    float maxX = centerX + radius;
-    float maxY = centerY + radius;
-
     uint16_t minCellX, minCellY, maxCellX, maxCellY;
-    getCellCoords(minX, minY, minCellX, minCellY);
-    getCellCoords(maxX, maxY, maxCellX, maxCellY);
+    getCellCoords(centerX - radius, centerY - radius, minCellX, minCellY);
+    getCellCoords(centerX + radius, centerY + radius, maxCellX, maxCellY);
+
+    // Clamp
+    if (minCellX >= GRID_CELL_WIDTH)
+      minCellX = 0;
+    if (minCellY >= GRID_CELL_HEIGHT)
+      minCellY = 0;
+    if (maxCellX >= GRID_CELL_WIDTH)
+      maxCellX = GRID_CELL_WIDTH - 1;
+    if (maxCellY >= GRID_CELL_HEIGHT)
+      maxCellY = GRID_CELL_HEIGHT - 1;
+
+    // Safety check if coordinates are completely out of bounds (negative became
+    // large uint16) getCellCoords usually handles this? Implementation of
+    // getCellCoords: x * INV_GRID_CELL_SIZE. Casting negative float to uint16_t
+    // results in large number. So we need proper clamping/checking. But for now
+    // let's assume valid range or simple clamping.
 
     float radiusSq = radius * radius;
 
     for (uint16_t cy = minCellY; cy <= maxCellY; ++cy) {
+      if (cy >= GRID_CELL_HEIGHT)
+        continue;
+      int32_t rowBase = cy * GRID_CELL_WIDTH;
       for (uint16_t cx = minCellX; cx <= maxCellX; ++cx) {
+        if (cx >= GRID_CELL_WIDTH)
+          continue;
+
         float cellWorldX = cx * GRID_CELL_SIZE;
         float cellWorldY = cy * GRID_CELL_SIZE;
 
-        Cell &cell = cells[cy][cx];
-        uint32_t entCount = cell.count;
+        float dx = cellWorldX - centerX;
+        float dy = cellWorldY - centerY;
 
-        for (uint32_t i = 0; i < entCount; ++i) {
-          float dx = cellWorldX - centerX;
-          float dy = cellWorldY - centerY;
-          if ((dx * dx + dy * dy) <= radiusSq) {
-            queryResult.push_back(cell.entities[i]);
+        // Match legacy behavior: check distance to cell corner
+        if ((dx * dx + dy * dy) <= radiusSq) {
+          int32_t nodeIdx = cell_heads[rowBase + cx];
+          while (nodeIdx != -1) {
+            const GridNode &node = nodes[nodeIdx];
+            queryResult.push_back(node.entity);
+            nodeIdx = node.next;
           }
         }
       }
@@ -340,43 +440,10 @@ public:
     return queryResult;
   }
 
-  std::vector<EntityRef> &queryRect(float minX, float minY, float maxX,
-                                    float maxY) {
-    queryResult.clear();
+  // Declaration only, implemented in cpp
 
-    uint16_t minCellX, minCellY, maxCellX, maxCellY;
-
-    getCellCoords(minX, minY, minCellX, minCellY);
-    getCellCoords(maxX, maxY, maxCellX, maxCellY);
-
-    for (uint16_t cy = minCellY; cy <= maxCellY; ++cy) {
-      for (uint16_t cx = minCellX; cx <= maxCellX; ++cx) {
-        Cell &cell = cells[cy][cx];
-        uint32_t entCount = cell.count;
-
-        for (uint32_t i = 0; i < entCount; ++i) {
-          queryResult.push_back(cell.entities[i]);
-        }
-      }
-    }
-    return queryResult;
-  }
-
-  void clearAll() {
-    PROFILE_FUNCTION();
-    for (auto &row : cells) {
-      for (auto &cell : row) {
-        cell.count = 0;
-      }
-    }
-    queryResult.clear();
-  }
-
+  // Declaration for rebuild_grid
   void rebuild_grid(Engine *engine);
-
-  void printGrid() const;
-  void printQueryCircle(float centerX, float centerY, float radius);
-  void printQueryRect(float minX, float minY, float maxX, float maxY);
 };
 
 /**

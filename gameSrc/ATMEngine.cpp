@@ -1,4 +1,5 @@
 ﻿#include "../game/ATMEngine.h"
+#include <algorithm>
 #include <execution>
 #include <future>
 #include <numeric>
@@ -19,9 +20,17 @@ EntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,
   y_positions = new float[capacity];
 
   // Allocate cell tracking arrays
-  cell_x = new uint16_t[capacity];
-  cell_y = new uint16_t[capacity];
-  cell_slot = new uint16_t[capacity];
+  cell_x = (uint16_t *)_aligned_malloc(initialCapacity * sizeof(uint16_t),
+                                       CACHE_LINE_SIZE);
+  cell_y = (uint16_t *)_aligned_malloc(initialCapacity * sizeof(uint16_t),
+                                       CACHE_LINE_SIZE);
+  grid_node_indices = (int32_t *)_aligned_malloc(
+      initialCapacity * sizeof(int32_t), CACHE_LINE_SIZE);
+
+  memset(cell_x, 0, initialCapacity * sizeof(uint16_t));
+  memset(cell_y, 0, initialCapacity * sizeof(uint16_t));
+  memset(grid_node_indices, 0xFF,
+         initialCapacity * sizeof(int32_t)); // Init to -1
 }
 
 EntityContainer::~EntityContainer() {
@@ -33,9 +42,10 @@ EntityContainer::~EntityContainer() {
   delete[] parent_ids;
   delete[] first_child_ids;
   delete[] next_sibling_ids;
-  delete[] cell_x;
-  delete[] cell_y;
-  delete[] cell_slot;
+
+  _aligned_free(cell_x);
+  _aligned_free(cell_y);
+  _aligned_free(grid_node_indices);
 }
 
 uint32_t EntityContainer::createEntity() {
@@ -53,9 +63,9 @@ uint32_t EntityContainer::createEntity() {
   parent_ids[index] = INVALID_ID;
   first_child_ids[index] = INVALID_ID;
   next_sibling_ids[index] = INVALID_ID;
-  cell_x[index] = UINT16_MAX; // Invalid cell marker
-  cell_y[index] = UINT16_MAX;
-  cell_slot[index] = UINT16_MAX;
+  cell_x[index] = 0;
+  cell_y[index] = 0;
+  grid_node_indices[index] = -1;
 
   return index;
 }
@@ -77,7 +87,7 @@ void EntityContainer::removeEntity(size_t index) {
     next_sibling_ids[index] = next_sibling_ids[last];
     cell_x[index] = cell_x[last];
     cell_y[index] = cell_y[last];
-    cell_slot[index] = cell_slot[last];
+    grid_node_indices[index] = grid_node_indices[last];
   }
 
   count--;
@@ -124,6 +134,34 @@ void EntityContainer::resizeArrays(int newCapacity) {
   parent_ids = newParentIds;
   first_child_ids = newFirstChildIds;
   next_sibling_ids = newNextSiblingIds;
+
+  // Resize aligned arrays
+  uint16_t *new_cx = (uint16_t *)_aligned_malloc(newCapacity * sizeof(uint16_t),
+                                                 CACHE_LINE_SIZE);
+  uint16_t *new_cy = (uint16_t *)_aligned_malloc(newCapacity * sizeof(uint16_t),
+                                                 CACHE_LINE_SIZE);
+  int32_t *new_gni = (int32_t *)_aligned_malloc(newCapacity * sizeof(int32_t),
+                                                CACHE_LINE_SIZE);
+
+  if (count > 0) {
+    memcpy(new_cx, cell_x, count * sizeof(uint16_t));
+    memcpy(new_cy, cell_y, count * sizeof(uint16_t));
+    memcpy(new_gni, grid_node_indices, count * sizeof(int32_t));
+  }
+
+  _aligned_free(cell_x);
+  _aligned_free(cell_y);
+  _aligned_free(grid_node_indices);
+
+  cell_x = new_cx;
+  cell_y = new_cy;
+  grid_node_indices = new_gni;
+
+  // Init new space
+  if (newCapacity > capacity) {
+    memset(grid_node_indices + capacity, 0xFF,
+           (newCapacity - capacity) * sizeof(int32_t));
+  }
 
   // Update capacity
   capacity = newCapacity;
@@ -846,8 +884,7 @@ void engine_render_scene(Engine *engine) {
     return;
 
   // 2. Massive Parallel Sort (Linear scaling with cores)
-  std::sort(std::execution::par, visible_entities.begin(),
-            visible_entities.end(),
+  std::sort(visible_entities.begin(), visible_entities.end(),
             [engine](const EntityRef &a, const EntityRef &b) {
               auto rContA = static_cast<RenderableEntityContainer *>(
                   engine->entityManager.containers[a.type].get());
@@ -891,30 +928,70 @@ void engine_render_scene(Engine *engine) {
   }
 }
 
+std::vector<EntityRef> &SpatialGrid::queryRect(float x1, float y1, float x2,
+                                               float y2) {
+  PROFILE_FUNCTION();
+  queryResult.clear();
+
+  const uint16_t minCellX =
+      static_cast<uint16_t>(std::max(0.0f, x1 * INV_GRID_CELL_SIZE));
+  const uint16_t minCellY =
+      static_cast<uint16_t>(std::max(0.0f, y1 * INV_GRID_CELL_SIZE));
+  const uint16_t maxCellX = static_cast<uint16_t>(std::min(
+      static_cast<float>(GRID_CELL_WIDTH - 1), x2 * INV_GRID_CELL_SIZE));
+  const uint16_t maxCellY = static_cast<uint16_t>(std::min(
+      static_cast<float>(GRID_CELL_HEIGHT - 1), y2 * INV_GRID_CELL_SIZE));
+
+  for (uint16_t cy = minCellY; cy <= maxCellY; ++cy) {
+    int32_t rowBase = cy * GRID_CELL_WIDTH;
+    for (uint16_t cx = minCellX; cx <= maxCellX; ++cx) {
+      int32_t nodeIdx = cell_heads[rowBase + cx];
+
+      while (nodeIdx != -1) {
+        const GridNode &node = nodes[nodeIdx];
+        queryResult.push_back(node.entity);
+        nodeIdx = node.next;
+      }
+    }
+  }
+  return queryResult;
+}
 void SpatialGrid::rebuild_grid(Engine *engine) {
   PROFILE_FUNCTION();
   clearAll();
 
-  // Populate grid and store slot indices for O(1) removal
-  for (uint32_t cIdx = 0; cIdx < engine->entityManager.containers.size();
-       ++cIdx) {
-    auto &container = engine->entityManager.containers[cIdx];
-    if (container->count == 0)
+  // Re-add all entities to the grid
+  int container_count = engine->entityManager.containers.size();
+
+  // Serial for now to avoid contention on the linked list (or use locks?
+  // Node allocation is thread-unsafe if not atomic).
+  // The 'add' method modifies global 'cell_heads' and 'nodes' vector.
+  // It is NOT thread-safe without locking.
+  // Previous version used atomic fetch_add on cells.
+  // Intrusive list generally hard to build in parallel without per-cell locks.
+  // Given we have 50k entities, serial add might be slow?
+  // 50k simple appends is fast. 0.5ms?
+  // Let's try serial query first.
+
+  for (int i = 0; i < container_count; ++i) {
+    auto container = engine->entityManager.containers[i].get();
+    if (!container || container->count == 0)
       continue;
 
-    std::vector<uint32_t> indices(container->count);
-    std::iota(indices.begin(), indices.end(), 0);
+    int count = container->count;
+    for (int j = 0; j < count; ++j) {
+      float x = container->x_positions[j];
+      float y = container->y_positions[j];
+      EntityRef ref = {(uint32_t)i, (uint32_t)j};
 
-    std::for_each(std::execution::par, indices.begin(), indices.end(),
-                  [&](uint32_t i) {
-                    uint16_t cx = static_cast<uint16_t>(
-                        container->x_positions[i] * INV_GRID_CELL_SIZE);
-                    uint16_t cy = static_cast<uint16_t>(
-                        container->y_positions[i] * INV_GRID_CELL_SIZE);
-                    if (cx < GRID_CELL_WIDTH && cy < GRID_CELL_HEIGHT) {
-                      uint32_t slot = add2({(uint8_t)cIdx, i}, cx, cy);
-                      container->cell_slot[i] = (uint16_t)slot;
-                    }
-                  });
+      int32_t nodeIdx = engine->grid.add(ref, x, y);
+      container->grid_node_indices[j] = nodeIdx;
+
+      // Update cell coords
+      uint16_t cx, cy;
+      engine->grid.getCellCoords(x, y, cx, cy);
+      container->cell_x[j] = cx;
+      container->cell_y[j] = cy;
+    }
   }
 }

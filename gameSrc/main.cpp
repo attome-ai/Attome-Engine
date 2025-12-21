@@ -368,14 +368,11 @@ public:
 
                     // O(1) grid update - only if cell changed
                     if (oldCellX != newCellX || oldCellY != newCellY) {
-                      EntityRef ref = {(uint8_t)type_id, i};
-                      uint16_t oldSlot = cell_slot[i];
-                      uint32_t newSlot = engine->grid.moveEntityBySlot(
-                          ref, oldCellX, oldCellY, oldSlot, newCellX, newCellY,
-                          engine->entityManager.containers);
+                      int32_t nodeIdx = grid_node_indices[i];
+                      engine->grid.move(nodeIdx, px, py);
+
                       cell_x[i] = newCellX;
                       cell_y[i] = newCellY;
-                      cell_slot[i] = (uint16_t)newSlot;
                     }
                   });
   }

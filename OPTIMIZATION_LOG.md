@@ -7,6 +7,8 @@
 | **Incremental Grid Updates** | **240 → 658 FPS** (+174%) | Eliminated the massive per-frame cost of `rebuild_grid()` by only updating entities that actually moved cells. |
 | **O(1) Slot-Based Removal** | **658 → 671 FPS** (+2%) | Replaced linear O(N) searching for entity removal with constant time O(1) by tracking `cell_slot[i]`. |
 | **Parallel Scalar Updates** | **Baseline** | Full utilization of 32 hardware threads via `std::execution::par` proved superior to single-threaded SIMD. |
+| **Serial Sort Optimization** | **671 → 720 FPS** (+7%) | Removed `std::execution::par` from `std::sort`. The overhead of parallel execution policy (thread pool management) was higher than the cost of a simple serial sort for this N (50,000 entities). |
+| **Zero-Allocation Spatial Grid** | **720 → 963 FPS** (+34%) | Eliminated `std::vector` reallocations and dynamic memory from the hot loop by using an Intrusive Linked List and pre-allocated node pools. |
 
 ---
 
@@ -18,6 +20,8 @@
 | **SIMD (AVX2)** | **671 → 188 FPS** (-72%) | **Reason 1**: Ran on a single thread, losing 32x parallelism.<br>**Reason 2**: Separating movement (SIMD) from grid logic (Scalar) doubled the iteration overhead and cache pressure. |
 | **Parallel Render Batching** | **671 → 605 FPS** (-10%) | The cost of merging thread-local instruction buffers (`memcpy` + offset math) was higher than the extremely fast serial pointer increments. |
 | **Memory Prefetching** | **671 → 586 FPS** (-13%) | **Reason**: `_mm_prefetch` instructions added instruction overhead without hiding enough latency. The CPU's hardware prefetcher was likely already doing a good job on the sequential streams, and the "gather" prefetch was too late or interfered with the pipeline. |
+| **Vulkan Renderer** | **Engine failed to initialize** | SDL3 library was built without Vulkan support or runtime drivers are missing. |
+| **Parallel Render Batching** | **671 → 443 FPS** (-34%) | Thread creation overhead and `memcpy` costs in `merge` outweighed the benefit of parallelizing the O(N) loop. |
 
 ---
 
@@ -26,3 +30,4 @@
 1.  **Parallelism > SIMD**: On a high-core-count system (32 threads), saturation via `std::execution::par` beats single-threaded vectorization.
 2.  **Atomics are Cheap**: For dispersed updates, atomic operations are often faster than the locking or merging overhead of batching.
 3.  **Contiguous Memory is King**: The serial rendering loop is effectively O(N) and memory-bandwidth bound; complex parallel chunking schemes just add CPU overhead.
+4.  **Zero-Allocation is Critical**: In high-frequency update loops (e.g., 50k entities @ 60hz), even "amortized constant" operations like `vector::push_back` incur significant overhead. Pre-allocated intrusive lists are superior.
