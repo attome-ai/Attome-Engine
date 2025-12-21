@@ -1,16 +1,16 @@
 #pragma once
-#include <unordered_map>
-#include <string>
 #include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
-#include <iomanip>
+#include <string>
+#include <unordered_map>
 #undef max
 #undef min
 
 // SIMD detection macros
 #if defined(__EMSCRIPTEN__)
-    // Emscripten SIMD detection
+// Emscripten SIMD detection
 #if defined(__wasm_simd128__)
 #define HAS_WASM_SIMD 1
 #include <wasm_simd128.h>
@@ -19,7 +19,7 @@
 #endif
 #define HAS_SSE 0
 #elif defined(__SSE__) && !defined(__EMSCRIPTEN__)
-    // x86/x64 SSE detection
+// x86/x64 SSE detection
 #define HAS_SSE 1
 #include <xmmintrin.h> // SSE
 #if defined(__SSE2__)
@@ -31,109 +31,114 @@
 
 // Structure to hold profiling data for a single function
 struct ProfileData {
-    uint64_t callCount = 0;
-    double totalTimeMs = 0.0;
-    double minTimeMs = std::numeric_limits<double>::max();
-    double maxTimeMs = 0.0;
-    std::chrono::steady_clock::time_point lastReportTime = std::chrono::steady_clock::now();
+  uint64_t callCount = 0;
+  double totalTimeMs = 0.0;
+  double minTimeMs = std::numeric_limits<double>::max();
+  double maxTimeMs = 0.0;
+  std::chrono::steady_clock::time_point lastReportTime =
+      std::chrono::steady_clock::now();
 };
 
 // Global profiling data
 class Profiler {
 private:
-    std::unordered_map<std::string, ProfileData> stats;
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point> startTimes;
-    std::mutex mutex;
-    std::chrono::steady_clock::time_point lastReportTime = std::chrono::steady_clock::now();
-    bool reportEnabled = true;
-    double reportIntervalSeconds = 1.0;
+  std::unordered_map<std::string, ProfileData> stats;
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+      startTimes;
+  std::mutex mutex;
+  std::chrono::steady_clock::time_point lastReportTime =
+      std::chrono::steady_clock::now();
+  bool reportEnabled = true;
+  double reportIntervalSeconds = 1.0;
 
 public:
-    static Profiler& getInstance() {
-        static Profiler instance;
-        return instance;
-    }
+  static Profiler &getInstance() {
+    static Profiler instance;
+    return instance;
+  }
 
-    void begin(const std::string& functionName) {
-        std::lock_guard<std::mutex> lock(mutex);
-        startTimes[functionName] = std::chrono::steady_clock::now();
-    }
+  void begin(const std::string &functionName) {
+    std::lock_guard<std::mutex> lock(mutex);
+    startTimes[functionName] = std::chrono::steady_clock::now();
+  }
 
-    void end(const std::string& functionName) {
-        std::lock_guard<std::mutex> lock(mutex);
+  void end(const std::string &functionName) {
+    std::lock_guard<std::mutex> lock(mutex);
 
-        auto endTime = std::chrono::steady_clock::now();
-        auto it = startTimes.find(functionName);
+    auto endTime = std::chrono::steady_clock::now();
+    auto it = startTimes.find(functionName);
 
-        if (it != startTimes.end()) {
-            auto startTime = it->second;
-            double elapsedMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
+    if (it != startTimes.end()) {
+      auto startTime = it->second;
+      double elapsedMs =
+          std::chrono::duration<double, std::milli>(endTime - startTime)
+              .count();
 
-            auto& data = stats[functionName];
-            data.callCount++;
-            data.totalTimeMs += elapsedMs;
-            data.minTimeMs = std::min(data.minTimeMs, elapsedMs);
-            data.maxTimeMs = std::max(data.maxTimeMs, elapsedMs);
+      auto &data = stats[functionName];
+      data.callCount++;
+      data.totalTimeMs += elapsedMs;
+      data.minTimeMs = std::min(data.minTimeMs, elapsedMs);
+      data.maxTimeMs = std::max(data.maxTimeMs, elapsedMs);
 
-            startTimes.erase(it);
+      startTimes.erase(it);
 
-            // Check if we should generate a report
-            if (reportEnabled) {
-                auto now = std::chrono::steady_clock::now();
-                double secondsSinceLastReport =
-                    std::chrono::duration<double>(now - lastReportTime).count();
+      // Check if we should generate a report
+      if (reportEnabled) {
+        auto now = std::chrono::steady_clock::now();
+        double secondsSinceLastReport =
+            std::chrono::duration<double>(now - lastReportTime).count();
 
-                if (secondsSinceLastReport >= reportIntervalSeconds) {
-                    generateReport();
-                    lastReportTime = now;
-                }
-            }
+        if (secondsSinceLastReport >= reportIntervalSeconds) {
+          generateReport();
+          lastReportTime = now;
         }
+      }
     }
+  }
 
-    void setReportInterval(double seconds) {
-        std::lock_guard<std::mutex> lock(mutex);
-        reportIntervalSeconds = seconds;
-    }
+  void setReportInterval(double seconds) {
+    std::lock_guard<std::mutex> lock(mutex);
+    reportIntervalSeconds = seconds;
+  }
 
-    void enableReporting(bool enable) {
-        std::lock_guard<std::mutex> lock(mutex);
-        reportEnabled = enable;
-    }
+  void enableReporting(bool enable) {
+    std::lock_guard<std::mutex> lock(mutex);
+    reportEnabled = enable;
+  }
 
-    void resetStats() {
-        std::lock_guard<std::mutex> lock(mutex);
-        stats.clear();
-        startTimes.clear();
-    }
+  void resetStats() {
+    std::lock_guard<std::mutex> lock(mutex);
+    stats.clear();
+    startTimes.clear();
+  }
 
-    void generateReport() {
-        std::cout << "\n=== Profiling Report ===\n";
-        std::cout << std::left << std::setw(30) << "Function"
-            << std::right << std::setw(10) << "Calls"
-            << std::setw(15) << "Total (ms)"
-            << std::setw(15) << "Avg (ms)"
-            << std::setw(15) << "Min (ms)"
-            << std::setw(15) << "Max (ms)" << std::endl;
-        std::cout << std::string(100, '-') << std::endl;
+  void generateReport() {
+    std::cout << "\n=== Profiling Report ===\n";
+    std::cout << std::left << std::setw(30) << "Function" << std::right
+              << std::setw(10) << "Calls" << std::setw(15) << "Total (ms)"
+              << std::setw(15) << "Avg (ms)" << std::setw(15) << "Min (ms)"
+              << std::setw(15) << "Max (ms)" << std::endl;
+    std::cout << std::string(100, '-') << std::endl;
 
-        for (const auto& entry : stats) {
-            const auto& name = entry.first;
-            const auto& data = entry.second;
-            double avgTime = data.callCount > 0 ? data.totalTimeMs / data.callCount : 0;
+    for (const auto &entry : stats) {
+      const auto &name = entry.first;
+      const auto &data = entry.second;
+      double avgTime =
+          data.callCount > 0 ? data.totalTimeMs / data.callCount : 0;
 
-            std::cout << std::left << std::setw(30) << name
-                << std::right << std::setw(10) << data.callCount
-                << std::setw(15) << std::fixed << std::setprecision(3) << data.totalTimeMs
-                << std::setw(15) << std::fixed << std::setprecision(3) << avgTime
+      std::cout << std::left << std::setw(30) << name << std::right
+                << std::setw(10) << data.callCount << std::setw(15)
+                << std::fixed << std::setprecision(3) << data.totalTimeMs
                 << std::setw(15) << std::fixed << std::setprecision(3)
-                << (data.callCount > 0 ? data.minTimeMs : 0)
-                << std::setw(15) << std::fixed << std::setprecision(3) << data.maxTimeMs
+                << avgTime << std::setw(15) << std::fixed
+                << std::setprecision(3)
+                << (data.callCount > 0 ? data.minTimeMs : 0) << std::setw(15)
+                << std::fixed << std::setprecision(3) << data.maxTimeMs
                 << std::endl;
-        }
-
-        std::cout << "========================\n";
     }
+
+    std::cout << "========================\n";
+  }
 };
 
 // Easy-to-use profiling macros
@@ -143,18 +148,15 @@ public:
 // Automatic profiling using RAII pattern
 class ScopedProfiler {
 private:
-    std::string functionName;
+  std::string functionName;
 
 public:
-    ScopedProfiler(const std::string& name) : functionName(name) {
-        PROFILE_BEGIN(functionName);
-    }
+  ScopedProfiler(const std::string &name) : functionName(name) {
+    PROFILE_BEGIN(functionName);
+  }
 
-    ~ScopedProfiler() {
-        PROFILE_END(functionName);
-    }
+  ~ScopedProfiler() { PROFILE_END(functionName); }
 };
-
 
 #if 0
 
@@ -449,8 +451,7 @@ void print_visible_entities_grid(Engine* engine) {
 #define print_active_entities_grid(y)
 #endif
 
-
-#if 0
+#if 1
 // Easy macro for automatic function profiling
 #define PROFILE_FUNCTION() ScopedProfiler profiler(__FUNCTION__)
 #define PROFILE_SCOPE(name) ScopedProfiler profiler(name)
@@ -461,6 +462,3 @@ void print_visible_entities_grid(Engine* engine) {
 #define PROFILE_SCOPE(name)
 
 #endif // 1
-
-
-
