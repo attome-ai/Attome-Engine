@@ -324,8 +324,10 @@ void EntityManager::update(float delta_time) {
 
 // RenderBatch implementation
 RenderBatch::RenderBatch(int textureId, int zIndex, int initialVertexCapacity)
-    : texture_id(textureId) {
+    : texture_id(textureId), z_index(zIndex) {
   PROFILE_FUNCTION();
+  vertices.reserve(initialVertexCapacity);
+  indices.reserve(initialVertexCapacity * 1.5);
 }
 
 RenderBatch::~RenderBatch() {}
@@ -457,7 +459,27 @@ void RenderBatchManager::clear() {
 
 const std::vector<RenderBatch> &RenderBatchManager::getBatches() {
   PROFILE_FUNCTION();
+  if (needsSort) {
+    sortIfNeeded();
+  }
   return batches;
+}
+
+void RenderBatchManager::sortIfNeeded() {
+  PROFILE_FUNCTION();
+  std::sort(batches.begin(), batches.end(),
+            [](const RenderBatch &a, const RenderBatch &b) {
+              if (a.z_index != b.z_index)
+                return a.z_index < b.z_index;
+              return a.texture_id < b.texture_id;
+            });
+
+  // Rebuild the map labels to reflect new indices
+  batchMap.clear();
+  for (size_t i = 0; i < batches.size(); ++i) {
+    batchMap[createKey(batches[i].texture_id, batches[i].z_index)] = i;
+  }
+  needsSort = false;
 }
 
 size_t RenderBatchManager::getBatchCount() const {
@@ -883,16 +905,30 @@ void engine_render_scene(Engine *engine) {
   if (visible_entities.empty())
     return;
 
-  // 2. Massive Parallel Sort (Linear scaling with cores)
+  // 2. Stable Sort (Ensures consistent rendering order for same Z and Type)
+  // Now with Y-sorting for correct visual distribution!
   std::sort(visible_entities.begin(), visible_entities.end(),
             [engine](const EntityRef &a, const EntityRef &b) {
               auto rContA = static_cast<RenderableEntityContainer *>(
                   engine->entityManager.containers[a.type].get());
               auto rContB = static_cast<RenderableEntityContainer *>(
                   engine->entityManager.containers[b.type].get());
+
+              // 1. Primary sort by Z-index layer
               if (rContA->z_indices[a.index] != rContB->z_indices[b.index])
                 return rContA->z_indices[a.index] < rContB->z_indices[b.index];
-              return a.type < b.type;
+
+              // 2. Secondary sort by Y-position for correct 2D layering
+              // (Y-sorting)
+              if (rContA->y_positions[a.index] != rContB->y_positions[b.index])
+                return rContA->y_positions[a.index] <
+                       rContB->y_positions[b.index];
+
+              // 3. Absolute stability by entity type and index
+              if (a.type != b.type)
+                return a.type < b.type;
+
+              return a.index < b.index;
             });
 
   // 3. Serial Batching (Sorting is the bottleneck, batching is O(N))
