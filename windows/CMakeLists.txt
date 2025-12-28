@@ -13,7 +13,7 @@ find_package(imgui CONFIG REQUIRED)
 
 # The project sources
 set(SOURCE
-  ${CMAKE_SOURCE_DIR}/gameSrc/main.cpp
+  ${CMAKE_SOURCE_DIR}/gameSrc/zombie_game.cpp
   ${CMAKE_SOURCE_DIR}/gameSrc/ATMEngine.cpp
   ${CMAKE_SOURCE_DIR}/gameSrc/UI.cpp
   ${CMAKE_SOURCE_DIR}/gameSrc/Renderer.cpp

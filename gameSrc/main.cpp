@@ -1191,7 +1191,7 @@ void check_collisions(Engine *engine, GameState *game_state) {
 
   // No removals needed - food and power-ups are relocated
 }
-
+    
 void spawn_food(Engine *engine, GameState *game_state) {
   float x = static_cast<float>(rand() % (WORLD_WIDTH - GRID_SIZE));
   float y = static_cast<float>(rand() % (WORLD_HEIGHT - GRID_SIZE));
