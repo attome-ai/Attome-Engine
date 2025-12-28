@@ -605,7 +605,8 @@ int main(int argc, char *argv[]) {
                          game_state.current_fps);
       ImGui::TextColored(ImVec4(1, 0, 0, 1), "HITS: %d", game_state.hit_count);
       ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Zombies: %d",
-                         game_state.zombie_container->count);
+                         game_state.zombie_container->count -
+                             game_state.hit_count);
       ImGui::End();
 
       ImGui::Render();
