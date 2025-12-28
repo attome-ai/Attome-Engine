@@ -22,8 +22,8 @@
 #define PLAYER_SIZE 64 // Slightly larger for ship sprite
 #define ZOMBIE_SIZE 64 // Slightly larger for ship sprite
 #define DAMAGE_TEXT_SIZE 20
-#define PLAYER_SPEED 300.0f
-#define NUM_ZOMBIES 1000000 // Reduced for testing visuals, can be increased back
+#define PLAYER_SPEED 1300.0f
+#define NUM_ZOMBIES 1000000
 #define MAX_DAMAGE_TEXTS 500
 #define DAMAGE_TEXT_LIFETIME 0.4f
 #define DAMAGE_TEXT_FLOAT_SPEED 100.0f
@@ -37,11 +37,11 @@ struct ZombieTypeStats {
 
 // Types corresponding to ship2.png through ship6.png
 static const ZombieTypeStats ZOMBIE_STATS[5] = {
-    {40.0f, 100.0f, 0},  // Type 0
-    {60.0f, 75.0f, 1},   // Type 1
-    {80.0f, 50.0f, 2},   // Type 2
-    {100.0f, 150.0f, 3}, // Type 3
-    {120.0f, 200.0f, 4}, // Type 4
+    {200.0f, 200.0f, 0},  // Type 0
+    {200.0f, 175.0f, 1},  // Type 1
+    {200.0f, 150.0f, 2},  // Type 2
+    {200.0f, 250.0f, 3}, // Type 3
+    {200.0f, 300.0f, 4}, // Type 4
 };
 
 // --- Game-specific entity types ---
@@ -667,9 +667,19 @@ SDL_Surface *load_image_to_surface(const char *filepath) {
   return nullptr;
 }
 
+
+// ... (existing defines)
+
+// ...
+
 void setup_game(Engine *engine, GameState *game_state) {
-  // 1. Load Textures
+  // 1. Load Textures with Atlas Packing
   char path_buffer[256];
+  int atlas_x = 0;
+  int atlas_y = 0; // Simple horizontal packing
+  int padding = 2; // Pixel padding to avoid bleeding
+
+  std::cout << "--- TEXTURE REGISTER DEBUG ---" << std::endl;
 
   // Player Ship (ship1.png)
   snprintf(path_buffer, sizeof(path_buffer), "resource/ship1.png");
@@ -677,7 +687,10 @@ void setup_game(Engine *engine, GameState *game_state) {
   if (!player_surf)
     exit(1);
   game_state->player_texture_id =
-      engine_register_texture(engine, player_surf, 0, 0, 0, 0);
+      engine_register_texture(engine, player_surf, atlas_x, atlas_y, 0, 0);
+  std::cout << "Player Tex ID: " << game_state->player_texture_id
+            << " at X: " << atlas_x << std::endl;
+  atlas_x += player_surf->w + padding;
   SDL_DestroySurface(player_surf);
 
   // Zombie Ships (ship2.png - ship6.png)
@@ -687,9 +700,14 @@ void setup_game(Engine *engine, GameState *game_state) {
     if (!z_surf)
       exit(1);
     game_state->zombie_texture_ids[i] =
-        engine_register_texture(engine, z_surf, 0, 0, 0, 0);
+        engine_register_texture(engine, z_surf, atlas_x, atlas_y, 0, 0);
+    std::cout << "Zombie " << i
+              << " Tex ID: " << game_state->zombie_texture_ids[i]
+              << " at X: " << atlas_x << std::endl;
+    atlas_x += z_surf->w + padding;
     SDL_DestroySurface(z_surf);
   }
+  std::cout << "------------------------------" << std::endl;
 
   // 2. Create Player
   game_state->player_index = game_state->player_container->createEntity(
@@ -795,7 +813,7 @@ void check_collisions(Engine *engine, GameState *game_state) {
 
   float px = player->x_positions[game_state->player_index];
   float py = player->y_positions[game_state->player_index];
-  float p_radius = PLAYER_SIZE / 4.0f; // More forgiving hit box
+  float p_radius = PLAYER_SIZE / 2.2f; // Increased collision radius
   float p_center_x = px + PLAYER_SIZE / 2.0f;
   float p_center_y = py + PLAYER_SIZE / 2.0f;
 
@@ -809,7 +827,7 @@ void check_collisions(Engine *engine, GameState *game_state) {
       // Precise check
       float zx = zombies->x_positions[ref.index];
       float zy = zombies->y_positions[ref.index];
-      float z_radius = ZOMBIE_SIZE / 4.0f; // More forgiving hit box
+      float z_radius = ZOMBIE_SIZE / 2.2f; // Increased collision radius
       float z_center_x = zx + ZOMBIE_SIZE / 2.0f;
       float z_center_y = zy + ZOMBIE_SIZE / 2.0f;
 
