@@ -905,31 +905,46 @@ void engine_render_scene(Engine *engine) {
   if (visible_entities.empty())
     return;
 
-  // 2. Sort with TOTAL ORDER: No two distinct entities ever compare equal.
-  // This guarantees the same output order regardless of queryRect's input
-  // order, which changes when entities cross grid cell boundaries.
-  std::sort(visible_entities.begin(), visible_entities.end(),
-            [engine](const EntityRef &a, const EntityRef &b) {
-              auto rContA = static_cast<RenderableEntityContainer *>(
-                  engine->entityManager.containers[a.type].get());
-              auto rContB = static_cast<RenderableEntityContainer *>(
-                  engine->entityManager.containers[b.type].get());
+  // 2. OPTIMIZED SORTING: Pre-compute sort keys to eliminate pointer derefs
+  // during comparison. Key layout: (z_index << 56) | (type << 48) | index
+  // This reduces ~40M pointer dereferences to ~N (one per entity during key
+  // building)
 
-              // 1. Primary: Z-index layer
-              if (rContA->z_indices[a.index] != rContB->z_indices[b.index])
-                return rContA->z_indices[a.index] < rContB->z_indices[b.index];
+  // Pre-computed sort key for zero-cost comparisons during sort
+  struct SortableEntity {
+    uint64_t sort_key;
+    EntityRef ref;
 
-              // 2. Secondary: Entity type
-              if (a.type != b.type)
-                return a.type < b.type;
+    bool operator<(const SortableEntity &other) const {
+      return sort_key < other.sort_key;
+    }
+  };
 
-              // 3. Tertiary: Entity index (UNIQUE per type - guarantees total
-              // order)
-              return a.index < b.index;
-            });
+  // Reuse buffer across frames to avoid allocation
+  static thread_local std::vector<SortableEntity> sortable_entities;
+  sortable_entities.clear();
+  sortable_entities.reserve(visible_entities.size());
+
+  // Build sort keys - ONE pointer deref per entity (not per comparison)
+  for (const auto &entity : visible_entities) {
+    auto rCont = static_cast<RenderableEntityContainer *>(
+        engine->entityManager.containers[entity.type].get());
+
+    // Key: (z_index:8 bits) | (type:8 bits) | (index:48 bits)
+    uint64_t key =
+        (static_cast<uint64_t>(rCont->z_indices[entity.index]) << 56) |
+        (static_cast<uint64_t>(entity.type) << 48) |
+        static_cast<uint64_t>(entity.index);
+
+    sortable_entities.push_back({key, entity});
+  }
+
+  // Sort on pre-computed keys - ZERO pointer derefs during sort
+  std::sort(sortable_entities.begin(), sortable_entities.end());
 
   // 3. Serial Batching (Sorting is the bottleneck, batching is O(N))
-  for (const auto &entity : visible_entities) {
+  for (const auto &se : sortable_entities) {
+    const auto &entity = se.ref;
     auto rCont = static_cast<RenderableEntityContainer *>(
         engine->entityManager.containers[entity.type].get());
     float x = rCont->x_positions[entity.index] - x1;
