@@ -930,7 +930,8 @@ void engine_render_scene(Engine *engine) {
     auto rCont = static_cast<RenderableEntityContainer *>(
         engine->entityManager.containers[entity.type].get());
 
-    // Key: (z_index:8 bits) | (type:8 bits) | (index:48 bits)
+    // Key layout: (z_index:8) | (type:8) | (index:48)
+    // Stable sort - no Y-position to avoid flickering when entities move
     uint64_t key =
         (static_cast<uint64_t>(rCont->z_indices[entity.index]) << 56) |
         (static_cast<uint64_t>(entity.type) << 48) |
