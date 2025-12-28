@@ -390,50 +390,33 @@ public:
                                             float radius) {
     queryResult.clear();
 
-    uint16_t minCellX, minCellY, maxCellX, maxCellY;
-    getCellCoords(centerX - radius, centerY - radius, minCellX, minCellY);
-    getCellCoords(centerX + radius, centerY + radius, maxCellX, maxCellY);
+    int32_t minX =
+        static_cast<int32_t>((centerX - radius) * INV_GRID_CELL_SIZE);
+    int32_t minY =
+        static_cast<int32_t>((centerY - radius) * INV_GRID_CELL_SIZE);
+    int32_t maxX =
+        static_cast<int32_t>((centerX + radius) * INV_GRID_CELL_SIZE);
+    int32_t maxY =
+        static_cast<int32_t>((centerY + radius) * INV_GRID_CELL_SIZE);
 
-    // Clamp
-    if (minCellX >= GRID_CELL_WIDTH)
-      minCellX = 0;
-    if (minCellY >= GRID_CELL_HEIGHT)
-      minCellY = 0;
-    if (maxCellX >= GRID_CELL_WIDTH)
-      maxCellX = GRID_CELL_WIDTH - 1;
-    if (maxCellY >= GRID_CELL_HEIGHT)
-      maxCellY = GRID_CELL_HEIGHT - 1;
+    // Clamp to grid bounds
+    if (minX < 0)
+      minX = 0;
+    if (minY < 0)
+      minY = 0;
+    if (maxX >= (int32_t)GRID_CELL_WIDTH)
+      maxX = GRID_CELL_WIDTH - 1;
+    if (maxY >= (int32_t)GRID_CELL_HEIGHT)
+      maxY = GRID_CELL_HEIGHT - 1;
 
-    // Safety check if coordinates are completely out of bounds (negative became
-    // large uint16) getCellCoords usually handles this? Implementation of
-    // getCellCoords: x * INV_GRID_CELL_SIZE. Casting negative float to uint16_t
-    // results in large number. So we need proper clamping/checking. But for now
-    // let's assume valid range or simple clamping.
-
-    float radiusSq = radius * radius;
-
-    for (uint16_t cy = minCellY; cy <= maxCellY; ++cy) {
-      if (cy >= GRID_CELL_HEIGHT)
-        continue;
+    for (int32_t cy = minY; cy <= maxY; ++cy) {
       int32_t rowBase = cy * GRID_CELL_WIDTH;
-      for (uint16_t cx = minCellX; cx <= maxCellX; ++cx) {
-        if (cx >= GRID_CELL_WIDTH)
-          continue;
-
-        float cellWorldX = cx * GRID_CELL_SIZE;
-        float cellWorldY = cy * GRID_CELL_SIZE;
-
-        float dx = cellWorldX - centerX;
-        float dy = cellWorldY - centerY;
-
-        // Match legacy behavior: check distance to cell corner
-        if ((dx * dx + dy * dy) <= radiusSq) {
-          int32_t nodeIdx = cell_heads[rowBase + cx];
-          while (nodeIdx != -1) {
-            const GridNode &node = nodes[nodeIdx];
-            queryResult.push_back(node.entity);
-            nodeIdx = node.next;
-          }
+      for (int32_t cx = minX; cx <= maxX; ++cx) {
+        int32_t nodeIdx = cell_heads[rowBase + cx];
+        while (nodeIdx != -1) {
+          const GridNode &node = nodes[nodeIdx];
+          queryResult.push_back(node.entity);
+          nodeIdx = node.next;
         }
       }
     }

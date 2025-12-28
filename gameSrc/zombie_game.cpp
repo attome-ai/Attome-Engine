@@ -20,9 +20,9 @@
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 1020
 #define PLAYER_SIZE 64 // Slightly larger for ship sprite
-#define ZOMBIE_SIZE 64 // Slightly larger for ship sprite
+#define ZOMBIE_SIZE 32 // Slightly larger for ship sprite
 #define DAMAGE_TEXT_SIZE 20
-#define PLAYER_SPEED 1300.0f
+#define PLAYER_SPEED 600.0f
 #define NUM_ZOMBIES 1000000
 #define MAX_DAMAGE_TEXTS 500
 #define DAMAGE_TEXT_LIFETIME 0.4f
@@ -37,9 +37,9 @@ struct ZombieTypeStats {
 
 // Types corresponding to ship2.png through ship6.png
 static const ZombieTypeStats ZOMBIE_STATS[5] = {
-    {200.0f, 200.0f, 0},  // Type 0
-    {200.0f, 175.0f, 1},  // Type 1
-    {200.0f, 150.0f, 2},  // Type 2
+    {200.0f, 200.0f, 0}, // Type 0
+    {200.0f, 175.0f, 1}, // Type 1
+    {200.0f, 150.0f, 2}, // Type 2
     {200.0f, 250.0f, 3}, // Type 3
     {200.0f, 300.0f, 4}, // Type 4
 };
@@ -478,6 +478,7 @@ int main(int argc, char *argv[]) {
   ImGuiIO &io = ImGui::GetIO();
   (void)io;
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  io.FontGlobalScale = 2.0f;
 
   // Setup Dear ImGui style
   ImGui::StyleColorsDark();
@@ -599,8 +600,7 @@ int main(int argc, char *argv[]) {
       ImGui::Begin("Stats", NULL,
                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                       ImGuiWindowFlags_AlwaysAutoResize |
-                       ImGuiWindowFlags_NoBackground);
+                       ImGuiWindowFlags_AlwaysAutoResize);
       ImGui::TextColored(ImVec4(1, 1, 0, 1), "FPS: %.1f",
                          game_state.current_fps);
       ImGui::TextColored(ImVec4(1, 0, 0, 1), "HITS: %d", game_state.hit_count);
@@ -666,7 +666,6 @@ SDL_Surface *load_image_to_surface(const char *filepath) {
   stbi_image_free(data);
   return nullptr;
 }
-
 
 // ... (existing defines)
 
