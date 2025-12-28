@@ -905,8 +905,9 @@ void engine_render_scene(Engine *engine) {
   if (visible_entities.empty())
     return;
 
-  // 2. Stable Sort (Ensures consistent rendering order for same Z and Type)
-  // Now with Y-sorting for correct visual distribution!
+  // 2. Sort with TOTAL ORDER: No two distinct entities ever compare equal.
+  // This guarantees the same output order regardless of queryRect's input
+  // order, which changes when entities cross grid cell boundaries.
   std::sort(visible_entities.begin(), visible_entities.end(),
             [engine](const EntityRef &a, const EntityRef &b) {
               auto rContA = static_cast<RenderableEntityContainer *>(
@@ -914,20 +915,16 @@ void engine_render_scene(Engine *engine) {
               auto rContB = static_cast<RenderableEntityContainer *>(
                   engine->entityManager.containers[b.type].get());
 
-              // 1. Primary sort by Z-index layer
+              // 1. Primary: Z-index layer
               if (rContA->z_indices[a.index] != rContB->z_indices[b.index])
                 return rContA->z_indices[a.index] < rContB->z_indices[b.index];
 
-              // 2. Secondary sort by Y-position for correct 2D layering
-              // (Y-sorting)
-              if (rContA->y_positions[a.index] != rContB->y_positions[b.index])
-                return rContA->y_positions[a.index] <
-                       rContB->y_positions[b.index];
-
-              // 3. Absolute stability by entity type and index
+              // 2. Secondary: Entity type
               if (a.type != b.type)
                 return a.type < b.type;
 
+              // 3. Tertiary: Entity index (UNIQUE per type - guarantees total
+              // order)
               return a.index < b.index;
             });
 

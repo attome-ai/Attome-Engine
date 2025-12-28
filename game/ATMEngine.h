@@ -19,7 +19,7 @@ static constexpr bool useVulkan = 0; // Maximum number of textures
 // Spatial grid implementation
 static constexpr uint32_t WORLD_WIDTH = 50000;
 static constexpr uint32_t WORLD_HEIGHT = 50000;
-static constexpr uint32_t GRID_CELL_SIZE = 64;
+static constexpr uint32_t GRID_CELL_SIZE = 512;
 static constexpr uint32_t GRID_CELL_WIDTH =
     (WORLD_WIDTH % GRID_CELL_SIZE) == 0 ? (WORLD_WIDTH / GRID_CELL_SIZE)
                                         : (WORLD_WIDTH / GRID_CELL_SIZE) + 1;
