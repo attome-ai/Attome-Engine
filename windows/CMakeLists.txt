@@ -67,6 +67,7 @@ target_link_libraries(Template PRIVATE
 file(COPY "${CMAKE_SOURCE_DIR}/shaders" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 file(COPY "${CMAKE_SOURCE_DIR}/textures" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 file(COPY "${CMAKE_SOURCE_DIR}/fonts" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+file(COPY "${CMAKE_SOURCE_DIR}/resource" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 
 # Optional: Add post-build command to ensure assets are always up to date
 add_custom_command(TARGET Template POST_BUILD
@@ -79,4 +80,7 @@ add_custom_command(TARGET Template POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/fonts"
         "$<TARGET_FILE_DIR:Template>/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/resource"
+        "$<TARGET_FILE_DIR:Template>/resource"
 )
