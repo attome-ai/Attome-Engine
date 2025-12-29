@@ -930,8 +930,7 @@ void engine_render_scene(Engine *engine) {
     auto rCont = static_cast<RenderableEntityContainer *>(
         engine->entityManager.containers[entity.type].get());
 
-    // Key layout: (z_index:8) | (type:8) | (index:48)
-    // Stable sort - no Y-position to avoid flickering when entities move
+
     uint64_t key =
         (static_cast<uint64_t>(rCont->z_indices[entity.index]) << 56) |
         (static_cast<uint64_t>(entity.type) << 48) |
@@ -943,7 +942,15 @@ void engine_render_scene(Engine *engine) {
   // Sort on pre-computed keys - ZERO pointer derefs during sort
   std::sort(sortable_entities.begin(), sortable_entities.end());
 
-  // 3. Serial Batching (Sorting is the bottleneck, batching is O(N))
+  // 3. Build a SINGLE unified batch - preserves sort order for proper layering
+  // Since all textures are in the atlas, we render with one draw call
+  static std::vector<SDL_Vertex> unified_vertices;
+  static std::vector<int> unified_indices;
+  unified_vertices.clear();
+  unified_indices.clear();
+  unified_vertices.reserve(sortable_entities.size() * 4);
+  unified_indices.reserve(sortable_entities.size() * 6);
+
   for (const auto &se : sortable_entities) {
     const auto &entity = se.ref;
     auto rCont = static_cast<RenderableEntityContainer *>(
@@ -959,21 +966,50 @@ void engine_render_scene(Engine *engine) {
 
     SDL_FRect texRegion =
         engine->atlas.getRegion(rCont->texture_ids[entity.index]);
-    engine->renderBatchManager.addQuad(rCont->texture_ids[entity.index],
-                                       rCont->z_indices[entity.index], x, y, w,
-                                       h, texRegion);
+
+    // Add quad directly to unified batch
+    int base_vert = unified_vertices.size();
+
+    // Vertices
+    SDL_Vertex v;
+    v.color = {1, 1, 1, 1};
+
+    // Top-left
+    v.position = {x, y};
+    v.tex_coord = {texRegion.x, texRegion.y};
+    unified_vertices.push_back(v);
+
+    // Top-right
+    v.position = {x + w, y};
+    v.tex_coord = {texRegion.x + texRegion.w, texRegion.y};
+    unified_vertices.push_back(v);
+
+    // Bottom-right
+    v.position = {x + w, y + h};
+    v.tex_coord = {texRegion.x + texRegion.w, texRegion.y + texRegion.h};
+    unified_vertices.push_back(v);
+
+    // Bottom-left
+    v.position = {x, y + h};
+    v.tex_coord = {texRegion.x, texRegion.y + texRegion.h};
+    unified_vertices.push_back(v);
+
+    // Indices (two triangles)
+    unified_indices.push_back(base_vert);
+    unified_indices.push_back(base_vert + 1);
+    unified_indices.push_back(base_vert + 2);
+    unified_indices.push_back(base_vert);
+    unified_indices.push_back(base_vert + 2);
+    unified_indices.push_back(base_vert + 3);
   }
 
-  // 4. Multi-draw Batches
-  const auto &batches = engine->renderBatchManager.getBatches();
-  for (const auto &batch : batches) {
-    if (batch.vertices.empty())
-      continue;
-    SDL_Texture *texture = engine->atlas.getTexture(batch.texture_id);
+  // 4. Single draw call with atlas texture
+  if (!unified_vertices.empty()) {
+    SDL_Texture *texture = engine->atlas.getTexture(0);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-    SDL_RenderGeometry(engine->renderer, texture, batch.vertices.data(),
-                       (int)batch.vertices.size(), batch.indices.data(),
-                       (int)batch.indices.size());
+    SDL_RenderGeometry(engine->renderer, texture, unified_vertices.data(),
+                       (int)unified_vertices.size(), unified_indices.data(),
+                       (int)unified_indices.size());
   }
 }
 
