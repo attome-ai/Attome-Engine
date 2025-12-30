@@ -967,7 +967,6 @@ void update_snake(Engine *engine, GameState *game_state, float delta_time) {
       for (auto &seg : game_state->snake_body) {
         float old_seg_x = seg.x;
         float old_seg_y = seg.y;
-
         seg.x = prev_x;
         seg.y = prev_y;
 

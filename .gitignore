@@ -54,3 +54,6 @@ Thumbs.db
 /config_output.txt
 /config_output_2.txt
 /config_output_utf8.txt
+/build_log.txt
+/build_log_ascii.txt
+/build_output.txt

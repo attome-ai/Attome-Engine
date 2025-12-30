@@ -1,4 +1,10 @@
+#define _USE_MATH_DEFINES
 #include "BasicEngine.h"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
@@ -8,7 +14,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
-
 
 /**
  * Zombie Game - Basic Engine Version
@@ -24,9 +29,18 @@
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 1020
 #define PLAYER_SIZE 64
-#define ZOMBIE_SIZE 32
+#define PLANET_SIZE 32
 #define PLAYER_SPEED 600.0f
-#define NUM_ZOMBIES 1000000 // Reduced from 1,000,000 for basic engine
+#define NUM_PLANETS 100000 // Reduced from 1,000,000 for basic engine
+
+// Shooting Constants
+#define BULLET_SIZE 16
+#define BULLET_SPEED 1200.0f
+#define FIRE_RATE 0.05f
+#define BULLETS_PER_SHOT 50
+#define BULLET_SPREAD 0.15f
+#define BULLET_LIFETIME 2.0f // Basic engine uses simple seconds
+#define BULLET_DAMAGE 50.0f
 
 // --- Zombie Type Stats ---
 struct ZombieStats {
@@ -54,7 +68,13 @@ struct GameState {
 
   // Stats
   int hit_count = 0;
+  int killed_count = 0;
   int zombie_count = 0;
+
+  // Shooting state
+  float shoot_cooldown = 0.0f;
+  bool mouse_pressed = false;
+  int bullet_count = 0;
 };
 
 // --- Function Declarations ---
@@ -66,7 +86,7 @@ void check_collisions(BasicEngine &engine, GameState &game_state);
 
 // --- Main Function ---
 int main(int argc, char *argv[]) {
-  if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+  if (!SDL_Init(SDL_INIT_VIDEO)) {
     std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
     return 1;
   }
@@ -139,6 +159,16 @@ int main(int argc, char *argv[]) {
 
     // Game logic
     handle_input(engine, keyboard_state, game_state, delta_time);
+
+    // Process bullets (Basic Engine way: brute force update)
+    // Note: We need to do this manually here or in Entity::update.
+    // Since Entity::update is virtual and generic, let's keep specific logic
+    // here or let Entity handle movement. Entity::update handles basics, but we
+    // need to manage cooldowns here.
+    if (game_state.shoot_cooldown > 0) {
+      game_state.shoot_cooldown -= delta_time;
+    }
+
     update_game(engine, game_state, delta_time);
     check_collisions(engine, game_state);
 
@@ -173,7 +203,10 @@ int main(int argc, char *argv[]) {
     ImGui::TextColored(ImVec4(1, 1, 0, 1), "FPS: %.1f", game_state.current_fps);
     ImGui::TextColored(ImVec4(1, 0, 0, 1), "HITS: %d", game_state.hit_count);
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Zombies: %d",
-                       game_state.zombie_count - game_state.hit_count);
+                       game_state.zombie_count - game_state.hit_count -
+                           game_state.killed_count);
+    ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1), "Bullets: %d",
+                       game_state.bullet_count);
     ImGui::TextColored(ImVec4(0.5f, 0.5f, 1.0f, 1), "Entities: %d",
                        static_cast<int>(engine.entities.size()));
     ImGui::End();
@@ -211,9 +244,17 @@ void setup_game(BasicEngine &engine, GameState &game_state) {
   for (int i = 0; i < 5; ++i) {
     char path[256];
     snprintf(path, sizeof(path), "resource/ship%d.png", i + 2);
-    engine.zombie_textures[i] = engine.loadTexture(path);
+    engine.planet_textures[i] = engine.loadTexture(path);
     std::cout << "Loaded zombie texture " << i << std::endl;
   }
+
+  // Load bullet texture
+  engine.bullet_texture = engine.loadTexture("resource/shoot1.png");
+  if (!engine.bullet_texture) {
+    std::cerr << "Failed to load bullet texture!" << std::endl;
+    // Fallback or just continue?
+  }
+
   std::cout << "-----------------------------------" << std::endl;
 
   // Create player
@@ -226,8 +267,8 @@ void setup_game(BasicEngine &engine, GameState &game_state) {
   game_state.player->z_index = 100;
 
   // Create zombies
-  std::cout << "Creating " << NUM_ZOMBIES << " zombies..." << std::endl;
-  for (int i = 0; i < NUM_ZOMBIES; ++i) {
+  std::cout << "Creating " << NUM_PLANETS << " zombies..." << std::endl;
+  for (int i = 0; i < NUM_PLANETS; ++i) {
     float x = static_cast<float>(rand() % BASIC_WORLD_WIDTH);
     float y = static_cast<float>(rand() % BASIC_WORLD_HEIGHT);
 
@@ -240,12 +281,12 @@ void setup_game(BasicEngine &engine, GameState &game_state) {
 
     uint8_t type = rand() % 5;
 
-    Entity *zombie = engine.createEntity(BasicEntityType::ZOMBIE);
+    Entity *zombie = engine.createEntity(BasicEntityType::PLANET);
     zombie->x = x;
     zombie->y = y;
-    zombie->width = ZOMBIE_SIZE;
-    zombie->height = ZOMBIE_SIZE;
-    zombie->texture = engine.zombie_textures[type];
+    zombie->width = PLANET_SIZE;
+    zombie->height = PLANET_SIZE;
+    zombie->texture = engine.planet_textures[type];
     zombie->zombie_type = type;
     zombie->speed = ZOMBIE_STATS[type].speed;
     zombie->health = ZOMBIE_STATS[type].health;
@@ -253,8 +294,8 @@ void setup_game(BasicEngine &engine, GameState &game_state) {
     zombie->z_index = 50;
   }
 
-  game_state.zombie_count = NUM_ZOMBIES;
-  std::cout << "Created " << NUM_ZOMBIES << " zombies" << std::endl;
+  game_state.zombie_count = NUM_PLANETS;
+  std::cout << "Created " << NUM_PLANETS << " zombies" << std::endl;
 }
 
 void handle_input(BasicEngine &engine, const bool *keyboard_state,
@@ -307,6 +348,57 @@ void handle_input(BasicEngine &engine, const bool *keyboard_state,
     engine.camera.x = new_x + PLAYER_SIZE / 2.0f;
     engine.camera.y = new_y + PLAYER_SIZE / 2.0f;
   }
+
+  // Shooting Logic
+  float mx, my;
+  SDL_GetMouseState(&mx, &my);
+  bool mouseDown =
+      (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON_MASK(SDL_BUTTON_LEFT));
+
+  if (mouseDown && game_state.shoot_cooldown <= 0.0f) {
+    // Calculate spawn position (center of player)
+    float px = game_state.player->x + PLAYER_SIZE / 2.0f;
+    float py = game_state.player->y + PLAYER_SIZE / 2.0f;
+
+    // Adjust mouse to world coordinates
+    float wx = mx + (engine.camera.x - engine.camera.width / 2.0f);
+    float wy = my + (engine.camera.y - engine.camera.height / 2.0f);
+
+    // Direction
+    float dir_x = wx - px;
+    float dir_y = wy - py;
+    float len = sqrtf(dir_x * dir_x + dir_y * dir_y);
+    if (len > 0) {
+      dir_x /= len;
+      dir_y /= len;
+    }
+
+    // Base angle
+    float base_angle = atan2f(dir_y, dir_x);
+
+    for (int i = 0; i < BULLETS_PER_SHOT; ++i) {
+      float spread_angle =
+          base_angle +
+          (static_cast<float>(rand()) / RAND_MAX - 0.5f) * BULLET_SPREAD;
+      float vx = cosf(spread_angle);
+      float vy = sinf(spread_angle);
+
+      Entity *bullet = engine.createEntity(BasicEntityType::BULLET);
+      bullet->x = px - BULLET_SIZE / 2.0f;
+      bullet->y = py - BULLET_SIZE / 2.0f;
+      bullet->width = BULLET_SIZE;
+      bullet->height = BULLET_SIZE;
+      bullet->texture = engine.bullet_texture;
+      bullet->vx = vx * BULLET_SPEED;
+      bullet->vy = vy * BULLET_SPEED;
+      bullet->rotation =
+          spread_angle + M_PI / 2.0f; // +90 deg if sprite points up
+      bullet->lifetime = BULLET_LIFETIME;
+      bullet->z_index = 80;
+    }
+
+    game_state.shoot_cooldown = FIRE_RATE;
+  }
 }
 
 void update_game(BasicEngine &engine, GameState &game_state, float delta_time) {
@@ -319,9 +411,17 @@ void update_game(BasicEngine &engine, GameState &game_state, float delta_time) {
   // ANTI-OPTIMIZATION: Update ALL zombie targets every frame
   // Even zombies that are far away get updated
   for (Entity *entity : engine.entities) {
-    if (entity->type == BasicEntityType::ZOMBIE && entity->active) {
+    if (entity->type == BasicEntityType::PLANET && entity->active) {
       entity->target_x = px;
       entity->target_y = py;
+    } else if (entity->type == BasicEntityType::BULLET && entity->active) {
+      // Update bullet position
+      entity->x += entity->vx * delta_time;
+      entity->y += entity->vy * delta_time;
+      entity->lifetime -= delta_time;
+      if (entity->lifetime <= 0) {
+        entity->active = false;
+      }
     }
   }
 }
@@ -337,18 +437,18 @@ void check_collisions(BasicEngine &engine, GameState &game_state) {
 
   // ANTI-OPTIMIZATION: O(n) query for nearby zombies
   // Optimized engine uses spatial grid for O(1) cell lookup
-  float query_radius = p_radius + ZOMBIE_SIZE;
+  float query_radius = p_radius + PLANET_SIZE;
   std::vector<Entity *> nearby =
       engine.queryEntitiesInRadius(p_center_x, p_center_y, query_radius);
 
   for (Entity *entity : nearby) {
-    if (entity->type != BasicEntityType::ZOMBIE || !entity->active)
+    if (entity->type != BasicEntityType::PLANET || !entity->active)
       continue;
 
     // Precise circle collision
-    float z_center_x = entity->x + ZOMBIE_SIZE / 2.0f;
-    float z_center_y = entity->y + ZOMBIE_SIZE / 2.0f;
-    float z_radius = ZOMBIE_SIZE / 2.2f;
+    float z_center_x = entity->x + PLANET_SIZE / 2.0f;
+    float z_center_y = entity->y + PLANET_SIZE / 2.0f;
+    float z_radius = PLANET_SIZE / 2.2f;
 
     float dx = p_center_x - z_center_x;
     float dy = p_center_y - z_center_y;
@@ -369,4 +469,47 @@ void check_collisions(BasicEngine &engine, GameState &game_state) {
       entity->y = -10000.0f;
     }
   }
+
+  // Bullet Collisions (O(N^2) effectively against zombies closer to bullets)
+  // Or rather, iterate bullets and query zombies.
+  // ANTI-OPTIMIZATION: Retrieve all bullets and all zombies? Or just iterate
+  // all entities (mixed). queryEntitiesInRadius is O(N). Doing it for every
+  // bullet is O(M * N).
+
+  int active_bullets = 0;
+  for (Entity *bullet : engine.entities) {
+    if (bullet->type != BasicEntityType::BULLET || !bullet->active)
+      continue;
+
+    active_bullets++;
+
+    float bx = bullet->x + BULLET_SIZE / 2.0f;
+    float by = bullet->y + BULLET_SIZE / 2.0f;
+    float b_radius = BULLET_SIZE / 2.0f;
+
+    // Query zombies near bullet (O(N) again!)
+    float query_radius = b_radius + PLANET_SIZE / 2.2f;
+    std::vector<Entity *> nearbyZombies =
+        engine.queryEntitiesInRadius(bx, by, query_radius);
+
+    for (Entity *zombie : nearbyZombies) {
+      if (zombie->type != BasicEntityType::PLANET || !zombie->active)
+        continue;
+
+      // Hit!
+      zombie->health -= BULLET_DAMAGE;
+      if (zombie->health <= 0) {
+        game_state.killed_count++;
+        zombie->active = false;
+        zombie->visible = false;
+        zombie->x = -10000.0f;
+        zombie->y = -10000.0f;
+      }
+
+      bullet->active = false;
+      bullet->visible = false;
+      break; // Bullet hits one zombie
+    }
+  }
+  game_state.bullet_count = active_bullets;
 }

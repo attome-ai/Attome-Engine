@@ -1,7 +1,12 @@
+#define _USE_MATH_DEFINES
 #include "BasicEngine.h"
 #include "../game/stb_image.h"
 #include <cmath>
 #include <iostream>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 /**
  * BasicEngine Implementation
@@ -19,8 +24,8 @@ void Entity::update(float delta_time) {
     return;
 
   // Virtual function overhead on every entity
-  if (type == BasicEntityType::ZOMBIE) {
-    // Zombie movement - calculate every frame (no caching)
+  if (type == BasicEntityType::PLANET) {
+    // Planet movement - calculate every frame (no caching)
     float dx = target_x - x;
     float dy = target_y - y;
     float dist = std::sqrt(dx * dx + dy * dy); // sqrt every frame
@@ -66,7 +71,16 @@ void Entity::render(SDL_Renderer *renderer, float camera_x, float camera_y) {
 
   // ANTI-OPTIMIZATION: Individual draw call per entity
   // In the optimized engine, entities are batched by texture
+  // Rotation disabled due to build issues with SDL_FlipMode
+  /*
+  if (rotation != 0.0f) {
+    double degrees = rotation * 180.0 / M_PI;
+    SDL_RenderTextureRotated(renderer, texture, nullptr, &dest, degrees,
+                             nullptr, (SDL_FlipMode)0);
+  } else {
+  */
   SDL_RenderTexture(renderer, texture, nullptr, &dest);
+  // }
 }
 
 // =============================================================================
@@ -121,10 +135,14 @@ void BasicEngine::shutdown() {
     player_texture = nullptr;
   }
   for (int i = 0; i < 5; ++i) {
-    if (zombie_textures[i]) {
-      SDL_DestroyTexture(zombie_textures[i]);
-      zombie_textures[i] = nullptr;
+    if (planet_textures[i]) {
+      SDL_DestroyTexture(planet_textures[i]);
+      planet_textures[i] = nullptr;
     }
+  }
+  if (bullet_texture) {
+    SDL_DestroyTexture(bullet_texture);
+    bullet_texture = nullptr;
   }
   if (damage_text_texture) {
     SDL_DestroyTexture(damage_text_texture);
@@ -148,7 +166,7 @@ SDL_Surface *basic_load_image_to_surface(const char *filepath) {
   if (!data) {
     std::cerr << "Failed to load image: " << filepath << std::endl;
     // Return a fallback surface (magenta square)
-    SDL_Surface *surface = SDL_CreateSurface(32, 32, SDL_PIXELFORMAT_RGBA8888);
+    SDL_Surface *surface = SDL_CreateSurface(32, 32, SDL_PIXELFORMAT_ABGR8888);
     SDL_FillSurfaceRect(surface, nullptr,
                         SDL_MapRGBA(SDL_GetPixelFormatDetails(surface->format),
                                     nullptr, 255, 0, 255, 255));
@@ -157,7 +175,7 @@ SDL_Surface *basic_load_image_to_surface(const char *filepath) {
 
   int pitch = w * 4;
   SDL_Surface *temp =
-      SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, data, pitch);
+      SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_ABGR8888, data, pitch);
   if (temp) {
     SDL_Surface *copy = SDL_DuplicateSurface(temp);
     SDL_DestroySurface(temp);
@@ -177,6 +195,11 @@ SDL_Texture *BasicEngine::loadTexture(const char *filepath) {
   // Each texture is a separate GPU resource, causing state changes
   SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
   SDL_DestroySurface(surface);
+
+  if (texture) {
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+  }
 
   return texture;
 }

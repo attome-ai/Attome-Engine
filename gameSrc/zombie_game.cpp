@@ -23,7 +23,7 @@
 #define ZOMBIE_SIZE 32 // Slightly larger for ship sprite
 #define DAMAGE_TEXT_SIZE 1
 #define PLAYER_SPEED 800.0f
-#define NUM_ZOMBIES 10000
+#define NUM_ZOMBIES 100000
 #define MAX_DAMAGE_TEXTS 1
 #define DAMAGE_TEXT_LIFETIME 0.4f
 #define DAMAGE_TEXT_FLOAT_SPEED 100.0f

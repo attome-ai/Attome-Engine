@@ -23,13 +23,12 @@
 #include <string>
 #include <vector>
 
-
 // World constants (same as optimized engine)
 static constexpr int BASIC_WORLD_WIDTH = 50000;
 static constexpr int BASIC_WORLD_HEIGHT = 50000;
 
 // Entity types
-enum class BasicEntityType { PLAYER, ZOMBIE, DAMAGE_TEXT, COUNT };
+enum class BasicEntityType { PLAYER, PLANET, BULLET, DAMAGE_TEXT, COUNT };
 
 /**
  * Entity class - All data in one object (AOS pattern)
@@ -53,7 +52,7 @@ public:
 
   // State
   bool active = true;
-  BasicEntityType type = BasicEntityType::ZOMBIE;
+  BasicEntityType type = BasicEntityType::PLANET;
 
   // Game-specific data (mixed in same object - bad for cache)
   float speed = 0.0f;
@@ -65,6 +64,13 @@ public:
   // Target for movement (stored per-entity - wasteful)
   float target_x = 0.0f;
   float target_y = 0.0f;
+
+  // Velocity (for bullets)
+  float vx = 0.0f;
+  float vy = 0.0f;
+
+  // Rotation (radians)
+  float rotation = 0.0f;
 
   Entity() = default;
   virtual ~Entity() = default;
@@ -118,7 +124,8 @@ public:
   // Individual textures per entity type (ANTI-OPTIMIZATION)
   // No atlas means texture state changes between draw calls
   SDL_Texture *player_texture = nullptr;
-  SDL_Texture *zombie_textures[5] = {nullptr};
+  SDL_Texture *planet_textures[5] = {nullptr};
+  SDL_Texture *bullet_texture = nullptr;
   SDL_Texture *damage_text_texture = nullptr;
 
   // Timing
