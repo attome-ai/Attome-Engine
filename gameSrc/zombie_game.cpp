@@ -20,31 +20,27 @@
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 1020
 #define PLAYER_SIZE 64 // Slightly larger for ship sprite
-#define ZOMBIE_SIZE 32 // Slightly larger for ship sprite
-#define DAMAGE_TEXT_SIZE 1
+#define PLANET_SIZE 32 // Slightly larger for ship sprite
 #define PLAYER_SPEED 800.0f
-#define NUM_ZOMBIES 100000
-#define MAX_DAMAGE_TEXTS 1
-#define DAMAGE_TEXT_LIFETIME 0.4f
-#define DAMAGE_TEXT_FLOAT_SPEED 100.0f
-#define BULLET_SIZE 16
-#define BULLET_SPEED 1200.0f
+#define NUM_PLANETS 1000000
+#define BULLET_SIZE 26
+#define BULLET_SPEED 800.0f
 #define BULLET_LIFETIME 600.0f
-#define MAX_BULLETS 200000
+#define MAX_BULLETS 100000
 #define FIRE_RATE 0.05f      // 20 shots per second
-#define BULLETS_PER_SHOT 1 // Shoot 3 bullets at once
+#define BULLETS_PER_SHOT 800 // Shoot 3 bullets at once
 #define BULLET_SPREAD 0.15f  // Spread angle in radians
 #define BULLET_DAMAGE 100.0f // Damage per bullet
 
-// --- Zombie Type Stats ---
-struct ZombieTypeStats {
+// --- Planet Type Stats ---
+struct PlanetTypeStats {
   float speed;
   float health;
-  int texture_idx; // Index into zombie_texture_ids
+  int texture_idx; // Index into planet_texture_ids
 };
 
 // Types corresponding to ship2.png through ship6.png
-static const ZombieTypeStats ZOMBIE_STATS[5] = {
+static const PlanetTypeStats PLANET_STATS[5] = {
     {200.0f, 200.0f, 0}, // Type 0
     {200.0f, 175.0f, 1}, // Type 1
     {200.0f, 150.0f, 2}, // Type 2
@@ -55,9 +51,8 @@ static const ZombieTypeStats ZOMBIE_STATS[5] = {
 // --- Game-specific entity types ---
 enum GameEntityTypes {
   ENTITY_TYPE_PLAYER = 0,
-  ENTITY_TYPE_ZOMBIE,
+  ENTITY_TYPE_PLANET,
   ENTITY_TYPE_BULLET,
-  ENTITY_TYPE_DAMAGE_TEXT, // Keep for now, maybe use for "Hit!" effects
   ENTITY_TYPE_COUNT
 };
 
@@ -278,20 +273,20 @@ protected:
   }
 };
 
-// --- Zombie Container (OPTIMIZED) ---
-class ZombieContainer : public RenderableEntityContainer {
+// --- Planet Container (OPTIMIZED) ---
+class PlanetContainer : public RenderableEntityContainer {
 public:
   float *speeds;
-  float *health; // Used to kill zombies when they hit player
+  float *health; // Used to destroy planets when they hit player
   float *max_health;
-  uint8_t *zombie_types;
+  uint8_t *planet_types;
   Engine *engine;
 
-  // SINGLE global target instead of per-zombie arrays!
+  // SINGLE global target instead of per-planet arrays!
   float global_target_x = 0.0f;
   float global_target_y = 0.0f;
 
-  ZombieContainer(Engine *engine, int typeId, uint8_t defaultLayer,
+  PlanetContainer(Engine *engine, int typeId, uint8_t defaultLayer,
                   int initialCapacity)
       : RenderableEntityContainer(typeId, defaultLayer, initialCapacity),
         engine(engine) {
@@ -299,20 +294,20 @@ public:
     health = new float[capacity];
     max_health = new float[capacity];
 
-    zombie_types = new uint8_t[capacity];
+    planet_types = new uint8_t[capacity];
 
     std::fill(speeds, speeds + capacity, 50.0f);
     std::fill(health, health + capacity, 100.0f);
     std::fill(max_health, max_health + capacity, 100.0f);
-    std::fill(zombie_types, zombie_types + capacity, 0);
+    std::fill(planet_types, planet_types + capacity, 0);
   }
 
-  ~ZombieContainer() override {
+  ~PlanetContainer() override {
     delete[] speeds;
     delete[] health;
     delete[] max_health;
 
-    delete[] zombie_types;
+    delete[] planet_types;
   }
 
   uint32_t createEntity(float x, float y, int texture_id, uint8_t type) {
@@ -322,13 +317,13 @@ public:
 
     x_positions[index] = x;
     y_positions[index] = y;
-    widths[index] = ZOMBIE_SIZE;
-    heights[index] = ZOMBIE_SIZE;
+    widths[index] = PLANET_SIZE;
+    heights[index] = PLANET_SIZE;
     texture_ids[index] = texture_id;
-    zombie_types[index] = type;
-    speeds[index] = ZOMBIE_STATS[type].speed;
-    health[index] = ZOMBIE_STATS[type].health;
-    max_health[index] = ZOMBIE_STATS[type].health;
+    planet_types[index] = type;
+    speeds[index] = PLANET_STATS[type].speed;
+    health[index] = PLANET_STATS[type].health;
+    max_health[index] = PLANET_STATS[type].health;
     flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
     z_indices[index] = 50;
     return index;
@@ -367,9 +362,9 @@ public:
     // Parallel position update - greedy pathfinding toward target
     std::for_each(std::execution::par, indices.begin(), indices.begin() + count,
                   [&, tx, ty](uint32_t i) {
-                    // Skip dead zombies (health <= 0)
+                    // Skip destroyed planets (health <= 0)
                     if (health[i] <= 0) {
-                      // Move off-screen if dead
+                      // Move off-screen if destroyed
                       x_positions[i] = -10000.0f;
                       y_positions[i] = -10000.0f;
                       return;
@@ -400,13 +395,13 @@ public:
                     // Clamp to world bounds
                     if (px < 0)
                       px = 0;
-                    else if (px > WORLD_WIDTH - ZOMBIE_SIZE)
-                      px = WORLD_WIDTH - ZOMBIE_SIZE;
+                    else if (px > WORLD_WIDTH - PLANET_SIZE)
+                      px = WORLD_WIDTH - PLANET_SIZE;
 
                     if (py < 0)
                       py = 0;
-                    else if (py > WORLD_HEIGHT - ZOMBIE_SIZE)
-                      py = WORLD_HEIGHT - ZOMBIE_SIZE;
+                    else if (py > WORLD_HEIGHT - PLANET_SIZE)
+                      py = WORLD_HEIGHT - PLANET_SIZE;
 
                     uint16_t newCellX =
                         static_cast<uint16_t>(px * INV_GRID_CELL_SIZE);
@@ -447,7 +442,7 @@ protected:
       std::copy(speeds, speeds + count, newSpeeds);
       std::copy(health, health + count, newHealth);
       std::copy(max_health, max_health + count, newMaxHealth);
-      std::copy(zombie_types, zombie_types + count, newTypes);
+      std::copy(planet_types, planet_types + count, newTypes);
     }
     std::fill(newSpeeds + count, newSpeeds + newCapacity, 50.0f);
     std::fill(newHealth + count, newHealth + newCapacity, 100.0f);
@@ -457,127 +452,12 @@ protected:
     delete[] speeds;
     delete[] health;
     delete[] max_health;
-    delete[] zombie_types;
+    delete[] planet_types;
 
     speeds = newSpeeds;
     health = newHealth;
     max_health = newMaxHealth;
-    zombie_types = newTypes;
-
-    RenderableEntityContainer::resizeArrays(newCapacity);
-  }
-};
-
-// --- Damage Text Container with O(1) Free List ---
-class DamageTextContainer : public RenderableEntityContainer {
-public:
-  float *lifetimes;
-  uint8_t *active;
-
-  // FREE LIST for O(1) allocation!
-  std::vector<int> free_list;
-
-  DamageTextContainer(int typeId, uint8_t defaultLayer, int initialCapacity)
-      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity) {
-    lifetimes = new float[capacity];
-    active = new uint8_t[capacity];
-
-    std::fill(lifetimes, lifetimes + capacity, 0.0f);
-    std::fill(active, active + capacity, 0);
-
-    free_list.reserve(capacity);
-  }
-
-  ~DamageTextContainer() override {
-    delete[] lifetimes;
-    delete[] active;
-  }
-
-  uint32_t createEntity(float x, float y, int texture_id) {
-    uint32_t index = RenderableEntityContainer::createEntity();
-    if (index == INVALID_ID)
-      return INVALID_ID;
-
-    x_positions[index] = x;
-    y_positions[index] = y;
-    widths[index] = DAMAGE_TEXT_SIZE;
-    heights[index] = DAMAGE_TEXT_SIZE;
-    texture_ids[index] = texture_id;
-    lifetimes[index] = DAMAGE_TEXT_LIFETIME;
-    active[index] = 1;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 200; // Above everything
-    return index;
-  }
-
-  // O(1) find inactive using free list!
-  int findInactive() {
-    if (!free_list.empty()) {
-      int idx = free_list.back();
-      free_list.pop_back();
-      return idx;
-    }
-    return -1;
-  }
-
-  void activateText(int index, float x, float y) {
-    x_positions[index] = x;
-    y_positions[index] = y;
-    lifetimes[index] = DAMAGE_TEXT_LIFETIME;
-    active[index] = 1;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-  }
-
-  void deactivateText(int index) {
-    if (active[index] == 0)
-      return; // Already inactive
-    active[index] = 0;
-    flags[index] &= ~static_cast<uint8_t>(EntityFlag::VISIBLE);
-    x_positions[index] = -10000.0f;
-    y_positions[index] = -10000.0f;
-    // Add to free list for O(1) reuse!
-    free_list.push_back(index);
-  }
-
-  void update(float delta_time) override {
-    for (int i = 0; i < count; ++i) {
-      if (active[i] == 0)
-        continue;
-
-      // Float upward
-      y_positions[i] -= DAMAGE_TEXT_FLOAT_SPEED * delta_time;
-
-      // Decrease lifetime
-      lifetimes[i] -= delta_time;
-      if (lifetimes[i] <= 0) {
-        deactivateText(i);
-        continue;
-      }
-
-      flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    }
-  }
-
-protected:
-  void resizeArrays(int newCapacity) override {
-    if (newCapacity <= capacity)
-      return;
-
-    float *newLifetimes = new float[newCapacity];
-    uint8_t *newActive = new uint8_t[newCapacity];
-
-    if (count > 0) {
-      std::copy(lifetimes, lifetimes + count, newLifetimes);
-      std::copy(active, active + count, newActive);
-    }
-    std::fill(newLifetimes + count, newLifetimes + newCapacity, 0.0f);
-    std::fill(newActive + count, newActive + newCapacity, 0);
-
-    delete[] lifetimes;
-    delete[] active;
-
-    lifetimes = newLifetimes;
-    active = newActive;
+    planet_types = newTypes;
 
     RenderableEntityContainer::resizeArrays(newCapacity);
   }
@@ -590,14 +470,13 @@ struct GameState {
 
   // Textures
   int player_texture_id;
-  int zombie_texture_ids[5];
+  int planet_texture_ids[5];
   int bullet_texture_id;
 
   // Containers
   PlayerContainer *player_container;
-  ZombieContainer *zombie_container;
+  PlanetContainer *planet_container;
   BulletContainer *bullet_container;
-  DamageTextContainer *damage_text_container;
 
   // Shooting
   float shoot_cooldown;
@@ -676,24 +555,20 @@ int main(int argc, char *argv[]) {
   // Register entity containers
   PlayerContainer *player_container =
       new PlayerContainer(ENTITY_TYPE_PLAYER, 0, 10);
-  ZombieContainer *zombie_container =
-      new ZombieContainer(engine, ENTITY_TYPE_ZOMBIE, 0, NUM_ZOMBIES + 500);
+  PlanetContainer *planet_container =
+      new PlanetContainer(engine, ENTITY_TYPE_PLANET, 0, NUM_PLANETS + 500);
   BulletContainer *bullet_container =
       new BulletContainer(engine, ENTITY_TYPE_BULLET, 0, MAX_BULLETS);
-  DamageTextContainer *damage_text_container = new DamageTextContainer(
-      ENTITY_TYPE_DAMAGE_TEXT, 0, MAX_DAMAGE_TEXTS + 50);
 
   engine->entityManager.registerEntityType(player_container);
-  engine->entityManager.registerEntityType(zombie_container);
+  engine->entityManager.registerEntityType(planet_container);
   engine->entityManager.registerEntityType(bullet_container);
-  engine->entityManager.registerEntityType(damage_text_container);
 
   // Initialize game state (Local struct)
   GameState game_state = {};
   game_state.player_container = player_container;
-  game_state.zombie_container = zombie_container;
+  game_state.planet_container = planet_container;
   game_state.bullet_container = bullet_container;
-  game_state.damage_text_container = damage_text_container;
   game_state.player_index = INVALID_ID;
   game_state.last_fps_time = SDL_GetTicks();
   game_state.hit_count = 0;
@@ -805,6 +680,8 @@ int main(int argc, char *argv[]) {
       ImGui::TextColored(ImVec4(1, 1, 0, 1), "FPS: %.1f",
                          game_state.current_fps);
       ImGui::TextColored(ImVec4(1, 0, 0, 1), "HITS: %d", game_state.hit_count);
+      ImGui::TextColored(ImVec4(0, 1, 0, 1), "KILLS: %d",
+                         game_state.killed_count);
 
       // Count active bullets
       int active_bullets = 0;
@@ -815,8 +692,8 @@ int main(int argc, char *argv[]) {
       }
       ImGui::TextColored(ImVec4(1, 1, 0, 1), "Bullets: %d", active_bullets);
 
-      ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Zombies: %d",
-                         game_state.zombie_container->count -
+      ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Planets: %d",
+                         game_state.planet_container->count -
                              game_state.hit_count - game_state.killed_count);
       ImGui::End();
 
@@ -904,16 +781,16 @@ void setup_game(Engine *engine, GameState *game_state) {
   atlas_x += player_surf->w + padding;
   SDL_DestroySurface(player_surf);
 
-  // Zombie Ships (ship2.png - ship6.png)
+  // Planet Ships (ship2.png - ship6.png)
   for (int i = 0; i < 5; ++i) {
     snprintf(path_buffer, sizeof(path_buffer), "resource/ship%d.png", i + 2);
     SDL_Surface *z_surf = load_image_to_surface(path_buffer);
     if (!z_surf)
       exit(1);
-    game_state->zombie_texture_ids[i] =
+    game_state->planet_texture_ids[i] =
         engine_register_texture(engine, z_surf, atlas_x, atlas_y, 0, 0);
-    std::cout << "Zombie " << i
-              << " Tex ID: " << game_state->zombie_texture_ids[i]
+    std::cout << "Planet " << i
+              << " Tex ID: " << game_state->planet_texture_ids[i]
               << " at X: " << atlas_x << std::endl;
     atlas_x += z_surf->w + padding;
     SDL_DestroySurface(z_surf);
@@ -946,8 +823,8 @@ void setup_game(Engine *engine, GameState *game_state) {
   game_state->player_index = game_state->player_container->createEntity(
       WORLD_WIDTH / 2.0f, WORLD_HEIGHT / 2.0f, game_state->player_texture_id);
 
-  // 3. Create Zombies
-  for (int i = 0; i < NUM_ZOMBIES; ++i) {
+  // 3. Create Planets
+  for (int i = 0; i < NUM_PLANETS; ++i) {
     float x = static_cast<float>(rand() % WORLD_WIDTH);
     float y = static_cast<float>(rand() % WORLD_HEIGHT);
 
@@ -959,8 +836,8 @@ void setup_game(Engine *engine, GameState *game_state) {
     }
 
     uint8_t type = rand() % 5;
-    game_state->zombie_container->createEntity(
-        x, y, game_state->zombie_texture_ids[type], type);
+    game_state->planet_container->createEntity(
+        x, y, game_state->planet_texture_ids[type], type);
   }
 }
 
@@ -1100,13 +977,13 @@ void handle_input(Engine *engine, const bool *keyboard_state,
 }
 
 void update_game(Engine *engine, GameState *game_state, float delta_time) {
-  // Update Zombies Target (Player)
+  // Update Planets Target (Player)
   if (game_state->player_index != INVALID_ID) {
     float px =
         game_state->player_container->x_positions[game_state->player_index];
     float py =
         game_state->player_container->y_positions[game_state->player_index];
-    game_state->zombie_container->setTarget(px, py);
+    game_state->planet_container->setTarget(px, py);
   }
 }
 
@@ -1115,7 +992,7 @@ void check_collisions(Engine *engine, GameState *game_state) {
     return;
 
   PlayerContainer *player = game_state->player_container;
-  ZombieContainer *zombies = game_state->zombie_container;
+  PlanetContainer *planets = game_state->planet_container;
 
   float px = player->x_positions[game_state->player_index];
   float py = player->y_positions[game_state->player_index];
@@ -1123,19 +1000,19 @@ void check_collisions(Engine *engine, GameState *game_state) {
   float p_center_x = px + PLAYER_SIZE / 2.0f;
   float p_center_y = py + PLAYER_SIZE / 2.0f;
 
-  // Query zombies near player
+  // Query planets near player
   // Broad phase: Circle query around player
   const std::vector<EntityRef> &nearby =
-      engine->grid.queryCircle(p_center_x, p_center_y, p_radius + ZOMBIE_SIZE);
+      engine->grid.queryCircle(p_center_x, p_center_y, p_radius + PLANET_SIZE);
 
   for (const auto &ref : nearby) {
-    if (ref.type == ENTITY_TYPE_ZOMBIE) {
+    if (ref.type == ENTITY_TYPE_PLANET) {
       // Precise check
-      float zx = zombies->x_positions[ref.index];
-      float zy = zombies->y_positions[ref.index];
-      float z_radius = ZOMBIE_SIZE / 2.2f; // Increased collision radius
-      float z_center_x = zx + ZOMBIE_SIZE / 2.0f;
-      float z_center_y = zy + ZOMBIE_SIZE / 2.0f;
+      float zx = planets->x_positions[ref.index];
+      float zy = planets->y_positions[ref.index];
+      float z_radius = PLANET_SIZE / 2.2f; // Increased collision radius
+      float z_center_x = zx + PLANET_SIZE / 2.0f;
+      float z_center_y = zy + PLANET_SIZE / 2.0f;
 
       float dx = p_center_x - z_center_x;
       float dy = p_center_y - z_center_y;
@@ -1147,19 +1024,19 @@ void check_collisions(Engine *engine, GameState *game_state) {
         // 1. Increment Counter
         game_state->hit_count++;
 
-        // 2. Kill Zombie
-        zombies->health[ref.index] = -1.0f; // Mark as dead
+        // 2. Destroy Planet
+        planets->health[ref.index] = -1.0f; // Mark as destroyed
 
         // Move off-screen immediately so it doesn't hit again
-        engine->grid.move(zombies->grid_node_indices[ref.index], -10000.0f,
+        engine->grid.move(planets->grid_node_indices[ref.index], -10000.0f,
                           -10000.0f);
-        zombies->x_positions[ref.index] = -10000.0f;
-        zombies->y_positions[ref.index] = -10000.0f;
+        planets->x_positions[ref.index] = -10000.0f;
+        planets->y_positions[ref.index] = -10000.0f;
       }
     }
   }
 
-  // Bullet-Zombie Collision Detection
+  // Bullet-Planet Collision Detection
   BulletContainer *bullets = game_state->bullet_container;
   for (int b = 0; b < bullets->count; ++b) {
     if (bullets->active[b] == 0)
@@ -1169,23 +1046,23 @@ void check_collisions(Engine *engine, GameState *game_state) {
     float by = bullets->y_positions[b];
     float b_radius = BULLET_SIZE / 2.0f;
 
-    // Query zombies near bullet
-    const std::vector<EntityRef> &nearby_zombies =
+    // Query planets near bullet
+    const std::vector<EntityRef> &nearby_planets =
         engine->grid.queryCircle(bx, by, b_radius);
 
     bool bullet_hit = false;
 
-    for (const auto &ref : nearby_zombies) {
-      if (ref.type == ENTITY_TYPE_ZOMBIE && !bullet_hit) {
-        // Check if zombie is alive
-        if (zombies->health[ref.index] <= 0)
+    for (const auto &ref : nearby_planets) {
+      if (ref.type == ENTITY_TYPE_PLANET && !bullet_hit) {
+        // Check if planet is active
+        if (planets->health[ref.index] <= 0)
           continue;
 
-        float zx = zombies->x_positions[ref.index];
-        float zy = zombies->y_positions[ref.index];
-        float z_radius = ZOMBIE_SIZE / 2.2f;
-        float z_center_x = zx + ZOMBIE_SIZE / 2.0f;
-        float z_center_y = zy + ZOMBIE_SIZE / 2.0f;
+        float zx = planets->x_positions[ref.index];
+        float zy = planets->y_positions[ref.index];
+        float z_radius = PLANET_SIZE / 2.2f;
+        float z_center_x = zx + PLANET_SIZE / 2.0f;
+        float z_center_y = zy + PLANET_SIZE / 2.0f;
 
         float dx = bx - z_center_x;
         float dy = by - z_center_y;
@@ -1193,23 +1070,23 @@ void check_collisions(Engine *engine, GameState *game_state) {
         float combinedRadius = b_radius + z_radius;
 
         if (distSq < combinedRadius * combinedRadius) {
-          zombies->health[ref.index] -= BULLET_DAMAGE;
+          planets->health[ref.index] -= BULLET_DAMAGE;
 
-          if (zombies->health[ref.index] <= 0) {
-            // Killed!
+          if (planets->health[ref.index] <= 0) {
+            // Destroyed!
             game_state->killed_count++;
 
-            // Move zombie off-screen
-            engine->grid.move(zombies->grid_node_indices[ref.index], -10000.0f,
+            // Move planet off-screen
+            engine->grid.move(planets->grid_node_indices[ref.index], -10000.0f,
                               -10000.0f);
-            zombies->x_positions[ref.index] = -10000.0f;
-            zombies->y_positions[ref.index] = -10000.0f;
+            planets->x_positions[ref.index] = -10000.0f;
+            planets->y_positions[ref.index] = -10000.0f;
           }
 
           // Deactivate bullet
           bullets->deactivateBullet(b);
           bullet_hit = true;
-          break; // Bullet can only hit one zombie
+          break; // Bullet can only hit one planet
         }
       }
     }

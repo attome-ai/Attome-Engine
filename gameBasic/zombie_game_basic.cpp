@@ -42,14 +42,14 @@
 #define BULLET_LIFETIME 2.0f // Basic engine uses simple seconds
 #define BULLET_DAMAGE 50.0f
 
-// --- Zombie Type Stats ---
-struct ZombieStats {
+// --- Planet Type Stats ---
+struct PlanetStats {
   float speed;
   float health;
   int texture_idx;
 };
 
-static const ZombieStats ZOMBIE_STATS[5] = {
+static const PlanetStats PLANET_STATS[5] = {
     {200.0f, 200.0f, 0}, // Type 0
     {200.0f, 175.0f, 1}, // Type 1
     {200.0f, 150.0f, 2}, // Type 2
@@ -69,7 +69,7 @@ struct GameState {
   // Stats
   int hit_count = 0;
   int killed_count = 0;
-  int zombie_count = 0;
+  int planet_count = 0;
 
   // Shooting state
   float shoot_cooldown = 0.0f;
@@ -202,8 +202,8 @@ int main(int argc, char *argv[]) {
     ImGui::TextColored(ImVec4(1, 0, 0, 1), "BASIC ENGINE (UNOPTIMIZED)");
     ImGui::TextColored(ImVec4(1, 1, 0, 1), "FPS: %.1f", game_state.current_fps);
     ImGui::TextColored(ImVec4(1, 0, 0, 1), "HITS: %d", game_state.hit_count);
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Zombies: %d",
-                       game_state.zombie_count - game_state.hit_count -
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Planets: %d",
+                       game_state.planet_count - game_state.hit_count -
                            game_state.killed_count);
     ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1), "Bullets: %d",
                        game_state.bullet_count);
@@ -245,14 +245,13 @@ void setup_game(BasicEngine &engine, GameState &game_state) {
     char path[256];
     snprintf(path, sizeof(path), "resource/ship%d.png", i + 2);
     engine.planet_textures[i] = engine.loadTexture(path);
-    std::cout << "Loaded zombie texture " << i << std::endl;
+    std::cout << "Loaded planet texture " << i << std::endl;
   }
 
   // Load bullet texture
   engine.bullet_texture = engine.loadTexture("resource/shoot1.png");
   if (!engine.bullet_texture) {
     std::cerr << "Failed to load bullet texture!" << std::endl;
-    // Fallback or just continue?
   }
 
   std::cout << "-----------------------------------" << std::endl;
@@ -266,8 +265,8 @@ void setup_game(BasicEngine &engine, GameState &game_state) {
   game_state.player->texture = engine.player_texture;
   game_state.player->z_index = 100;
 
-  // Create zombies
-  std::cout << "Creating " << NUM_PLANETS << " zombies..." << std::endl;
+  // Create planets
+  std::cout << "Creating " << NUM_PLANETS << " planets..." << std::endl;
   for (int i = 0; i < NUM_PLANETS; ++i) {
     float x = static_cast<float>(rand() % BASIC_WORLD_WIDTH);
     float y = static_cast<float>(rand() % BASIC_WORLD_HEIGHT);
@@ -281,21 +280,21 @@ void setup_game(BasicEngine &engine, GameState &game_state) {
 
     uint8_t type = rand() % 5;
 
-    Entity *zombie = engine.createEntity(BasicEntityType::PLANET);
-    zombie->x = x;
-    zombie->y = y;
-    zombie->width = PLANET_SIZE;
-    zombie->height = PLANET_SIZE;
-    zombie->texture = engine.planet_textures[type];
-    zombie->zombie_type = type;
-    zombie->speed = ZOMBIE_STATS[type].speed;
-    zombie->health = ZOMBIE_STATS[type].health;
-    zombie->max_health = ZOMBIE_STATS[type].health;
-    zombie->z_index = 50;
+    Entity *planet = engine.createEntity(BasicEntityType::PLANET);
+    planet->x = x;
+    planet->y = y;
+    planet->width = PLANET_SIZE;
+    planet->height = PLANET_SIZE;
+    planet->texture = engine.planet_textures[type];
+    planet->planet_type = type;
+    planet->speed = PLANET_STATS[type].speed;
+    planet->health = PLANET_STATS[type].health;
+    planet->max_health = PLANET_STATS[type].health;
+    planet->z_index = 50;
   }
 
-  game_state.zombie_count = NUM_PLANETS;
-  std::cout << "Created " << NUM_PLANETS << " zombies" << std::endl;
+  game_state.planet_count = NUM_PLANETS;
+  std::cout << "Created " << NUM_PLANETS << " planets" << std::endl;
 }
 
 void handle_input(BasicEngine &engine, const bool *keyboard_state,
@@ -435,7 +434,7 @@ void check_collisions(BasicEngine &engine, GameState &game_state) {
   float p_center_y = player->y + PLAYER_SIZE / 2.0f;
   float p_radius = PLAYER_SIZE / 2.2f;
 
-  // ANTI-OPTIMIZATION: O(n) query for nearby zombies
+  // ANTI-OPTIMIZATION: O(n) query for nearby planets
   // Optimized engine uses spatial grid for O(1) cell lookup
   float query_radius = p_radius + PLANET_SIZE;
   std::vector<Entity *> nearby =
@@ -446,20 +445,20 @@ void check_collisions(BasicEngine &engine, GameState &game_state) {
       continue;
 
     // Precise circle collision
-    float z_center_x = entity->x + PLANET_SIZE / 2.0f;
-    float z_center_y = entity->y + PLANET_SIZE / 2.0f;
-    float z_radius = PLANET_SIZE / 2.2f;
+    float p_center_x_entity = entity->x + PLANET_SIZE / 2.0f;
+    float p_center_y_entity = entity->y + PLANET_SIZE / 2.0f;
+    float p_radius_entity = PLANET_SIZE / 2.2f;
 
-    float dx = p_center_x - z_center_x;
-    float dy = p_center_y - z_center_y;
+    float dx = p_center_x - p_center_x_entity;
+    float dy = p_center_y - p_center_y_entity;
     float dist_sq = dx * dx + dy * dy;
-    float combined_radius = p_radius + z_radius;
+    float combined_radius = p_radius + p_radius_entity;
 
     if (dist_sq < combined_radius * combined_radius) {
       // HIT!
       game_state.hit_count++;
 
-      // Kill zombie
+      // Destroy planet
       entity->health = -1.0f;
       entity->active = false;
       entity->visible = false;
@@ -470,12 +469,7 @@ void check_collisions(BasicEngine &engine, GameState &game_state) {
     }
   }
 
-  // Bullet Collisions (O(N^2) effectively against zombies closer to bullets)
-  // Or rather, iterate bullets and query zombies.
-  // ANTI-OPTIMIZATION: Retrieve all bullets and all zombies? Or just iterate
-  // all entities (mixed). queryEntitiesInRadius is O(N). Doing it for every
-  // bullet is O(M * N).
-
+  // Bullet Collisions (O(N^2) effectively against planets closer to bullets)
   int active_bullets = 0;
   for (Entity *bullet : engine.entities) {
     if (bullet->type != BasicEntityType::BULLET || !bullet->active)
@@ -487,28 +481,28 @@ void check_collisions(BasicEngine &engine, GameState &game_state) {
     float by = bullet->y + BULLET_SIZE / 2.0f;
     float b_radius = BULLET_SIZE / 2.0f;
 
-    // Query zombies near bullet (O(N) again!)
+    // Query planets near bullet (O(N) again!)
     float query_radius = b_radius + PLANET_SIZE / 2.2f;
-    std::vector<Entity *> nearbyZombies =
+    std::vector<Entity *> nearbyPlanets =
         engine.queryEntitiesInRadius(bx, by, query_radius);
 
-    for (Entity *zombie : nearbyZombies) {
-      if (zombie->type != BasicEntityType::PLANET || !zombie->active)
+    for (Entity *planet : nearbyPlanets) {
+      if (planet->type != BasicEntityType::PLANET || !planet->active)
         continue;
 
       // Hit!
-      zombie->health -= BULLET_DAMAGE;
-      if (zombie->health <= 0) {
+      planet->health -= BULLET_DAMAGE;
+      if (planet->health <= 0) {
         game_state.killed_count++;
-        zombie->active = false;
-        zombie->visible = false;
-        zombie->x = -10000.0f;
-        zombie->y = -10000.0f;
+        planet->active = false;
+        planet->visible = false;
+        planet->x = -10000.0f;
+        planet->y = -10000.0f;
       }
 
       bullet->active = false;
       bullet->visible = false;
-      break; // Bullet hits one zombie
+      break; // Bullet hits one planet
     }
   }
   game_state.bullet_count = active_bullets;

@@ -47,14 +47,6 @@ void Entity::update(float delta_time) {
       y = 0;
     if (y > BASIC_WORLD_HEIGHT - height)
       y = BASIC_WORLD_HEIGHT - height;
-  } else if (type == BasicEntityType::DAMAGE_TEXT) {
-    // Float upward
-    y -= 100.0f * delta_time;
-    lifetime -= delta_time;
-    if (lifetime <= 0) {
-      active = false;
-      visible = false;
-    }
   }
 }
 
@@ -143,10 +135,6 @@ void BasicEngine::shutdown() {
   if (bullet_texture) {
     SDL_DestroyTexture(bullet_texture);
     bullet_texture = nullptr;
-  }
-  if (damage_text_texture) {
-    SDL_DestroyTexture(damage_text_texture);
-    damage_text_texture = nullptr;
   }
 
   if (renderer) {

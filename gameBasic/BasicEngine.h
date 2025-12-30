@@ -28,7 +28,7 @@ static constexpr int BASIC_WORLD_WIDTH = 50000;
 static constexpr int BASIC_WORLD_HEIGHT = 50000;
 
 // Entity types
-enum class BasicEntityType { PLAYER, PLANET, BULLET, DAMAGE_TEXT, COUNT };
+enum class BasicEntityType { PLAYER, PLANET, BULLET, COUNT };
 
 /**
  * Entity class - All data in one object (AOS pattern)
@@ -59,7 +59,7 @@ public:
   float health = 100.0f;
   float max_health = 100.0f;
   float lifetime = 0.0f;
-  uint8_t zombie_type = 0;
+  uint8_t planet_type = 0;
 
   // Target for movement (stored per-entity - wasteful)
   float target_x = 0.0f;
@@ -126,7 +126,6 @@ public:
   SDL_Texture *player_texture = nullptr;
   SDL_Texture *planet_textures[5] = {nullptr};
   SDL_Texture *bullet_texture = nullptr;
-  SDL_Texture *damage_text_texture = nullptr;
 
   // Timing
   Uint64 last_frame_time = 0;

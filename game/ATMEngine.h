@@ -237,9 +237,9 @@ public:
     // Initialize grid heads to -1 (empty)
     cell_heads.resize(GRID_CELL_WIDTH * GRID_CELL_HEIGHT, -1);
 
-    // Pre-allocate nodes (e.g., 100,000 entities max?)
-    // Let's reserve a safe amount, e.g., 200,000
-    nodes.reserve(200000);
+    // Pre-allocate nodes (e.g., 1,000,000 entities max?)
+    // Let's reserve a safe amount for high entity count
+    nodes.reserve(4200000);
     queryResult.reserve(15000);
   }
 
