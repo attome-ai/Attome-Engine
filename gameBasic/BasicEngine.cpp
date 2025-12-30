@@ -246,13 +246,18 @@ void BasicEngine::render() {
 
   // ANTI-OPTIMIZATION: Sort with pointer dereferencing in comparator
   // Every comparison requires multiple memory lookups
-  std::sort(visible_entities.begin(), visible_entities.end(),
-            [](const Entity *a, const Entity *b) {
-              // Multiple pointer dereferences per comparison
-              if (a->z_index != b->z_index)
-                return a->z_index < b->z_index;
-              return a->y < b->y; // Additional deref
-            });
+  // Using stable_sort to prevent flickering from entities swapping order
+  std::stable_sort(visible_entities.begin(), visible_entities.end(),
+                   [](const Entity *a, const Entity *b) {
+                     // Multiple pointer dereferences per comparison
+                     if (a->z_index != b->z_index)
+                       return a->z_index < b->z_index;
+                     // Use y position for depth sorting, then pointer for
+                     // stable tiebreaker
+                     if (a->y != b->y)
+                       return a->y < b->y;
+                     return a < b; // Pointer address as stable tiebreaker
+                   });
 
   // ANTI-OPTIMIZATION: Individual draw calls (no batching)
   // Each call requires:

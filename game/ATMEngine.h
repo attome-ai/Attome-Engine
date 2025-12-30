@@ -158,6 +158,7 @@ public:
   int16_t *heights;
   int16_t *texture_ids;
   uint8_t *z_indices;
+  float *rotations; // Rotation in radians
 
   RenderableEntityContainer(int typeId, uint8_t defaultLayer,
                             int initialCapacity);

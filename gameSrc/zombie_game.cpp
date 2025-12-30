@@ -22,11 +22,19 @@
 #define PLAYER_SIZE 64 // Slightly larger for ship sprite
 #define ZOMBIE_SIZE 32 // Slightly larger for ship sprite
 #define DAMAGE_TEXT_SIZE 1
-#define PLAYER_SPEED 600.0f
-#define NUM_ZOMBIES 1000000
+#define PLAYER_SPEED 800.0f
+#define NUM_ZOMBIES 10000
 #define MAX_DAMAGE_TEXTS 1
 #define DAMAGE_TEXT_LIFETIME 0.4f
 #define DAMAGE_TEXT_FLOAT_SPEED 100.0f
+#define BULLET_SIZE 16
+#define BULLET_SPEED 1200.0f
+#define BULLET_LIFETIME 600.0f
+#define MAX_BULLETS 200000
+#define FIRE_RATE 0.05f      // 20 shots per second
+#define BULLETS_PER_SHOT 1 // Shoot 3 bullets at once
+#define BULLET_SPREAD 0.15f  // Spread angle in radians
+#define BULLET_DAMAGE 100.0f // Damage per bullet
 
 // --- Zombie Type Stats ---
 struct ZombieTypeStats {
@@ -48,6 +56,7 @@ static const ZombieTypeStats ZOMBIE_STATS[5] = {
 enum GameEntityTypes {
   ENTITY_TYPE_PLAYER = 0,
   ENTITY_TYPE_ZOMBIE,
+  ENTITY_TYPE_BULLET,
   ENTITY_TYPE_DAMAGE_TEXT, // Keep for now, maybe use for "Hit!" effects
   ENTITY_TYPE_COUNT
 };
@@ -55,15 +64,10 @@ enum GameEntityTypes {
 // --- Player Container ---
 class PlayerContainer : public RenderableEntityContainer {
 public:
-  float *facing_angles;
-
   PlayerContainer(int typeId, uint8_t defaultLayer, int initialCapacity)
-      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity) {
-    facing_angles = new float[capacity];
-    std::fill(facing_angles, facing_angles + capacity, 0.0f);
-  }
+      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity) {}
 
-  ~PlayerContainer() override { delete[] facing_angles; }
+  ~PlayerContainer() override {}
 
   uint32_t createEntity(float x, float y, int texture_id) {
     uint32_t index = RenderableEntityContainer::createEntity();
@@ -75,7 +79,7 @@ public:
     widths[index] = PLAYER_SIZE;
     heights[index] = PLAYER_SIZE;
     texture_ids[index] = texture_id;
-    facing_angles[index] = 0.0f;
+    rotations[index] = 0.0f;
     flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
     z_indices[index] = 100;
     return index;
@@ -92,15 +96,183 @@ protected:
     if (newCapacity <= capacity)
       return;
 
-    float *newAngles = new float[newCapacity];
+    RenderableEntityContainer::resizeArrays(newCapacity);
+  }
+};
+
+// --- Bullet Container ---
+class BulletContainer : public RenderableEntityContainer {
+public:
+  float *velocities_x;
+  float *velocities_y;
+  float *lifetimes;
+  uint8_t *active;
+  Engine *engine;
+
+  // FREE LIST for O(1) allocation
+  std::vector<int> free_list;
+
+  BulletContainer(Engine *engine, int typeId, uint8_t defaultLayer,
+                  int initialCapacity)
+      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity),
+        engine(engine) {
+    velocities_x = new float[capacity];
+    velocities_y = new float[capacity];
+    lifetimes = new float[capacity];
+    active = new uint8_t[capacity];
+
+    std::fill(velocities_x, velocities_x + capacity, 0.0f);
+    std::fill(velocities_y, velocities_y + capacity, 0.0f);
+    std::fill(lifetimes, lifetimes + capacity, 0.0f);
+    std::fill(active, active + capacity, 0);
+
+    free_list.reserve(capacity);
+  }
+
+  ~BulletContainer() override {
+    delete[] velocities_x;
+    delete[] velocities_y;
+    delete[] lifetimes;
+    delete[] active;
+  }
+
+  uint32_t createEntity(float x, float y, float vx, float vy, int texture_id) {
+    uint32_t index = RenderableEntityContainer::createEntity();
+    if (index == INVALID_ID)
+      return INVALID_ID;
+
+    x_positions[index] = x;
+    y_positions[index] = y;
+    velocities_x[index] = vx;
+    velocities_y[index] = vy;
+    widths[index] = BULLET_SIZE;
+    heights[index] = BULLET_SIZE;
+    texture_ids[index] = texture_id;
+    lifetimes[index] = BULLET_LIFETIME;
+    active[index] = 1;
+    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[index] = 75; // Between zombies and player
+
+    // CRITICAL: Add to spatial grid for rendering!
+    EntityRef ref;
+    ref.type = type_id;
+    ref.index = index;
+    grid_node_indices[index] = engine->grid.add(ref, x, y);
+    cell_x[index] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
+    cell_y[index] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
+
+    return index;
+  }
+
+  // O(1) find inactive using free list
+  int findInactive() {
+    if (!free_list.empty()) {
+      int idx = free_list.back();
+      free_list.pop_back();
+      return idx;
+    }
+    return -1;
+  }
+
+  void activateBullet(int index, float x, float y, float vx, float vy) {
+    x_positions[index] = x;
+    y_positions[index] = y;
+    velocities_x[index] = vx;
+    velocities_y[index] = vy;
+    lifetimes[index] = BULLET_LIFETIME;
+    active[index] = 1;
+    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+
+    // Update grid
+    int32_t nodeIdx = grid_node_indices[index];
+    if (nodeIdx != -1) {
+      engine->grid.move(nodeIdx, x, y);
+    }
+    cell_x[index] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
+    cell_y[index] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
+  }
+
+  void deactivateBullet(int index) {
+    if (active[index] == 0)
+      return; // Already inactive
+    active[index] = 0;
+    flags[index] &= ~static_cast<uint8_t>(EntityFlag::VISIBLE);
+    x_positions[index] = -10000.0f;
+    y_positions[index] = -10000.0f;
+
+    // Update grid to move off-screen
+    int32_t nodeIdx = grid_node_indices[index];
+    if (nodeIdx != -1) {
+      engine->grid.move(nodeIdx, -10000.0f, -10000.0f);
+    }
+
+    // Add to free list for O(1) reuse
+    free_list.push_back(index);
+  }
+
+  void update(float delta_time) override {
+    PROFILE_FUNCTION();
+    delta_time = std::min(delta_time, 0.1f);
+
+    for (int i = 0; i < count; ++i) {
+      if (active[i] == 0)
+        continue;
+
+      // Move bullet
+      x_positions[i] += velocities_x[i] * delta_time;
+      y_positions[i] += velocities_y[i] * delta_time;
+
+      // Update grid
+      int32_t nodeIdx = grid_node_indices[i];
+      if (nodeIdx != -1) {
+        engine->grid.move(nodeIdx, x_positions[i], y_positions[i]);
+      }
+      cell_x[i] = static_cast<uint16_t>(x_positions[i] * INV_GRID_CELL_SIZE);
+      cell_y[i] = static_cast<uint16_t>(y_positions[i] * INV_GRID_CELL_SIZE);
+
+      // Decrease lifetime
+      lifetimes[i] -= delta_time;
+      if (lifetimes[i] <= 0 || x_positions[i] < 0 ||
+          x_positions[i] > WORLD_WIDTH || y_positions[i] < 0 ||
+          y_positions[i] > WORLD_HEIGHT) {
+        deactivateBullet(i);
+        continue;
+      }
+
+      flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    }
+  }
+
+protected:
+  void resizeArrays(int newCapacity) override {
+    if (newCapacity <= capacity)
+      return;
+
+    float *newVelX = new float[newCapacity];
+    float *newVelY = new float[newCapacity];
+    float *newLifetimes = new float[newCapacity];
+    uint8_t *newActive = new uint8_t[newCapacity];
 
     if (count > 0) {
-      std::copy(facing_angles, facing_angles + count, newAngles);
+      std::copy(velocities_x, velocities_x + count, newVelX);
+      std::copy(velocities_y, velocities_y + count, newVelY);
+      std::copy(lifetimes, lifetimes + count, newLifetimes);
+      std::copy(active, active + count, newActive);
     }
-    std::fill(newAngles + count, newAngles + newCapacity, 0.0f);
+    std::fill(newVelX + count, newVelX + newCapacity, 0.0f);
+    std::fill(newVelY + count, newVelY + newCapacity, 0.0f);
+    std::fill(newLifetimes + count, newLifetimes + newCapacity, 0.0f);
+    std::fill(newActive + count, newActive + newCapacity, 0);
 
-    delete[] facing_angles;
-    facing_angles = newAngles;
+    delete[] velocities_x;
+    delete[] velocities_y;
+    delete[] lifetimes;
+    delete[] active;
+
+    velocities_x = newVelX;
+    velocities_y = newVelY;
+    lifetimes = newLifetimes;
+    active = newActive;
 
     RenderableEntityContainer::resizeArrays(newCapacity);
   }
@@ -126,6 +298,7 @@ public:
     speeds = new float[capacity];
     health = new float[capacity];
     max_health = new float[capacity];
+
     zombie_types = new uint8_t[capacity];
 
     std::fill(speeds, speeds + capacity, 50.0f);
@@ -138,6 +311,7 @@ public:
     delete[] speeds;
     delete[] health;
     delete[] max_health;
+
     delete[] zombie_types;
   }
 
@@ -212,6 +386,9 @@ public:
                     float dx = tx - px;
                     float dy = ty - py;
                     float dist = sqrtf(dx * dx + dy * dy);
+
+                    // Calculate rotation angle toward target
+                    rotations[i] = atan2f(dy, dx);
 
                     if (dist > 1.0f) {
                       float nx = dx / dist;
@@ -414,11 +591,17 @@ struct GameState {
   // Textures
   int player_texture_id;
   int zombie_texture_ids[5];
+  int bullet_texture_id;
 
   // Containers
   PlayerContainer *player_container;
   ZombieContainer *zombie_container;
+  BulletContainer *bullet_container;
   DamageTextContainer *damage_text_container;
+
+  // Shooting
+  float shoot_cooldown;
+  bool mouse_pressed;
 
   // FPS tracking
   Uint64 last_fps_time;
@@ -426,7 +609,8 @@ struct GameState {
   float current_fps;
 
   // Stats
-  int hit_count; // Number of times player got hit
+  int hit_count;    // Number of times player got hit
+  int killed_count; // Number of zombies killed by bullets
 };
 
 // --- Function Declarations ---
@@ -494,21 +678,28 @@ int main(int argc, char *argv[]) {
       new PlayerContainer(ENTITY_TYPE_PLAYER, 0, 10);
   ZombieContainer *zombie_container =
       new ZombieContainer(engine, ENTITY_TYPE_ZOMBIE, 0, NUM_ZOMBIES + 500);
+  BulletContainer *bullet_container =
+      new BulletContainer(engine, ENTITY_TYPE_BULLET, 0, MAX_BULLETS);
   DamageTextContainer *damage_text_container = new DamageTextContainer(
       ENTITY_TYPE_DAMAGE_TEXT, 0, MAX_DAMAGE_TEXTS + 50);
 
   engine->entityManager.registerEntityType(player_container);
   engine->entityManager.registerEntityType(zombie_container);
+  engine->entityManager.registerEntityType(bullet_container);
   engine->entityManager.registerEntityType(damage_text_container);
 
   // Initialize game state (Local struct)
   GameState game_state = {};
   game_state.player_container = player_container;
   game_state.zombie_container = zombie_container;
+  game_state.bullet_container = bullet_container;
   game_state.damage_text_container = damage_text_container;
   game_state.player_index = INVALID_ID;
   game_state.last_fps_time = SDL_GetTicks();
   game_state.hit_count = 0;
+  game_state.killed_count = 0;
+  game_state.shoot_cooldown = 0.0f;
+  game_state.mouse_pressed = false;
 
   setup_game(engine, &game_state);
 
@@ -564,6 +755,16 @@ int main(int argc, char *argv[]) {
       else if (event.type == SDL_EVENT_KEY_DOWN) {
         if (event.key.scancode == SDL_SCANCODE_ESCAPE)
           quit = true;
+      } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+        // Only process mouse input if ImGui doesn't want it
+        ImGuiIO &io = ImGui::GetIO();
+        if (event.button.button == SDL_BUTTON_LEFT && !io.WantCaptureMouse) {
+          game_state.mouse_pressed = true;
+        }
+      } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+        if (event.button.button == SDL_BUTTON_LEFT) {
+          game_state.mouse_pressed = false;
+        }
       }
     }
 
@@ -604,9 +805,19 @@ int main(int argc, char *argv[]) {
       ImGui::TextColored(ImVec4(1, 1, 0, 1), "FPS: %.1f",
                          game_state.current_fps);
       ImGui::TextColored(ImVec4(1, 0, 0, 1), "HITS: %d", game_state.hit_count);
+
+      // Count active bullets
+      int active_bullets = 0;
+      for (int i = 0; i < game_state.bullet_container->count; ++i) {
+        if (game_state.bullet_container->active[i]) {
+          active_bullets++;
+        }
+      }
+      ImGui::TextColored(ImVec4(1, 1, 0, 1), "Bullets: %d", active_bullets);
+
       ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Zombies: %d",
                          game_state.zombie_container->count -
-                             game_state.hit_count);
+                             game_state.hit_count - game_state.killed_count);
       ImGui::End();
 
       ImGui::Render();
@@ -707,6 +918,28 @@ void setup_game(Engine *engine, GameState *game_state) {
     atlas_x += z_surf->w + padding;
     SDL_DestroySurface(z_surf);
   }
+
+  // Bullet texture
+  snprintf(path_buffer, sizeof(path_buffer), "resource/shoot1.png");
+  SDL_Surface *bullet_surf = load_image_to_surface(path_buffer);
+  if (!bullet_surf) {
+    std::cerr << "Failed to load bullet texture, creating fallback."
+              << std::endl;
+    // Create a simple yellow circle for bullet
+    bullet_surf =
+        SDL_CreateSurface(BULLET_SIZE, BULLET_SIZE, SDL_PIXELFORMAT_RGBA8888);
+    SDL_FillSurfaceRect(
+        bullet_surf, NULL,
+        SDL_MapRGBA(SDL_GetPixelFormatDetails(bullet_surf->format), NULL, 255,
+                    255, 0, 255));
+  }
+  game_state->bullet_texture_id =
+      engine_register_texture(engine, bullet_surf, atlas_x, atlas_y, 0, 0);
+  std::cout << "Bullet Tex ID: " << game_state->bullet_texture_id
+            << " at X: " << atlas_x << std::endl;
+  atlas_x += bullet_surf->w + padding;
+  SDL_DestroySurface(bullet_surf);
+
   std::cout << "------------------------------" << std::endl;
 
   // 2. Create Player
@@ -791,6 +1024,79 @@ void handle_input(Engine *engine, const bool *keyboard_state,
     player->cell_y[game_state->player_index] =
         static_cast<uint16_t>(new_y * INV_GRID_CELL_SIZE);
   }
+
+  // Shooting mechanics
+  if (game_state->shoot_cooldown > 0) {
+    game_state->shoot_cooldown -= delta_time;
+  }
+
+  if (keyboard_state[SDL_SCANCODE_SPACE] || game_state->mouse_pressed) {
+    if (game_state->shoot_cooldown <= 0) {
+      // Shoot!
+      PlayerContainer *player = game_state->player_container;
+      float px =
+          player->x_positions[game_state->player_index] + PLAYER_SIZE / 2.0f;
+      float py =
+          player->y_positions[game_state->player_index] + PLAYER_SIZE / 2.0f;
+
+      // Get mouse position in world coordinates
+      float mouse_x, mouse_y;
+      SDL_GetMouseState(&mouse_x, &mouse_y);
+
+      // Convert screen to world coordinates
+      float world_mouse_x =
+          engine->camera.x - (engine->camera.width / 2.0f) + mouse_x;
+      float world_mouse_y =
+          engine->camera.y - (engine->camera.height / 2.0f) + mouse_y;
+
+      // Calculate direction from player to mouse
+      float shoot_vx = world_mouse_x - px;
+      float shoot_vy = world_mouse_y - py;
+      float dist = sqrtf(shoot_vx * shoot_vx + shoot_vy * shoot_vy);
+
+      // Normalize direction (if mouse is not exactly on player)
+      if (dist > 1.0f) {
+        shoot_vx /= dist;
+        shoot_vy /= dist;
+      } else {
+        // Default to right if mouse is on player
+        shoot_vx = 1.0f;
+        shoot_vy = 0.0f;
+      }
+
+      // Shoot multiple bullets with spread
+      BulletContainer *bullets = game_state->bullet_container;
+
+      for (int i = 0; i < BULLETS_PER_SHOT; ++i) {
+        // Calculate spread angle
+        float spread_angle =
+            (i - (BULLETS_PER_SHOT - 1) / 2.0f) * BULLET_SPREAD;
+        float cos_spread = cosf(spread_angle);
+        float sin_spread = sinf(spread_angle);
+
+        // Rotate direction by spread angle
+        float spread_vx = shoot_vx * cos_spread - shoot_vy * sin_spread;
+        float spread_vy = shoot_vx * sin_spread + shoot_vy * cos_spread;
+
+        int bullet_idx = bullets->findInactive();
+        if (bullet_idx != -1) {
+          bullets->activateBullet(bullet_idx, px, py, spread_vx * BULLET_SPEED,
+                                  spread_vy * BULLET_SPEED);
+        } else if (bullets->count < MAX_BULLETS) {
+          bullets->createEntity(px, py, spread_vx * BULLET_SPEED,
+                                spread_vy * BULLET_SPEED,
+                                game_state->bullet_texture_id);
+        }
+
+        // Update rotation for the just activated/created bullet
+        int last_idx = (bullet_idx != -1) ? bullet_idx : (bullets->count - 1);
+        bullets->rotations[last_idx] =
+            atan2f(spread_vy, spread_vx) + 3.14 / 2.0f;
+      }
+
+      game_state->shoot_cooldown = FIRE_RATE;
+    }
+  }
 }
 
 void update_game(Engine *engine, GameState *game_state, float delta_time) {
@@ -849,6 +1155,62 @@ void check_collisions(Engine *engine, GameState *game_state) {
                           -10000.0f);
         zombies->x_positions[ref.index] = -10000.0f;
         zombies->y_positions[ref.index] = -10000.0f;
+      }
+    }
+  }
+
+  // Bullet-Zombie Collision Detection
+  BulletContainer *bullets = game_state->bullet_container;
+  for (int b = 0; b < bullets->count; ++b) {
+    if (bullets->active[b] == 0)
+      continue; // Skip inactive bullets
+
+    float bx = bullets->x_positions[b];
+    float by = bullets->y_positions[b];
+    float b_radius = BULLET_SIZE / 2.0f;
+
+    // Query zombies near bullet
+    const std::vector<EntityRef> &nearby_zombies =
+        engine->grid.queryCircle(bx, by, b_radius);
+
+    bool bullet_hit = false;
+
+    for (const auto &ref : nearby_zombies) {
+      if (ref.type == ENTITY_TYPE_ZOMBIE && !bullet_hit) {
+        // Check if zombie is alive
+        if (zombies->health[ref.index] <= 0)
+          continue;
+
+        float zx = zombies->x_positions[ref.index];
+        float zy = zombies->y_positions[ref.index];
+        float z_radius = ZOMBIE_SIZE / 2.2f;
+        float z_center_x = zx + ZOMBIE_SIZE / 2.0f;
+        float z_center_y = zy + ZOMBIE_SIZE / 2.0f;
+
+        float dx = bx - z_center_x;
+        float dy = by - z_center_y;
+        float distSq = dx * dx + dy * dy;
+        float combinedRadius = b_radius + z_radius;
+
+        if (distSq < combinedRadius * combinedRadius) {
+          zombies->health[ref.index] -= BULLET_DAMAGE;
+
+          if (zombies->health[ref.index] <= 0) {
+            // Killed!
+            game_state->killed_count++;
+
+            // Move zombie off-screen
+            engine->grid.move(zombies->grid_node_indices[ref.index], -10000.0f,
+                              -10000.0f);
+            zombies->x_positions[ref.index] = -10000.0f;
+            zombies->y_positions[ref.index] = -10000.0f;
+          }
+
+          // Deactivate bullet
+          bullets->deactivateBullet(b);
+          bullet_hit = true;
+          break; // Bullet can only hit one zombie
+        }
       }
     }
   }

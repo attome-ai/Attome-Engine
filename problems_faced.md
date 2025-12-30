@@ -122,3 +122,20 @@ visual_x += (logic_x - visual_x) * lerp_factor;
 **Pattern:** Grep codebase for struct name, update all instantiation sites.
 
 ---
+
+## 11. Entities Must Be Registered in Spatial Grid
+
+**Problem:** Created entities but they don't render or participate in collisions.
+
+**Pattern:** All entities MUST be added to spatial grid after creation for rendering/collision.
+```cpp
+// In createEntity(), REQUIRED:
+EntityRef ref;
+ref.type = type_id;
+ref.index = index;
+grid_node_indices[index] = engine->grid.add(ref, x, y);
+cell_x[index] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
+cell_y[index] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
+```
+
+---

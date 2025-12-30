@@ -178,6 +178,7 @@ RenderableEntityContainer::RenderableEntityContainer(int typeId,
   heights = new int16_t[capacity];
   texture_ids = new int16_t[capacity];
   z_indices = new uint8_t[capacity];
+  rotations = new float[capacity];
   this->containerFlag |= (uint8_t)ContainerFlag::RENDERABLE;
 }
 
@@ -188,6 +189,7 @@ RenderableEntityContainer::~RenderableEntityContainer() {
   delete[] heights;
   delete[] texture_ids;
   delete[] z_indices;
+  delete[] rotations;
 }
 
 uint32_t RenderableEntityContainer::createEntity() {
@@ -199,6 +201,7 @@ uint32_t RenderableEntityContainer::createEntity() {
   heights[index] = 0;
   texture_ids[index] = 0;
   z_indices[index] = 0;
+  rotations[index] = 0.0f;
   return index;
 }
 
@@ -213,6 +216,7 @@ void RenderableEntityContainer::removeEntity(size_t index) {
     heights[index] = heights[last];
     texture_ids[index] = texture_ids[last];
     z_indices[index] = z_indices[last];
+    rotations[index] = rotations[last];
   }
 
   EntityContainer::removeEntity(index);
@@ -232,6 +236,7 @@ void RenderableEntityContainer::resizeArrays(int newCapacity) {
   int16_t *newHeights = new int16_t[newCapacity];
   int16_t *newTextureIds = new int16_t[newCapacity];
   uint8_t *newZIndices = new uint8_t[newCapacity];
+  float *newRotations = new float[newCapacity];
 
   // Copy existing data
   if (count > 0) {
@@ -239,6 +244,7 @@ void RenderableEntityContainer::resizeArrays(int newCapacity) {
     std::copy(heights, heights + count, newHeights);
     std::copy(texture_ids, texture_ids + count, newTextureIds);
     std::copy(z_indices, z_indices + count, newZIndices);
+    std::copy(rotations, rotations + count, newRotations);
   }
 
   // Delete old renderable-specific arrays ONLY
@@ -252,6 +258,7 @@ void RenderableEntityContainer::resizeArrays(int newCapacity) {
   heights = newHeights;
   texture_ids = newTextureIds;
   z_indices = newZIndices;
+  rotations = newRotations;
 }
 
 // Layer implementation
@@ -930,7 +937,6 @@ void engine_render_scene(Engine *engine) {
     auto rCont = static_cast<RenderableEntityContainer *>(
         engine->entityManager.containers[entity.type].get());
 
-
     uint64_t key =
         (static_cast<uint64_t>(rCont->z_indices[entity.index]) << 56) |
         (static_cast<uint64_t>(entity.type) << 48) |
@@ -971,26 +977,39 @@ void engine_render_scene(Engine *engine) {
     int base_vert = unified_vertices.size();
 
     // Vertices
+    // Vertices - Manual Rotation
     SDL_Vertex v;
     v.color = {1, 1, 1, 1};
 
+    float angle = rCont->rotations[entity.index];
+    float cx = x + w * 0.5f;
+    float cy = y + h * 0.5f;
+    float c = cosf(angle);
+    float s = sinf(angle);
+
+    // Lambda to rotate point around center
+    auto rotate = [&](float vx, float vy) -> SDL_FPoint {
+      return {cx + (vx - cx) * c - (vy - cy) * s,
+              cy + (vx - cx) * s + (vy - cy) * c};
+    };
+
     // Top-left
-    v.position = {x, y};
+    v.position = rotate(x, y);
     v.tex_coord = {texRegion.x, texRegion.y};
     unified_vertices.push_back(v);
 
     // Top-right
-    v.position = {x + w, y};
+    v.position = rotate(x + w, y);
     v.tex_coord = {texRegion.x + texRegion.w, texRegion.y};
     unified_vertices.push_back(v);
 
     // Bottom-right
-    v.position = {x + w, y + h};
+    v.position = rotate(x + w, y + h);
     v.tex_coord = {texRegion.x + texRegion.w, texRegion.y + texRegion.h};
     unified_vertices.push_back(v);
 
     // Bottom-left
-    v.position = {x, y + h};
+    v.position = rotate(x, y + h);
     v.tex_coord = {texRegion.x, texRegion.y + texRegion.h};
     unified_vertices.push_back(v);
 
