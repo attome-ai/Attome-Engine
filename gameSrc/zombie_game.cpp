@@ -22,16 +22,20 @@
 #define PLAYER_SIZE 64 // Slightly larger for ship sprite
 #define PLANET_SIZE 32 // Slightly larger for ship sprite
 #define PLAYER_SPEED 800.0f
-#define NUM_PLANETS 1000000
+#define NUM_PLANETS 100000
 #define BULLET_SIZE 26
-#define BULLET_SPEED 800.0f
-#define BULLET_LIFETIME 600.0f
-#define MAX_BULLETS 100000
-#define FIRE_RATE 0.05f      // 20 shots per second
-#define BULLETS_PER_SHOT 800 // Shoot 3 bullets at once
-#define BULLET_SPREAD 0.15f  // Spread angle in radians
-#define BULLET_DAMAGE 100.0f // Damage per bullet
-
+#define BULLET_SPEED 600.0f
+#define MAX_BULLETS 200000
+//#define FIRE_RATE 0.05f       // 20 shots per second
+//#define BULLETS_PER_SHOT 300  // Shoot 3 bullets at once
+//#define BULLET_SPREAD 0.25f   // Spread angle in radians
+//#define BULLET_DAMAGE 1000.0f // Damage per bullet
+// Shooting Constants
+#define FIRE_RATE 0.05f
+#define BULLETS_PER_SHOT 25
+#define BULLET_SPREAD 0.05f
+#define BULLET_LIFETIME 11600.0f
+#define BULLET_DAMAGE 1000.0f
 // --- Planet Type Stats ---
 struct PlanetTypeStats {
   float speed;
@@ -146,7 +150,7 @@ public:
     lifetimes[index] = BULLET_LIFETIME;
     active[index] = 1;
     flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 75; // Between zombies and player
+    z_indices[index] = 75; // Between planets and player
 
     // CRITICAL: Add to spatial grid for rendering!
     EntityRef ref;
@@ -277,7 +281,7 @@ protected:
 class PlanetContainer : public RenderableEntityContainer {
 public:
   float *speeds;
-  float *health; // Used to destroy planets when they hit player
+  float *health; 
   float *max_health;
   uint8_t *planet_types;
   Engine *engine;
@@ -364,9 +368,7 @@ public:
                   [&, tx, ty](uint32_t i) {
                     // Skip destroyed planets (health <= 0)
                     if (health[i] <= 0) {
-                      // Move off-screen if destroyed
-                      x_positions[i] = -10000.0f;
-                      y_positions[i] = -10000.0f;
+       
                       return;
                     }
 
@@ -489,7 +491,7 @@ struct GameState {
 
   // Stats
   int hit_count;    // Number of times player got hit
-  int killed_count; // Number of zombies killed by bullets
+  int killed_count; // Number of planets killed by bullets
 };
 
 // --- Function Declarations ---
@@ -957,12 +959,14 @@ void handle_input(Engine *engine, const bool *keyboard_state,
 
         int bullet_idx = bullets->findInactive();
         if (bullet_idx != -1) {
-          bullets->activateBullet(bullet_idx, px, py, spread_vx * BULLET_SPEED,
-                                  spread_vy * BULLET_SPEED);
+          bullets->activateBullet(
+              bullet_idx, px - BULLET_SIZE / 2.0f, py - BULLET_SIZE / 2.0f,
+              spread_vx * BULLET_SPEED, spread_vy * BULLET_SPEED);
         } else if (bullets->count < MAX_BULLETS) {
-          bullets->createEntity(px, py, spread_vx * BULLET_SPEED,
-                                spread_vy * BULLET_SPEED,
-                                game_state->bullet_texture_id);
+          bullets->createEntity(
+              px - BULLET_SIZE / 2.0f, py - BULLET_SIZE / 2.0f,
+              spread_vx * BULLET_SPEED, spread_vy * BULLET_SPEED,
+              game_state->bullet_texture_id);
         }
 
         // Update rotation for the just activated/created bullet
@@ -1076,11 +1080,7 @@ void check_collisions(Engine *engine, GameState *game_state) {
             // Destroyed!
             game_state->killed_count++;
 
-            // Move planet off-screen
-            engine->grid.move(planets->grid_node_indices[ref.index], -10000.0f,
-                              -10000.0f);
-            planets->x_positions[ref.index] = -10000.0f;
-            planets->y_positions[ref.index] = -10000.0f;
+          
           }
 
           // Deactivate bullet

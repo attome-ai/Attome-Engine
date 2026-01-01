@@ -34,13 +34,13 @@
 #define NUM_PLANETS 100000 // Reduced from 1,000,000 for basic engine
 
 // Shooting Constants
-#define BULLET_SIZE 16
-#define BULLET_SPEED 1200.0f
+#define BULLET_SIZE 26
+#define BULLET_SPEED 600.0f
 #define FIRE_RATE 0.05f
-#define BULLETS_PER_SHOT 50
-#define BULLET_SPREAD 0.15f
-#define BULLET_LIFETIME 2.0f // Basic engine uses simple seconds
-#define BULLET_DAMAGE 50.0f
+#define BULLETS_PER_SHOT 25
+#define BULLET_SPREAD 0.05f
+#define BULLET_LIFETIME 11600.0f
+#define BULLET_DAMAGE 1000.0f
 
 // --- Planet Type Stats ---
 struct PlanetStats {
@@ -50,11 +50,11 @@ struct PlanetStats {
 };
 
 static const PlanetStats PLANET_STATS[5] = {
-    {200.0f, 200.0f, 0}, // Type 0
-    {200.0f, 175.0f, 1}, // Type 1
-    {200.0f, 150.0f, 2}, // Type 2
-    {200.0f, 250.0f, 3}, // Type 3
-    {200.0f, 300.0f, 4}, // Type 4
+    {150.0f, 200.0f, 0}, // Type 0
+    {150.0f, 175.0f, 1}, // Type 1
+    {150.0f, 150.0f, 2}, // Type 2
+    {150.0f, 250.0f, 3}, // Type 3
+    {150.0f, 300.0f, 4}, // Type 4
 };
 
 // --- Game State ---
@@ -202,13 +202,12 @@ int main(int argc, char *argv[]) {
     ImGui::TextColored(ImVec4(1, 0, 0, 1), "BASIC ENGINE (UNOPTIMIZED)");
     ImGui::TextColored(ImVec4(1, 1, 0, 1), "FPS: %.1f", game_state.current_fps);
     ImGui::TextColored(ImVec4(1, 0, 0, 1), "HITS: %d", game_state.hit_count);
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Planets: %d",
-                       game_state.planet_count - game_state.hit_count -
-                           game_state.killed_count);
-    ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1), "Bullets: %d",
+    ImGui::TextColored(ImVec4(0, 1, 0, 1), "KILLS: %d",
+                       game_state.killed_count);
+    ImGui::TextColored(ImVec4(1, 1, 0, 1), "Bullets: %d",
                        game_state.bullet_count);
-    ImGui::TextColored(ImVec4(0.5f, 0.5f, 1.0f, 1), "Entities: %d",
-                       static_cast<int>(engine.entities.size()));
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Planets: %d",
+                       game_state.planet_count - game_state.killed_count);
     ImGui::End();
 
     ImGui::Render();
@@ -376,9 +375,10 @@ void handle_input(BasicEngine &engine, const bool *keyboard_state,
     float base_angle = atan2f(dir_y, dir_x);
 
     for (int i = 0; i < BULLETS_PER_SHOT; ++i) {
+      // Deterministic Fan Spread (Same as Optimized Engine)
       float spread_angle =
-          base_angle +
-          (static_cast<float>(rand()) / RAND_MAX - 0.5f) * BULLET_SPREAD;
+          base_angle + (i - (BULLETS_PER_SHOT - 1) / 2.0f) * BULLET_SPREAD;
+
       float vx = cosf(spread_angle);
       float vy = sinf(spread_angle);
 

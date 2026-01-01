@@ -19,14 +19,14 @@ static constexpr bool useVulkan = 0; // Maximum number of textures
 // Spatial grid implementation
 static constexpr uint32_t WORLD_WIDTH = 50000;
 static constexpr uint32_t WORLD_HEIGHT = 50000;
-static constexpr uint32_t GRID_CELL_SIZE = 128;
+static constexpr uint32_t GRID_CELL_SIZE = 64;
 static constexpr uint32_t GRID_CELL_WIDTH =
     (WORLD_WIDTH % GRID_CELL_SIZE) == 0 ? (WORLD_WIDTH / GRID_CELL_SIZE)
                                         : (WORLD_WIDTH / GRID_CELL_SIZE) + 1;
 static constexpr uint32_t GRID_CELL_HEIGHT =
     (WORLD_HEIGHT % GRID_CELL_SIZE) == 0 ? (WORLD_HEIGHT / GRID_CELL_SIZE)
                                          : (WORLD_HEIGHT / GRID_CELL_SIZE) + 1;
-static constexpr int MAX_ENTITIES_PER_CELL = 5000; // Fixed capacity
+static constexpr int MAX_ENTITIES_PER_CELL = 256; // Fixed capacity
 
 // Alignment for memory
 #define CACHE_LINE_SIZE 256
@@ -239,7 +239,7 @@ public:
 
     // Pre-allocate nodes (e.g., 1,000,000 entities max?)
     // Let's reserve a safe amount for high entity count
-    nodes.reserve(4200000);
+    nodes.reserve(3200000);
     queryResult.reserve(15000);
   }
 
