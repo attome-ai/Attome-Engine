@@ -368,7 +368,7 @@ public:
                   [&, tx, ty](uint32_t i) {
                     // Skip destroyed planets (health <= 0)
                     if (health[i] <= 0) {
-       
+             
                       return;
                     }
 
@@ -1031,11 +1031,10 @@ void check_collisions(Engine *engine, GameState *game_state) {
         // 2. Destroy Planet
         planets->health[ref.index] = -1.0f; // Mark as destroyed
 
-        // Move off-screen immediately so it doesn't hit again
+        // Move off-screen 
         engine->grid.move(planets->grid_node_indices[ref.index], -10000.0f,
                           -10000.0f);
-        planets->x_positions[ref.index] = -10000.0f;
-        planets->y_positions[ref.index] = -10000.0f;
+
       }
     }
   }
@@ -1082,6 +1081,10 @@ void check_collisions(Engine *engine, GameState *game_state) {
 
           
           }
+          // Move planet off-screen
+          engine->grid.move(planets->grid_node_indices[ref.index], -10000,
+              -10000);
+          
 
           // Deactivate bullet
           bullets->deactivateBullet(b);
