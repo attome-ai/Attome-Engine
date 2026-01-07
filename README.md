@@ -60,7 +60,7 @@ This repository contains **two complete versions** of the game engine to demonst
 - **Architecture**: Classic OOP with Array of Structures (AOS).
 - **Collision**: Naive O(N^2) checks.
 - **Rendering**: Individual draw calls per entity.
-- **Performance**: Caps at ~10,000 entities @ 15 FPS.
+- **Performance**: Caps at ~100,000 entities @ 15 FPS.
 - **Purpose**: Represents "clean" but slow textbook code.
 
 ### 2. ATM Engine (Optimized)
