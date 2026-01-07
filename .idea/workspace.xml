@@ -4,7 +4,28 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7d32de70-0328-47fe-9877-f2408de0c8af" name="Changes" comment="REMOVED old main file and deprecated game logic" />
+    <list default="true" id="7d32de70-0328-47fe-9877-f2408de0c8af" name="Changes" comment="ADDED new buffer pool implementation with RAII-compliant design and integrated benchmarks/tests for performance and correctness.">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/engine/ATMEngine.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/engine/ATMEngine.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/engine/ATMEngine.h" beforeDir="false" afterPath="$PROJECT_DIR$/engine/ATMEngine.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/engine_old/BasicEngine.cpp" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/engine_old/BasicEngine.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/gameBasic/planet_game_basic.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/gameBasic/planet_game_basic.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gameOptimized/planet_game.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/gameOptimized/planet_game.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/ATMCommon.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/ATMEngine.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/ATMEngine/ATMEngine.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/ATMEngine/ATMLog.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/ATMProfiler.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMDefinitions.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMEngine.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMEngineConfig.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMLog.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMPipeline.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/include/engine3D/test.h" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/lib/ATMBufferPool.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/lib/ATMBufferPool.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/windows/CMakeLists.txt" beforeDir="false" afterPath="$PROJECT_DIR$/windows/CMakeLists.txt" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -107,7 +128,23 @@
       <option name="project" value="LOCAL" />
       <updated>1767817840521</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="Removed deprecated files and updated workspace configuration">
+      <option name="closed" value="true" />
+      <created>1767817953357</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1767817953357</updated>
+    </task>
+    <task id="LOCAL-00006" summary="ADDED new buffer pool implementation with RAII-compliant design and integrated benchmarks/tests for performance and correctness.">
+      <option name="closed" value="true" />
+      <created>1767818894993</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1767818894993</updated>
+    </task>
+    <option name="localTasksCounter" value="7" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -141,6 +178,8 @@
     <MESSAGE value="REMOVED VULKAN SUPPORT" />
     <MESSAGE value="USING RAII wrappers for dynamic arrays, replaced raw pointers and manual memory management." />
     <MESSAGE value="REMOVED old main file and deprecated game logic" />
-    <option name="LAST_COMMIT_MESSAGE" value="REMOVED old main file and deprecated game logic" />
+    <MESSAGE value="Removed deprecated files and updated workspace configuration" />
+    <MESSAGE value="ADDED new buffer pool implementation with RAII-compliant design and integrated benchmarks/tests for performance and correctness." />
+    <option name="LAST_COMMIT_MESSAGE" value="ADDED new buffer pool implementation with RAII-compliant design and integrated benchmarks/tests for performance and correctness." />
   </component>
 </project>

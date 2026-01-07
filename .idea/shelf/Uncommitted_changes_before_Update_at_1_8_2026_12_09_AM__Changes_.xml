@@ -1,0 +1,43 @@
+<changelist name="Uncommitted_changes_before_Update_at_1_8_2026_12_09_AM_[Changes]" date="1767820194800" recycled="true" deleted="true">
+  <option name="PATH" value="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_1_8_2026_12_09_AM_[Changes]/shelved.patch" />
+  <option name="DESCRIPTION" value="Uncommitted changes before Update at 1/8/2026 12:09 AM [Changes]" />
+  <binary>
+    <option name="BEFORE_PATH" value="include/ATMEngine/ATMEngine.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/ATMEngine.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="engine_old/BasicEngine.cpp" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/engine3D/ATMPipeline.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="engine_old/BasicEngine.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/engine3D/ATMEngine.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/ATMEngine/ATMLog.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/engine3D/ATMLog.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/ATMProfiler.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/ATMCommon.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/engine3D/ATMDefinitions.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/engine3D/ATMEngineConfig.h" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" value="include/engine3D/test.h" />
+  </binary>
+</changelist>

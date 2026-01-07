@@ -1,12 +1,13 @@
-﻿#include "../game/ATMEngine.h"
+﻿#include "ATMEngine.h"
 #include <algorithm>
 #include <execution>
 #include <future>
 #include <numeric>
 #include <thread>
 #define STB_IMAGE_IMPLEMENTATION
-#include "../game/stb_image.h"
 #include "SDL3_image/SDL_image.h"
+#include "stb_image.h"
+
 
 // EntityContainer implementation
 EntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,

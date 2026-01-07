@@ -1,0 +1,1219 @@
+Index: engine/ATMEngine.h
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>#ifndef ENGINE_H\r\n#define ENGINE_H\r\n\r\n#include \"ATMBufferPool.h\"\r\n#include \"ATMDynamicArray.h\"\r\n#include \"ATMProfiler.h\"\r\n#include <SDL3/SDL.h>\r\n#include <algorithm>\r\n#include <array>\r\n#include <cassert>\r\n#include <cstring>\r\n#include <memory>\r\n#include <stdbool.h>\r\n#include <unordered_map>\r\n#include <vector>\r\n\r\n// static constexpr bool useVulkan = 0; // Removed Vulkan path\r\n// Spatial grid implementation\r\nstatic constexpr uint32_t WORLD_WIDTH = 50000;\r\nstatic constexpr uint32_t WORLD_HEIGHT = 50000;\r\nstatic constexpr uint32_t GRID_CELL_SIZE = 64;\r\nstatic constexpr uint32_t GRID_CELL_WIDTH =\r\n    (WORLD_WIDTH % GRID_CELL_SIZE) == 0 ? (WORLD_WIDTH / GRID_CELL_SIZE)\r\n                                        : (WORLD_WIDTH / GRID_CELL_SIZE) + 1;\r\nstatic constexpr uint32_t GRID_CELL_HEIGHT =\r\n    (WORLD_HEIGHT % GRID_CELL_SIZE) == 0 ? (WORLD_HEIGHT / GRID_CELL_SIZE)\r\n                                         : (WORLD_HEIGHT / GRID_CELL_SIZE) + 1;\r\nstatic constexpr int MAX_ENTITIES_PER_CELL = 256; // Fixed capacity\r\n\r\n// Alignment for memory\r\n#define CACHE_LINE_SIZE 256\r\n\r\n// Inverse cell size for faster calculation (multiplication instead of division)\r\nstatic constexpr float INV_GRID_CELL_SIZE = (1.0f / GRID_CELL_SIZE);\r\n\r\n// Common constants\r\nstatic constexpr int MAX_LAYERS = 32;\r\nstatic constexpr uint32_t INVALID_ID = 0xFFFFFFFF;\r\n\r\n// Forward declarations\r\nstruct Engine;\r\n\r\n// Entity flags\r\nenum class EntityFlag : uint8_t {\r\n  NONE = 0,\r\n  VISIBLE = 1 << 0,\r\n};\r\n\r\nenum class ContainerFlag : uint8_t {\r\n  NONE = 0,\r\n  RENDERABLE = 1 << 0,\r\n  UPDATEABLE = 1 << 1\r\n};\r\n\r\n/**\r\n * TextureAtlas class - Manages multiple textures and regions efficiently\r\n */\r\nclass TextureAtlas {\r\nprivate:\r\n  SDL_Texture **textures; // Array of textures\r\n  int texture_count;      // Number of textures\r\n  int texture_capacity;   // Capacity of textures array\r\n  SDL_FRect *regions;     // UV regions for each subtexture\r\n  int region_count;       // Number of regions\r\n  int region_capacity;    // Capacity of regions array\r\n  SDL_Renderer *renderer; // Reference to the renderer\r\n\r\npublic:\r\n  // Constructor and destructor\r\n  TextureAtlas(SDL_Renderer *renderer, int width, int height,\r\n               int initialCapacity = 8);\r\n  ~TextureAtlas();\r\n\r\n  // Prevent copying\r\n  TextureAtlas(const TextureAtlas &) = delete;\r\n  TextureAtlas &operator=(const TextureAtlas &) = delete;\r\n\r\n  // Allow moving\r\n  TextureAtlas(TextureAtlas &&other) noexcept;\r\n  TextureAtlas &operator=(TextureAtlas &&other) noexcept;\r\n\r\n  // Register a texture with the atlas\r\n  int registerTexture(SDL_Surface *surface, int x, int y, int width = 0,\r\n                      int height = 0);\r\n\r\n  // Get texture region by ID\r\n  SDL_FRect getRegion(int textureId) const;\r\n\r\n  // Get texture by ID (currently returns the first texture)\r\n  SDL_Texture *getTexture(int textureId) const;\r\n\r\n  // Get count of registered regions\r\n  int getRegionCount() const { return region_count; }\r\n\r\nprivate:\r\n  // Ensure capacity for textures and regions\r\n  void ensureTextureCapacity(int needed);\r\n  void ensureRegionCapacity(int needed);\r\n};\r\n\r\n// Camera for culling\r\nclass Camera {\r\npublic:\r\n  float x, y;\r\n  float width, height;\r\n  float zoom;\r\n};\r\n\r\n// Base Entity Container using SOA with RAII wrappers\r\nclass EntityContainer {\r\nprotected:\r\n  // Base entity data\r\npublic:\r\n  DynamicArray<uint8_t> flags;\r\n  DynamicArray<uint32_t> entity_ids;\r\n  DynamicArray<uint32_t> parent_ids;\r\n  DynamicArray<uint32_t> first_child_ids;\r\n  DynamicArray<uint32_t> next_sibling_ids;\r\n\r\n  DynamicArray<float> x_positions;\r\n  DynamicArray<float> y_positions;\r\n\r\n  // Cell tracking for incremental grid updates (cache-aligned)\r\n  AlignedDynamicArray<uint16_t, CACHE_LINE_SIZE> cell_x;\r\n  AlignedDynamicArray<uint16_t, CACHE_LINE_SIZE> cell_y;\r\n  AlignedDynamicArray<int32_t, CACHE_LINE_SIZE> grid_node_indices;\r\n\r\n  uint8_t containerFlag;\r\n  int type_id;\r\n  uint8_t default_layer;\r\n  int capacity;\r\n  int count;\r\n\r\n  EntityContainer(int typeId, uint8_t defaultLayer, int initialCapacity);\r\n  virtual ~EntityContainer();\r\n\r\n  virtual void update(float delta_time) = 0;\r\n  virtual uint32_t createEntity();\r\n  virtual void removeEntity(size_t index);\r\n\r\n  int getTypeId() const { return type_id; }\r\n  int getCount() const { return count; }\r\n  uint8_t getDefaultLayer() const { return default_layer; }\r\n  bool hasSpace() const { return count < capacity; }\r\n\r\nprotected:\r\n  virtual void resizeArrays(int newCapacity);\r\n};\r\n\r\n// Renderable Entity Container\r\nclass RenderableEntityContainer : public EntityContainer {\r\npublic:\r\n  // Renderable entity data (RAII managed)\r\n  DynamicArray<int16_t> widths;\r\n  DynamicArray<int16_t> heights;\r\n  DynamicArray<int16_t> texture_ids;\r\n  DynamicArray<uint8_t> z_indices;\r\n  DynamicArray<float> rotations; // Rotation in radians\r\n\r\n  RenderableEntityContainer(int typeId, uint8_t defaultLayer,\r\n                            int initialCapacity);\r\n  ~RenderableEntityContainer() override;\r\n\r\n  uint32_t createEntity() override;\r\n  void removeEntity(size_t index) override;\r\n\r\nprotected:\r\n  void resizeArrays(int newCapacity) override;\r\n};\r\n\r\nclass Layer {\r\nprivate:\r\n  int layer_id;\r\n  bool is_active;\r\n  std::vector<EntityContainer *> entity_containers;\r\n\r\npublic:\r\n  Layer(int id);\r\n\r\n  void update(float delta_time);\r\n  void addEntityContainer(EntityContainer *container);\r\n\r\n  bool isActive() const { return is_active; }\r\n  void setActive(bool active) { is_active = active; }\r\n  int getId() const { return layer_id; }\r\n};\r\n\r\nclass EntityManager {\r\npublic:\r\n  std::vector<std::unique_ptr<Layer>> layers;\r\n  std::vector<std::unique_ptr<EntityContainer>> containers;\r\n  uint32_t next_entity_id;\r\n\r\n  EntityManager();\r\n\r\n  int registerEntityType(EntityContainer *container);\r\n  uint32_t createEntity(int type_id);\r\n  void removeEntity(uint32_t index, int type_id);\r\n  void update(float delta_time);\r\n};\r\n\r\nstruct EntityRef {\r\n  uint32_t type : 8;\r\n  uint32_t index : 24;\r\n};\r\n\r\n// Node for intrusive linked list spatial grid\r\nstruct GridNode {\r\n  EntityRef entity;\r\n  int32_t next;\r\n  int32_t prev;\r\n  int32_t cell_index; // To validate move/remove\r\n};\r\n\r\nclass SpatialGrid {\r\nprivate:\r\n  // Grid of heads: stores index of first node in the cell\r\n  // Flattened: index = y * GRID_CELL_WIDTH + x\r\n  std::vector<int32_t> cell_heads;\r\n\r\n  // Global pool of nodes.\r\n  // Nodes are allocated once and reused?\r\n  // Constraint: \"adding entity is allowed, removing not allowed\".\r\n  // Actually, we can just append to 'nodes' if we need new ones,\r\n  // but better to pre-allocate.\r\n  std::vector<GridNode> nodes;\r\n  std::vector<int32_t> free_node_indices;\r\n\r\n  std::vector<EntityRef> queryResult;\r\n  int32_t first_free_node;\r\n\r\npublic:\r\n  SpatialGrid() : first_free_node(-1) {\r\n    // Initialize grid heads to -1 (empty)\r\n    cell_heads.resize(GRID_CELL_WIDTH * GRID_CELL_HEIGHT, -1);\r\n\r\n    // Pre-allocate nodes (e.g., 1,000,000 entities max?)\r\n    // Let's reserve a safe amount for high entity count\r\n    nodes.reserve(3200000);\r\n    queryResult.reserve(15000);\r\n  }\r\n\r\n  // Allocate a node from the pool\r\n  int32_t allocateNode(const EntityRef &entity) {\r\n    int32_t idx;\r\n    if (first_free_node != -1) {\r\n      idx = first_free_node;\r\n      first_free_node = nodes[idx].next; // Pop from free stack\r\n    } else {\r\n      idx = static_cast<int32_t>(nodes.size());\r\n      nodes.push_back({entity, -1, -1, -1});\r\n    }\r\n    return idx;\r\n  }\r\n\r\n  // Free a node to the pool\r\n  void freeNode(int32_t nodeIndex) {\r\n    nodes[nodeIndex].next = first_free_node;\r\n    nodes[nodeIndex].prev = -1;\r\n    nodes[nodeIndex].cell_index = -1;\r\n    first_free_node = nodeIndex;\r\n  }\r\n\r\n  // Add entity to grid, returns node index (handle)\r\n  int32_t add(const EntityRef &entity, float x, float y) {\r\n    uint16_t cellX = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);\r\n    uint16_t cellY = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);\r\n\r\n    // Boundary check\r\n    if (cellX >= GRID_CELL_WIDTH)\r\n      cellX = GRID_CELL_WIDTH - 1;\r\n    if (cellY >= GRID_CELL_HEIGHT)\r\n      cellY = GRID_CELL_HEIGHT - 1;\r\n\r\n    int32_t cellIdx = cellY * GRID_CELL_WIDTH + cellX;\r\n    int32_t nodeIdx = allocateNode(entity);\r\n\r\n    // Insert at head of list\r\n    int32_t oldHead = cell_heads[cellIdx];\r\n\r\n    nodes[nodeIdx].next = oldHead;\r\n    nodes[nodeIdx].prev = -1;\r\n    nodes[nodeIdx].cell_index = cellIdx;\r\n\r\n    if (oldHead != -1) {\r\n      nodes[oldHead].prev = nodeIdx;\r\n    }\r\n\r\n    cell_heads[cellIdx] = nodeIdx;\r\n    return nodeIdx;\r\n  }\r\n\r\n  // Remove by node handle (O(1))\r\n  void remove(int32_t nodeIndex) {\r\n    if (nodeIndex == -1 || nodeIndex >= nodes.size())\r\n      return;\r\n\r\n    GridNode &node = nodes[nodeIndex];\r\n    int32_t cellIdx = node.cell_index;\r\n\r\n    if (cellIdx == -1)\r\n      return; // Already removed?\r\n\r\n    if (node.prev != -1) {\r\n      nodes[node.prev].next = node.next;\r\n    } else {\r\n      // It was the head\r\n      cell_heads[cellIdx] = node.next;\r\n    }\r\n\r\n    if (node.next != -1) {\r\n      nodes[node.next].prev = node.prev;\r\n    }\r\n\r\n    freeNode(nodeIndex);\r\n  }\r\n\r\n  // Move: remove from old list, add to new list.\r\n  // Optimization: reusing the SAME node, just relinking.\r\n  // Returns true if cell changed.\r\n  bool move(int32_t nodeIndex, float x, float y) {\r\n    uint16_t newCellX = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);\r\n    uint16_t newCellY = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);\r\n\r\n    if (newCellX >= GRID_CELL_WIDTH)\r\n      newCellX = GRID_CELL_WIDTH - 1;\r\n    if (newCellY >= GRID_CELL_HEIGHT)\r\n      newCellY = GRID_CELL_HEIGHT - 1;\r\n\r\n    int32_t newCellIdx = newCellY * GRID_CELL_WIDTH + newCellX;\r\n    int32_t oldCellIdx = nodes[nodeIndex].cell_index;\r\n\r\n    if (newCellIdx == oldCellIdx)\r\n      return false;\r\n\r\n    // Unlink from old list\r\n    GridNode &node = nodes[nodeIndex];\r\n\r\n    if (node.prev != -1) {\r\n      nodes[node.prev].next = node.next;\r\n    } else {\r\n      cell_heads[oldCellIdx] = node.next;\r\n    }\r\n\r\n    if (node.next != -1) {\r\n      nodes[node.next].prev = node.prev;\r\n    }\r\n\r\n    // Link to new list\r\n    int32_t oldHead = cell_heads[newCellIdx];\r\n    node.next = oldHead;\r\n    node.prev = -1;\r\n    node.cell_index = newCellIdx;\r\n\r\n    if (oldHead != -1) {\r\n      nodes[oldHead].prev = nodeIndex;\r\n    }\r\n\r\n    cell_heads[newCellIdx] = nodeIndex;\r\n\r\n    return true;\r\n  }\r\n\r\n  // Clear all grid data (retains node memory/capacity)\r\n  void clearAll() {\r\n    // Fast clear: just reset all cell heads to -1.\r\n\r\n    // If full rebuild:\r\n    std::fill(cell_heads.begin(), cell_heads.end(), -1);\r\n    nodes.clear(); // Reset count to 0\r\n    first_free_node = -1;\r\n  }\r\n\r\n  std::vector<EntityRef> &queryRect(float x1, float y1, float x2, float y2);\r\n\r\n  inline void getCellCoords(const float &x, const float &y, uint16_t &outCellX,\r\n                            uint16_t &outCellY) const {\r\n    outCellX = x * INV_GRID_CELL_SIZE;\r\n    outCellY = y * INV_GRID_CELL_SIZE;\r\n  }\r\n\r\n  const std::vector<EntityRef> &queryCircle(float centerX, float centerY,\r\n                                            float radius) {\r\n    queryResult.clear();\r\n\r\n    int32_t minX =\r\n        static_cast<int32_t>((centerX - radius) * INV_GRID_CELL_SIZE);\r\n    int32_t minY =\r\n        static_cast<int32_t>((centerY - radius) * INV_GRID_CELL_SIZE);\r\n    int32_t maxX =\r\n        static_cast<int32_t>((centerX + radius) * INV_GRID_CELL_SIZE);\r\n    int32_t maxY =\r\n        static_cast<int32_t>((centerY + radius) * INV_GRID_CELL_SIZE);\r\n\r\n    // Clamp to grid bounds\r\n    if (minX < 0)\r\n      minX = 0;\r\n    if (minY < 0)\r\n      minY = 0;\r\n    if (maxX >= (int32_t)GRID_CELL_WIDTH)\r\n      maxX = GRID_CELL_WIDTH - 1;\r\n    if (maxY >= (int32_t)GRID_CELL_HEIGHT)\r\n      maxY = GRID_CELL_HEIGHT - 1;\r\n\r\n    for (int32_t cy = minY; cy <= maxY; ++cy) {\r\n      int32_t rowBase = cy * GRID_CELL_WIDTH;\r\n      for (int32_t cx = minX; cx <= maxX; ++cx) {\r\n        int32_t nodeIdx = cell_heads[rowBase + cx];\r\n        while (nodeIdx != -1) {\r\n          const GridNode &node = nodes[nodeIdx];\r\n          queryResult.push_back(node.entity);\r\n          nodeIdx = node.next;\r\n        }\r\n      }\r\n    }\r\n    return queryResult;\r\n  }\r\n\r\n  // Declaration only, implemented in cpp\r\n\r\n  // Declaration for rebuild_grid\r\n  void rebuild_grid(Engine *engine);\r\n};\r\n\r\n/**\r\n * RenderBatch class - High-performance batch renderer\r\n */\r\nclass RenderBatch {\r\nprivate:\r\npublic:\r\n  int texture_id;\r\n  int z_index;\r\n\r\n  std::vector<SDL_Vertex> vertices;\r\n  std::vector<int> indices;\r\n  // Constructor with initial capacity\r\n  RenderBatch(int textureId, int zIndex, int initialVertexCapacity = 4096);\r\n\r\n  // Destructor\r\n  ~RenderBatch();\r\n\r\n  // Prevent copying\r\n  RenderBatch(const RenderBatch &) = delete;\r\n  RenderBatch &operator=(const RenderBatch &) = delete;\r\n\r\n  // Allow moving\r\n  RenderBatch(RenderBatch &&other) noexcept;\r\n  RenderBatch &operator=(RenderBatch &&other) noexcept;\r\n\r\n  // Add a quad to this batch\r\n  void addQuad(float x, float y, float w, float h, SDL_FRect tex_region);\r\n\r\n  // Reset batch for reuse without reallocating memory\r\n  void clear();\r\n\r\nprivate:\r\n};\r\n\r\n/**\r\n * RenderBatchManager - Efficient batch management with fast lookups\r\n */\r\nclass RenderBatchManager {\r\nprivate:\r\n  // Use a 64-bit key to combine texture_id and z_index for faster lookup\r\n  using BatchKey = uint64_t;\r\n  static inline BatchKey createKey(int textureId, int zIndex) {\r\n    return (static_cast<uint64_t>(textureId) << 32) |\r\n           static_cast<uint64_t>(zIndex);\r\n  };\r\n\r\n  std::vector<RenderBatch> batches;\r\n  std::unordered_map<BatchKey, size_t> batchMap; // Maps key to batch index\r\n  bool needsSort;\r\n\r\npublic:\r\n  // Constructor with pre-allocated batches for common textures\r\n  RenderBatchManager(int initialBatchCount = 8);\r\n\r\n  // Add a quad to the appropriate batch\r\n  void addQuad(int textureId, int zIndex, float x, float y, float w, float h,\r\n               SDL_FRect tex_region);\r\n\r\n  // Get or create a batch for the given texture and z-index\r\n  RenderBatch &getBatch(int textureId, int zIndex);\r\n\r\n  // Clear all batches for next frame\r\n  void clear();\r\n\r\n  // Sort batches by z-index for correct rendering order\r\n  void sortIfNeeded();\r\n\r\n  // Get all batches for rendering\r\n  const std::vector<RenderBatch> &getBatches();\r\n\r\n  // Get the number of active batches\r\n  size_t getBatchCount() const;\r\n};\r\n\r\n// Main engine struct\r\ntypedef struct Engine {\r\n  SDL_Window *window;\r\n  SDL_Renderer *renderer; // SDL renderer\r\n  RenderBatchManager renderBatchManager;\r\n  SpatialGrid grid;\r\n  TextureAtlas atlas;\r\n  Camera camera;\r\n  SDL_FRect world_bounds;\r\n  Uint64 last_frame_time;\r\n  float fps;\r\n  std::vector<EntityRef> pending_removals;\r\n  // Entity type system\r\n  EntityManager entityManager;\r\n} Engine;\r\n\r\n// Modify engine_create to support Vulkan initialization\r\nEngine *engine_create(int window_width, int window_height, int world_width,\r\n                      int world_height, int cell_size);\r\n\r\n// Modified engine_render_scene to use the appropriate renderer\r\nvoid engine_render_scene(Engine *engine);\r\n\r\n// Add a new function to destroy the engine with Vulkan support\r\nvoid engine_destroy(Engine *engine);\r\n\r\n// Modify engine_register_texture to handle both renderers\r\nint engine_register_texture(Engine *engine, SDL_Surface *surface, int x, int y,\r\n                            int width, int height);\r\n\r\n// Add engine_present with Vulkan support\r\nvoid engine_present(Engine *engine);\r\n\r\nSDL_FRect get_texture_region(const TextureAtlas &atlas, int16_t texture_id);\r\n\r\n// Entity management\r\nvoid engine_update_entity_types(Engine *engine, float delta_time);\r\n\r\n// Process entity removals\r\nvoid process_pending_removals(Engine *engine);\r\n\r\n// Update engine state\r\nvoid engine_update(Engine *engine);\r\n\r\n// Set entity z-index\r\nvoid engine_set_entity_z_index(Engine *engine, uint32_t entity_idx, int type_id,\r\n                               uint8_t z_index);\r\n\r\n// Present renderer\r\nvoid engine_present(Engine *engine);\r\n\r\n// Texture loading functions\r\nSDL_Surface* load_texture(const char* filename);\r\nSDL_Surface* create_colored_surface(int width, int height, Uint8 r, Uint8 g, Uint8 b);\r\n\r\n#endif // ENGINE_H
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/engine/ATMEngine.h b/engine/ATMEngine.h
+--- a/engine/ATMEngine.h	(revision 0a6dee3007d02250f71a393d7867bd5d92e9aaa4)
++++ b/engine/ATMEngine.h	(date 1767819296593)
+@@ -1,7 +1,7 @@
+ #ifndef ENGINE_H
+ #define ENGINE_H
+ 
+-#include "ATMBufferPool.h"
++#include "../lib/ATMBufferPool.h"
+ #include "ATMDynamicArray.h"
+ #include "ATMProfiler.h"
+ #include <SDL3/SDL.h>
+@@ -548,7 +548,8 @@
+ void engine_present(Engine *engine);
+ 
+ // Texture loading functions
+-SDL_Surface* load_texture(const char* filename);
+-SDL_Surface* create_colored_surface(int width, int height, Uint8 r, Uint8 g, Uint8 b);
++SDL_Surface *load_texture(const char *filename);
++SDL_Surface *create_colored_surface(int width, int height, Uint8 r, Uint8 g,
++                                    Uint8 b);
+ 
+ #endif // ENGINE_H
+\ No newline at end of file
+Index: windows/CMakeLists.txt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>cmake_minimum_required(VERSION 3.21)\r\n\r\nset(CMAKE_CXX_STANDARD 20)\r\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\r\n\r\n# Find dependencies via vcpkg\r\nfind_package(SDL3 CONFIG REQUIRED)\r\nfind_package(SDL3_image CONFIG REQUIRED)\r\nfind_package(SDL3_ttf CONFIG REQUIRED)\r\nfind_package(glm CONFIG REQUIRED)\r\n# find_package(Vulkan REQUIRED)\r\nfind_package(imgui CONFIG REQUIRED)\r\n\r\n# The project sources (Optimized Engine)\r\nset(SOURCE\r\n  ${CMAKE_SOURCE_DIR}/gameSrc/planet_game.cpp\r\n  \"../engine/ATMEngine.cpp\"\r\n  \r\n  \r\n  \r\n  \r\n  \r\n  \"../lib/ATMByteBuffer.cpp\"\r\n  \"../lib/ATMBufferPool.cpp\"\r\n  \r\n)\r\n\r\n# Basic Engine sources (UNOPTIMIZED - for comparison)\r\nset(SOURCE_BASIC\r\n  ${CMAKE_SOURCE_DIR}/gameBasic/planet_game_basic.cpp\r\n  \"../engineBasic/BasicEngine.cpp\"\r\n  \r\n  \r\n)\r\n\r\n# Add executable target (Optimized)\r\nadd_executable(Template ${SOURCE})\r\n\r\n# Add executable target (Basic/Unoptimized)\r\nadd_executable(TemplateBasic ${SOURCE_BASIC})\r\n\r\n# Link dependencies\r\ntarget_link_libraries(Template PRIVATE \r\n    SDL3::SDL3\r\n    SDL3_image::SDL3_image\r\n    SDL3_ttf::SDL3_ttf\r\n    glm::glm\r\n    imgui::imgui\r\n)\r\n\r\n# Link dependencies for Basic Engine (no Vulkan needed)\r\ntarget_link_libraries(TemplateBasic PRIVATE \r\n    SDL3::SDL3\r\n    SDL3_image::SDL3_image\r\n    imgui::imgui\r\n)\r\n\r\n# Add ImGui backends (if they are not included in the imgui::imgui target provided by vcpkg)\r\n# With vcpkg manifest mode, we can use the targets for backends if we enabled them as features.\r\nif(TARGET imgui::sdl3)\r\n    target_link_libraries(Template PRIVATE imgui::sdl3)\r\n    target_link_libraries(TemplateBasic PRIVATE imgui::sdl3)\r\nendif()\r\nif(TARGET imgui::sdlrenderer3)\r\n    target_link_libraries(Template PRIVATE imgui::sdlrenderer3)\r\n    target_link_libraries(TemplateBasic PRIVATE imgui::sdlrenderer3)\r\nendif()\r\n\r\n# Increase stack size (16MB = 16777216 bytes)\r\nif(MSVC)\r\n  target_link_options(Template PRIVATE \"/STACK:456777216\")\r\n  target_link_options(TemplateBasic PRIVATE \"/STACK:16777216\")\r\nendif()\r\n\r\n# Additional Windows libraries for Template\r\ntarget_link_libraries(Template PRIVATE \r\n    version.lib\r\n    winmm.lib\r\n    setupapi.lib\r\n    cfgmgr32.lib\r\n    imm32.lib\r\n)\r\n\r\n# Additional Windows libraries for TemplateBasic\r\ntarget_link_libraries(TemplateBasic PRIVATE \r\n    version.lib\r\n    winmm.lib\r\n    setupapi.lib\r\n    cfgmgr32.lib\r\n    imm32.lib\r\n)\r\n\r\n# Include directories for BasicEngine\r\ntarget_include_directories(TemplateBasic PRIVATE \r\n    ${CMAKE_SOURCE_DIR}/game\r\n    ${CMAKE_SOURCE_DIR}/include\r\n)\r\n\r\n# Copy assets to build directory\r\nfile(COPY \"${CMAKE_SOURCE_DIR}/textures\" DESTINATION \"${CMAKE_CURRENT_BINARY_DIR}\")\r\nfile(COPY \"${CMAKE_SOURCE_DIR}/fonts\" DESTINATION \"${CMAKE_CURRENT_BINARY_DIR}\")\r\nfile(COPY \"${CMAKE_SOURCE_DIR}/resource\" DESTINATION \"${CMAKE_CURRENT_BINARY_DIR}\")\r\n\r\n# Optional: Add post-build command to ensure assets are always up to date\r\nadd_custom_command(TARGET Template POST_BUILD\r\n    COMMAND ${CMAKE_COMMAND} -E copy_directory\r\n        \"${CMAKE_SOURCE_DIR}/textures\"\r\n        \"$<TARGET_FILE_DIR:Template>/textures\"\r\n    COMMAND ${CMAKE_COMMAND} -E copy_directory\r\n        \"${CMAKE_SOURCE_DIR}/fonts\"\r\n        \"$<TARGET_FILE_DIR:Template>/fonts\"\r\n    COMMAND ${CMAKE_COMMAND} -E copy_directory\r\n        \"${CMAKE_SOURCE_DIR}/resource\"\r\n        \"$<TARGET_FILE_DIR:Template>/resource\"\r\n)\r\n\r\n# Post-build for TemplateBasic\r\nadd_custom_command(TARGET TemplateBasic POST_BUILD\r\n    COMMAND ${CMAKE_COMMAND} -E copy_directory\r\n        \"${CMAKE_SOURCE_DIR}/resource\"\r\n        \"$<TARGET_FILE_DIR:TemplateBasic>/resource\"\r\n)\r\n\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/windows/CMakeLists.txt b/windows/CMakeLists.txt
+--- a/windows/CMakeLists.txt	(revision 0a6dee3007d02250f71a393d7867bd5d92e9aaa4)
++++ b/windows/CMakeLists.txt	(date 1767819954911)
+@@ -8,116 +8,148 @@
+ find_package(SDL3_image CONFIG REQUIRED)
+ find_package(SDL3_ttf CONFIG REQUIRED)
+ find_package(glm CONFIG REQUIRED)
+-# find_package(Vulkan REQUIRED)
+ find_package(imgui CONFIG REQUIRED)
+ 
+-# The project sources (Optimized Engine)
+-set(SOURCE
+-  ${CMAKE_SOURCE_DIR}/gameSrc/planet_game.cpp
++# Common engine sources (Optimized Engine)
++set(ENGINE_SOURCES
+   "../engine/ATMEngine.cpp"
+-  
+-  
+-  
+-  
+-  
+   "../lib/ATMByteBuffer.cpp"
+   "../lib/ATMBufferPool.cpp"
+-  
+ )
+ 
+ # Basic Engine sources (UNOPTIMIZED - for comparison)
+-set(SOURCE_BASIC
++set(ENGINE_BASIC_SOURCES
++  "../engine_old/BasicEngine.cpp"
++)
++
++# =============================================================================
++# Game Executables
++# =============================================================================
++
++# 1. Planet Game (Optimized Engine)
++add_executable(PlanetGame
++  ${CMAKE_SOURCE_DIR}/gameOptimized/planet_game.cpp
++  ${ENGINE_SOURCES}
++)
++
++# 2. Snake Game (Optimized Engine)
++add_executable(SnakeGame
++  ${CMAKE_SOURCE_DIR}/gameOptimized/snake_game.cpp
++  ${ENGINE_SOURCES}
++)
++
++# 3. Planet Game Basic (Unoptimized Engine - for comparison)
++add_executable(PlanetGameBasic
+   ${CMAKE_SOURCE_DIR}/gameBasic/planet_game_basic.cpp
+-  "../engineBasic/BasicEngine.cpp"
+-  
+-  
++  ${ENGINE_BASIC_SOURCES}
+ )
+ 
+-# Add executable target (Optimized)
+-add_executable(Template ${SOURCE})
++# =============================================================================
++# Common Dependencies - Helper Function
++# =============================================================================
+ 
+-# Add executable target (Basic/Unoptimized)
+-add_executable(TemplateBasic ${SOURCE_BASIC})
+-
+-# Link dependencies
+-target_link_libraries(Template PRIVATE 
++# Function to link common optimized engine dependencies
++function(link_optimized_engine_deps target)
++  target_link_libraries(${target} PRIVATE 
+     SDL3::SDL3
+     SDL3_image::SDL3_image
+     SDL3_ttf::SDL3_ttf
+     glm::glm
+     imgui::imgui
+-)
+-
+-# Link dependencies for Basic Engine (no Vulkan needed)
+-target_link_libraries(TemplateBasic PRIVATE 
+-    SDL3::SDL3
+-    SDL3_image::SDL3_image
+-    imgui::imgui
+-)
+-
+-# Add ImGui backends (if they are not included in the imgui::imgui target provided by vcpkg)
+-# With vcpkg manifest mode, we can use the targets for backends if we enabled them as features.
+-if(TARGET imgui::sdl3)
+-    target_link_libraries(Template PRIVATE imgui::sdl3)
+-    target_link_libraries(TemplateBasic PRIVATE imgui::sdl3)
+-endif()
+-if(TARGET imgui::sdlrenderer3)
+-    target_link_libraries(Template PRIVATE imgui::sdlrenderer3)
+-    target_link_libraries(TemplateBasic PRIVATE imgui::sdlrenderer3)
+-endif()
+-
+-# Increase stack size (16MB = 16777216 bytes)
+-if(MSVC)
+-  target_link_options(Template PRIVATE "/STACK:456777216")
+-  target_link_options(TemplateBasic PRIVATE "/STACK:16777216")
+-endif()
+-
+-# Additional Windows libraries for Template
+-target_link_libraries(Template PRIVATE 
++  )
++  
++  # ImGui backends
++  if(TARGET imgui::sdl3)
++    target_link_libraries(${target} PRIVATE imgui::sdl3)
++  endif()
++  if(TARGET imgui::sdlrenderer3)
++    target_link_libraries(${target} PRIVATE imgui::sdlrenderer3)
++  endif()
++  
++  # Windows libraries
++  target_link_libraries(${target} PRIVATE 
+     version.lib
+     winmm.lib
+     setupapi.lib
+     cfgmgr32.lib
+     imm32.lib
+-)
++  )
++  
++  # Increase stack size for large entity counts
++  if(MSVC)
++    target_link_options(${target} PRIVATE "/STACK:456777216")
++  endif()
++  
++  # Post-build: Copy assets
++  add_custom_command(TARGET ${target} POST_BUILD
++    COMMAND ${CMAKE_COMMAND} -E copy_directory
++      "${CMAKE_SOURCE_DIR}/textures"
++      "$<TARGET_FILE_DIR:${target}>/textures"
++    COMMAND ${CMAKE_COMMAND} -E copy_directory
++      "${CMAKE_SOURCE_DIR}/fonts"
++      "$<TARGET_FILE_DIR:${target}>/fonts"
++    COMMAND ${CMAKE_COMMAND} -E copy_directory
++      "${CMAKE_SOURCE_DIR}/resource"
++      "$<TARGET_FILE_DIR:${target}>/resource"
++  )
++endfunction()
+ 
+-# Additional Windows libraries for TemplateBasic
+-target_link_libraries(TemplateBasic PRIVATE 
++# Function to link basic engine dependencies
++function(link_basic_engine_deps target)
++  target_link_libraries(${target} PRIVATE 
++    SDL3::SDL3
++    SDL3_image::SDL3_image
++    imgui::imgui
++  )
++  
++  # ImGui backends
++  if(TARGET imgui::sdl3)
++    target_link_libraries(${target} PRIVATE imgui::sdl3)
++  endif()
++  if(TARGET imgui::sdlrenderer3)
++    target_link_libraries(${target} PRIVATE imgui::sdlrenderer3)
++  endif()
++  
++  # Windows libraries
++  target_link_libraries(${target} PRIVATE 
+     version.lib
+     winmm.lib
+     setupapi.lib
+     cfgmgr32.lib
+     imm32.lib
+-)
+-
+-# Include directories for BasicEngine
+-target_include_directories(TemplateBasic PRIVATE 
++  )
++  
++  # Stack size for basic engine
++  if(MSVC)
++    target_link_options(${target} PRIVATE "/STACK:16777216")
++  endif()
++  
++  # Include directories
++  target_include_directories(${target} PRIVATE 
+     ${CMAKE_SOURCE_DIR}/game
+     ${CMAKE_SOURCE_DIR}/include
+-)
++  )
++  
++  # Post-build: Copy assets
++  add_custom_command(TARGET ${target} POST_BUILD
++    COMMAND ${CMAKE_COMMAND} -E copy_directory
++      "${CMAKE_SOURCE_DIR}/resource"
++      "$<TARGET_FILE_DIR:${target}>/resource"
++  )
++endfunction()
+ 
+-# Copy assets to build directory
++# =============================================================================
++# Apply Dependencies to Each Target
++# =============================================================================
++
++link_optimized_engine_deps(PlanetGame)
++link_optimized_engine_deps(SnakeGame)
++link_basic_engine_deps(PlanetGameBasic)
++
++# =============================================================================
++# Initial Asset Copy
++# =============================================================================
++
+ file(COPY "${CMAKE_SOURCE_DIR}/textures" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+ file(COPY "${CMAKE_SOURCE_DIR}/fonts" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+ file(COPY "${CMAKE_SOURCE_DIR}/resource" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+-
+-# Optional: Add post-build command to ensure assets are always up to date
+-add_custom_command(TARGET Template POST_BUILD
+-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+-        "${CMAKE_SOURCE_DIR}/textures"
+-        "$<TARGET_FILE_DIR:Template>/textures"
+-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+-        "${CMAKE_SOURCE_DIR}/fonts"
+-        "$<TARGET_FILE_DIR:Template>/fonts"
+-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+-        "${CMAKE_SOURCE_DIR}/resource"
+-        "$<TARGET_FILE_DIR:Template>/resource"
+-)
+-
+-# Post-build for TemplateBasic
+-add_custom_command(TARGET TemplateBasic POST_BUILD
+-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+-        "${CMAKE_SOURCE_DIR}/resource"
+-        "$<TARGET_FILE_DIR:TemplateBasic>/resource"
+-)
+-
+Index: gameBasic/planet_game_basic.cpp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>#define _USE_MATH_DEFINES\r\n#include \"engineBasic/BasicEngine.h\"\r\n\r\n#ifndef M_PI\r\n#define M_PI 3.14159265358979323846\r\n#endif\r\n\r\n#include \"imgui.h\"\r\n#include \"imgui_impl_sdl3.h\"\r\n#include \"imgui_impl_sdlrenderer3.h\"\r\n#include <SDL3/SDL.h>\r\n#include <SDL3/SDL_main.h>\r\n#include <cmath>\r\n#include <cstdlib>\r\n#include <ctime>\r\n#include <iostream>\r\n\r\n/**\r\n * Zombie Game - Basic Engine Version\r\n *\r\n * Same game as zombie_game.cpp but using the unoptimized BasicEngine\r\n * to demonstrate performance impact of various optimizations.\r\n *\r\n * Uses 10,000 zombies instead of 1,000,000 because the basic engine\r\n * cannot handle the larger count at playable framerates.\r\n */\r\n\r\n// --- Constants ---\r\n#define WINDOW_WIDTH 1600\r\n#define WINDOW_HEIGHT 1020\r\n#define PLAYER_SIZE 64\r\n#define PLANET_SIZE 32\r\n#define PLAYER_SPEED 600.0f\r\n#define NUM_PLANETS 100000 // Reduced from 1,000,000 for basic engine\r\n\r\n// Shooting Constants\r\n#define BULLET_SIZE 26\r\n#define BULLET_SPEED 600.0f\r\n#define FIRE_RATE 0.05f\r\n#define BULLETS_PER_SHOT 25\r\n#define BULLET_SPREAD 0.05f\r\n#define BULLET_LIFETIME 11600.0f\r\n#define BULLET_DAMAGE 1000.0f\r\n\r\n// --- Planet Type Stats ---\r\nstruct PlanetStats {\r\n  float speed;\r\n  float health;\r\n  int texture_idx;\r\n};\r\n\r\nstatic const PlanetStats PLANET_STATS[5] = {\r\n    {150.0f, 200.0f, 0}, // Type 0\r\n    {150.0f, 175.0f, 1}, // Type 1\r\n    {150.0f, 150.0f, 2}, // Type 2\r\n    {150.0f, 250.0f, 3}, // Type 3\r\n    {150.0f, 300.0f, 4}, // Type 4\r\n};\r\n\r\n// --- Game State ---\r\nstruct GameState {\r\n  Entity *player = nullptr;\r\n\r\n  // FPS tracking\r\n  Uint64 last_fps_time = 0;\r\n  int frame_count = 0;\r\n  float current_fps = 0.0f;\r\n\r\n  // Stats\r\n  int hit_count = 0;\r\n  int killed_count = 0;\r\n  int planet_count = 0;\r\n\r\n  // Shooting state\r\n  float shoot_cooldown = 0.0f;\r\n  bool mouse_pressed = false;\r\n  int bullet_count = 0;\r\n};\r\n\r\n// --- Function Declarations ---\r\nvoid setup_game(BasicEngine &engine, GameState &game_state);\r\nvoid handle_input(BasicEngine &engine, const bool *keyboard_state,\r\n                  GameState &game_state, float delta_time);\r\nvoid update_game(BasicEngine &engine, GameState &game_state, float delta_time);\r\nvoid check_collisions(BasicEngine &engine, GameState &game_state);\r\n\r\n// --- Main Function ---\r\nint main(int argc, char *argv[]) {\r\n  if (!SDL_Init(SDL_INIT_VIDEO)) {\r\n    std::cerr << \"SDL_Init Error: \" << SDL_GetError() << std::endl;\r\n    return 1;\r\n  }\r\n\r\n  srand(static_cast<unsigned int>(time(nullptr)));\r\n\r\n  // Create basic engine\r\n  BasicEngine engine;\r\n  if (!engine.initialize(WINDOW_WIDTH, WINDOW_HEIGHT)) {\r\n    std::cerr << \"Failed to initialize engine\" << std::endl;\r\n    SDL_Quit();\r\n    return 1;\r\n  }\r\n\r\n  // Init ImGui\r\n  IMGUI_CHECKVERSION();\r\n  ImGui::CreateContext();\r\n  ImGuiIO &io = ImGui::GetIO();\r\n  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;\r\n  io.FontGlobalScale = 2.0f;\r\n\r\n  ImGui::StyleColorsDark();\r\n  ImGui_ImplSDL3_InitForSDLRenderer(engine.window, engine.renderer);\r\n  ImGui_ImplSDLRenderer3_Init(engine.renderer);\r\n\r\n  // Setup game\r\n  GameState game_state;\r\n  game_state.last_fps_time = SDL_GetTicks();\r\n  setup_game(engine, game_state);\r\n\r\n  // Set initial camera position\r\n  if (game_state.player) {\r\n    engine.camera.x = game_state.player->x + PLAYER_SIZE / 2.0f;\r\n    engine.camera.y = game_state.player->y + PLAYER_SIZE / 2.0f;\r\n  }\r\n\r\n  // Game loop\r\n  bool quit = false;\r\n  SDL_Event event;\r\n  Uint64 last_time = SDL_GetTicks();\r\n\r\n  while (!quit) {\r\n    Uint64 current_time = SDL_GetTicks();\r\n    float delta_time = std::min((current_time - last_time) / 1000.0f, 0.1f);\r\n    last_time = current_time;\r\n\r\n    // FPS calculation\r\n    game_state.frame_count++;\r\n    Uint64 time_since_last_fps = current_time - game_state.last_fps_time;\r\n    if (time_since_last_fps >= 1000) {\r\n      game_state.current_fps =\r\n          static_cast<float>(game_state.frame_count * 1000.0f) /\r\n          static_cast<float>(time_since_last_fps);\r\n      game_state.last_fps_time = current_time;\r\n      game_state.frame_count = 0;\r\n    }\r\n\r\n    // Process events\r\n    while (SDL_PollEvent(&event)) {\r\n      ImGui_ImplSDL3_ProcessEvent(&event);\r\n      if (event.type == SDL_EVENT_QUIT)\r\n        quit = true;\r\n      else if (event.type == SDL_EVENT_KEY_DOWN) {\r\n        if (event.key.scancode == SDL_SCANCODE_ESCAPE)\r\n          quit = true;\r\n      }\r\n    }\r\n\r\n    const bool *keyboard_state = SDL_GetKeyboardState(nullptr);\r\n\r\n    // Game logic\r\n    handle_input(engine, keyboard_state, game_state, delta_time);\r\n\r\n    // Process bullets (Basic Engine way: brute force update)\r\n    // Note: We need to do this manually here or in Entity::update.\r\n    // Since Entity::update is virtual and generic, let's keep specific logic\r\n    // here or let Entity handle movement. Entity::update handles basics, but we\r\n    // need to manage cooldowns here.\r\n    if (game_state.shoot_cooldown > 0) {\r\n      game_state.shoot_cooldown -= delta_time;\r\n    }\r\n\r\n    update_game(engine, game_state, delta_time);\r\n    check_collisions(engine, game_state);\r\n\r\n    // Camera zoom controls\r\n    if (keyboard_state[SDL_SCANCODE_EQUALS] ||\r\n        keyboard_state[SDL_SCANCODE_KP_PLUS]) {\r\n      engine.camera.width *= 0.98f;\r\n      engine.camera.height *= 0.98f;\r\n    }\r\n    if (keyboard_state[SDL_SCANCODE_MINUS] ||\r\n        keyboard_state[SDL_SCANCODE_KP_MINUS]) {\r\n      engine.camera.width *= 1.02f;\r\n      engine.camera.height *= 1.02f;\r\n    }\r\n\r\n    // Update engine (serial, unoptimized)\r\n    engine.update(delta_time);\r\n\r\n    // Start ImGui frame\r\n    ImGui_ImplSDLRenderer3_NewFrame();\r\n    ImGui_ImplSDL3_NewFrame();\r\n    ImGui::NewFrame();\r\n\r\n    // Stats overlay\r\n    ImGui::SetNextWindowPos(ImVec2(10, 10));\r\n    ImGui::SetNextWindowSize(ImVec2(0, 0));\r\n    ImGui::Begin(\"Stats\", nullptr,\r\n                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |\r\n                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |\r\n                     ImGuiWindowFlags_AlwaysAutoResize);\r\n    ImGui::TextColored(ImVec4(1, 0, 0, 1), \"BASIC ENGINE (UNOPTIMIZED)\");\r\n    ImGui::TextColored(ImVec4(1, 1, 0, 1), \"FPS: %.1f\", game_state.current_fps);\r\n    ImGui::TextColored(ImVec4(1, 0, 0, 1), \"HITS: %d\", game_state.hit_count);\r\n    ImGui::TextColored(ImVec4(0, 1, 0, 1), \"KILLS: %d\",\r\n                       game_state.killed_count);\r\n    ImGui::TextColored(ImVec4(1, 1, 0, 1), \"Bullets: %d\",\r\n                       game_state.bullet_count);\r\n    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), \"Planets: %d\",\r\n                       game_state.planet_count - game_state.killed_count);\r\n    ImGui::End();\r\n\r\n    ImGui::Render();\r\n\r\n    // Render (individual draw calls, unoptimized)\r\n    engine.render();\r\n\r\n    // Render ImGui\r\n    ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(),\r\n                                          engine.renderer);\r\n\r\n    SDL_RenderPresent(engine.renderer);\r\n  }\r\n\r\n  // Cleanup\r\n  ImGui_ImplSDLRenderer3_Shutdown();\r\n  ImGui_ImplSDL3_Shutdown();\r\n  ImGui::DestroyContext();\r\n\r\n  engine.shutdown();\r\n  SDL_Quit();\r\n\r\n  return 0;\r\n}\r\n\r\nvoid setup_game(BasicEngine &engine, GameState &game_state) {\r\n  std::cout << \"--- BASIC ENGINE TEXTURE LOADING ---\" << std::endl;\r\n\r\n  // Load textures individually (ANTI-OPTIMIZATION: no atlas)\r\n  engine.player_texture = engine.loadTexture(\"resource/ship1.png\");\r\n  std::cout << \"Loaded player texture\" << std::endl;\r\n\r\n  for (int i = 0; i < 5; ++i) {\r\n    char path[256];\r\n    snprintf(path, sizeof(path), \"resource/ship%d.png\", i + 2);\r\n    engine.planet_textures[i] = engine.loadTexture(path);\r\n    std::cout << \"Loaded planet texture \" << i << std::endl;\r\n  }\r\n\r\n  // Load bullet texture\r\n  engine.bullet_texture = engine.loadTexture(\"resource/shoot1.png\");\r\n  if (!engine.bullet_texture) {\r\n    std::cerr << \"Failed to load bullet texture!\" << std::endl;\r\n  }\r\n\r\n  std::cout << \"-----------------------------------\" << std::endl;\r\n\r\n  // Create player\r\n  game_state.player = engine.createEntity(BasicEntityType::PLAYER);\r\n  game_state.player->x = BASIC_WORLD_WIDTH / 2.0f;\r\n  game_state.player->y = BASIC_WORLD_HEIGHT / 2.0f;\r\n  game_state.player->width = PLAYER_SIZE;\r\n  game_state.player->height = PLAYER_SIZE;\r\n  game_state.player->texture = engine.player_texture;\r\n  game_state.player->z_index = 100;\r\n\r\n  // Create planets\r\n  std::cout << \"Creating \" << NUM_PLANETS << \" planets...\" << std::endl;\r\n  for (int i = 0; i < NUM_PLANETS; ++i) {\r\n    float x = static_cast<float>(rand() % BASIC_WORLD_WIDTH);\r\n    float y = static_cast<float>(rand() % BASIC_WORLD_HEIGHT);\r\n\r\n    // Keep clear area around player spawn\r\n    float dx = x - (BASIC_WORLD_WIDTH / 2.0f);\r\n    float dy = y - (BASIC_WORLD_HEIGHT / 2.0f);\r\n    if (dx * dx + dy * dy < 500 * 500) {\r\n      x += 1000.0f;\r\n    }\r\n\r\n    uint8_t type = rand() % 5;\r\n\r\n    Entity *planet = engine.createEntity(BasicEntityType::PLANET);\r\n    planet->x = x;\r\n    planet->y = y;\r\n    planet->width = PLANET_SIZE;\r\n    planet->height = PLANET_SIZE;\r\n    planet->texture = engine.planet_textures[type];\r\n    planet->planet_type = type;\r\n    planet->speed = PLANET_STATS[type].speed;\r\n    planet->health = PLANET_STATS[type].health;\r\n    planet->max_health = PLANET_STATS[type].health;\r\n    planet->z_index = 50;\r\n  }\r\n\r\n  game_state.planet_count = NUM_PLANETS;\r\n  std::cout << \"Created \" << NUM_PLANETS << \" planets\" << std::endl;\r\n}\r\n\r\nvoid handle_input(BasicEngine &engine, const bool *keyboard_state,\r\n                  GameState &game_state, float delta_time) {\r\n  if (!game_state.player)\r\n    return;\r\n\r\n  float dx = 0.0f;\r\n  float dy = 0.0f;\r\n\r\n  if (keyboard_state[SDL_SCANCODE_W])\r\n    dy -= 1.0f;\r\n  if (keyboard_state[SDL_SCANCODE_S])\r\n    dy += 1.0f;\r\n  if (keyboard_state[SDL_SCANCODE_A])\r\n    dx -= 1.0f;\r\n  if (keyboard_state[SDL_SCANCODE_D])\r\n    dx += 1.0f;\r\n\r\n  if (dx != 0.0f || dy != 0.0f) {\r\n    // Normalize\r\n    float length = std::sqrt(dx * dx + dy * dy);\r\n    dx /= length;\r\n    dy /= length;\r\n\r\n    float move_speed = PLAYER_SPEED * delta_time;\r\n\r\n    // Sprint\r\n    if (keyboard_state[SDL_SCANCODE_LSHIFT])\r\n      move_speed *= 2.0f;\r\n\r\n    Entity *player = game_state.player;\r\n    float new_x = player->x + dx * move_speed;\r\n    float new_y = player->y + dy * move_speed;\r\n\r\n    // Clamp to world\r\n    if (new_x < 0)\r\n      new_x = 0;\r\n    if (new_x > BASIC_WORLD_WIDTH - PLAYER_SIZE)\r\n      new_x = BASIC_WORLD_WIDTH - PLAYER_SIZE;\r\n    if (new_y < 0)\r\n      new_y = 0;\r\n    if (new_y > BASIC_WORLD_HEIGHT - PLAYER_SIZE)\r\n      new_y = BASIC_WORLD_HEIGHT - PLAYER_SIZE;\r\n\r\n    player->x = new_x;\r\n    player->y = new_y;\r\n\r\n    // Update camera\r\n    engine.camera.x = new_x + PLAYER_SIZE / 2.0f;\r\n    engine.camera.y = new_y + PLAYER_SIZE / 2.0f;\r\n  }\r\n\r\n  // Shooting Logic\r\n  float mx, my;\r\n  SDL_GetMouseState(&mx, &my);\r\n  bool mouseDown =\r\n      (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON_MASK(SDL_BUTTON_LEFT));\r\n\r\n  if (mouseDown && game_state.shoot_cooldown <= 0.0f) {\r\n    // Calculate spawn position (center of player)\r\n    float px = game_state.player->x + PLAYER_SIZE / 2.0f;\r\n    float py = game_state.player->y + PLAYER_SIZE / 2.0f;\r\n\r\n    // Adjust mouse to world coordinates\r\n    float wx = mx + (engine.camera.x - engine.camera.width / 2.0f);\r\n    float wy = my + (engine.camera.y - engine.camera.height / 2.0f);\r\n\r\n    // Direction\r\n    float dir_x = wx - px;\r\n    float dir_y = wy - py;\r\n    float len = sqrtf(dir_x * dir_x + dir_y * dir_y);\r\n    if (len > 0) {\r\n      dir_x /= len;\r\n      dir_y /= len;\r\n    }\r\n\r\n    // Base angle\r\n    float base_angle = atan2f(dir_y, dir_x);\r\n\r\n    for (int i = 0; i < BULLETS_PER_SHOT; ++i) {\r\n      // Deterministic Fan Spread (Same as Optimized Engine)\r\n      float spread_angle =\r\n          base_angle + (i - (BULLETS_PER_SHOT - 1) / 2.0f) * BULLET_SPREAD;\r\n\r\n      float vx = cosf(spread_angle);\r\n      float vy = sinf(spread_angle);\r\n\r\n      Entity *bullet = engine.createEntity(BasicEntityType::BULLET);\r\n      bullet->x = px - BULLET_SIZE / 2.0f;\r\n      bullet->y = py - BULLET_SIZE / 2.0f;\r\n      bullet->width = BULLET_SIZE;\r\n      bullet->height = BULLET_SIZE;\r\n      bullet->texture = engine.bullet_texture;\r\n      bullet->vx = vx * BULLET_SPEED;\r\n      bullet->vy = vy * BULLET_SPEED;\r\n      bullet->rotation =\r\n          spread_angle + M_PI / 2.0f; // +90 deg if sprite points up\r\n      bullet->lifetime = BULLET_LIFETIME;\r\n      bullet->z_index = 80;\r\n    }\r\n\r\n    game_state.shoot_cooldown = FIRE_RATE;\r\n  }\r\n}\r\n\r\nvoid update_game(BasicEngine &engine, GameState &game_state, float delta_time) {\r\n  if (!game_state.player)\r\n    return;\r\n\r\n  float px = game_state.player->x;\r\n  float py = game_state.player->y;\r\n\r\n  // ANTI-OPTIMIZATION: Update ALL zombie targets every frame\r\n  // Even zombies that are far away get updated\r\n  for (Entity *entity : engine.entities) {\r\n    if (entity->type == BasicEntityType::PLANET && entity->active) {\r\n      entity->target_x = px;\r\n      entity->target_y = py;\r\n    } else if (entity->type == BasicEntityType::BULLET && entity->active) {\r\n      // Update bullet position\r\n      entity->x += entity->vx * delta_time;\r\n      entity->y += entity->vy * delta_time;\r\n      entity->lifetime -= delta_time;\r\n      if (entity->lifetime <= 0) {\r\n        entity->active = false;\r\n      }\r\n    }\r\n  }\r\n}\r\n\r\nvoid check_collisions(BasicEngine &engine, GameState &game_state) {\r\n  if (!game_state.player)\r\n    return;\r\n\r\n  Entity *player = game_state.player;\r\n  float p_center_x = player->x + PLAYER_SIZE / 2.0f;\r\n  float p_center_y = player->y + PLAYER_SIZE / 2.0f;\r\n  float p_radius = PLAYER_SIZE / 2.2f;\r\n\r\n  // ANTI-OPTIMIZATION: O(n) query for nearby planets\r\n  // Optimized engine uses spatial grid for O(1) cell lookup\r\n  float query_radius = p_radius + PLANET_SIZE;\r\n  std::vector<Entity *> nearby =\r\n      engine.queryEntitiesInRadius(p_center_x, p_center_y, query_radius);\r\n\r\n  for (Entity *entity : nearby) {\r\n    if (entity->type != BasicEntityType::PLANET || !entity->active)\r\n      continue;\r\n\r\n    // Precise circle collision\r\n    float p_center_x_entity = entity->x + PLANET_SIZE / 2.0f;\r\n    float p_center_y_entity = entity->y + PLANET_SIZE / 2.0f;\r\n    float p_radius_entity = PLANET_SIZE / 2.2f;\r\n\r\n    float dx = p_center_x - p_center_x_entity;\r\n    float dy = p_center_y - p_center_y_entity;\r\n    float dist_sq = dx * dx + dy * dy;\r\n    float combined_radius = p_radius + p_radius_entity;\r\n\r\n    if (dist_sq < combined_radius * combined_radius) {\r\n      // HIT!\r\n      game_state.hit_count++;\r\n\r\n      // Destroy planet\r\n      entity->health = -1.0f;\r\n      entity->active = false;\r\n      entity->visible = false;\r\n\r\n      // Move off-screen\r\n      entity->x = -10000.0f;\r\n      entity->y = -10000.0f;\r\n    }\r\n  }\r\n\r\n  // Bullet Collisions (O(N^2) effectively against planets closer to bullets)\r\n  int active_bullets = 0;\r\n  for (Entity *bullet : engine.entities) {\r\n    if (bullet->type != BasicEntityType::BULLET || !bullet->active)\r\n      continue;\r\n\r\n    active_bullets++;\r\n\r\n    float bx = bullet->x + BULLET_SIZE / 2.0f;\r\n    float by = bullet->y + BULLET_SIZE / 2.0f;\r\n    float b_radius = BULLET_SIZE / 2.0f;\r\n\r\n    // Query planets near bullet (O(N) again!)\r\n    float query_radius = b_radius + PLANET_SIZE / 2.2f;\r\n    std::vector<Entity *> nearbyPlanets =\r\n        engine.queryEntitiesInRadius(bx, by, query_radius);\r\n\r\n    for (Entity *planet : nearbyPlanets) {\r\n      if (planet->type != BasicEntityType::PLANET || !planet->active)\r\n        continue;\r\n\r\n      // Hit!\r\n      planet->health -= BULLET_DAMAGE;\r\n      if (planet->health <= 0) {\r\n        game_state.killed_count++;\r\n        planet->active = false;\r\n        planet->visible = false;\r\n        planet->x = -10000.0f;\r\n        planet->y = -10000.0f;\r\n      }\r\n\r\n      bullet->active = false;\r\n      bullet->visible = false;\r\n      break; // Bullet hits one planet\r\n    }\r\n  }\r\n  game_state.bullet_count = active_bullets;\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/gameBasic/planet_game_basic.cpp b/gameBasic/planet_game_basic.cpp
+--- a/gameBasic/planet_game_basic.cpp	(revision 0a6dee3007d02250f71a393d7867bd5d92e9aaa4)
++++ b/gameBasic/planet_game_basic.cpp	(date 1767819217247)
+@@ -1,5 +1,5 @@
+ #define _USE_MATH_DEFINES
+-#include "engineBasic/BasicEngine.h"
++#include "../engine_old/BasicEngine.h"
+ 
+ #ifndef M_PI
+ #define M_PI 3.14159265358979323846
+Index: .idea/workspace.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<project version=\"4\">\r\n  <component name=\"AutoImportSettings\">\r\n    <option name=\"autoReloadType\" value=\"SELECTIVE\" />\r\n  </component>\r\n  <component name=\"ChangeListManager\">\r\n    <list default=\"true\" id=\"7d32de70-0328-47fe-9877-f2408de0c8af\" name=\"Changes\" comment=\"REMOVED old main file and deprecated game logic\" />\r\n    <option name=\"SHOW_DIALOG\" value=\"false\" />\r\n    <option name=\"HIGHLIGHT_CONFLICTS\" value=\"true\" />\r\n    <option name=\"HIGHLIGHT_NON_ACTIVE_CHANGELIST\" value=\"false\" />\r\n    <option name=\"LAST_RESOLUTION\" value=\"IGNORE\" />\r\n  </component>\r\n  <component name=\"Git.Settings\">\r\n    <option name=\"RECENT_BRANCH_BY_REPOSITORY\">\r\n      <map>\r\n        <entry key=\"$PROJECT_DIR$\" value=\"main\" />\r\n      </map>\r\n    </option>\r\n    <option name=\"RECENT_GIT_ROOT_PATH\" value=\"$PROJECT_DIR$\" />\r\n    <option name=\"RESET_MODE\" value=\"HARD\" />\r\n    <option name=\"UPDATE_TYPE\" value=\"REBASE\" />\r\n  </component>\r\n  <component name=\"GitHubPullRequestSearchHistory\">{\r\n  &quot;lastFilter&quot;: {\r\n    &quot;state&quot;: &quot;OPEN&quot;,\r\n    &quot;assignee&quot;: &quot;attome-ai&quot;\r\n  }\r\n}</component>\r\n  <component name=\"GithubPullRequestsUISettings\">{\r\n  &quot;selectedUrlAndAccountId&quot;: {\r\n    &quot;url&quot;: &quot;https://github.com/attome-ai/Attome-Engine.git&quot;,\r\n    &quot;accountId&quot;: &quot;f413efd3-7e7e-4dd3-9822-ad0e16afbf48&quot;\r\n  }\r\n}</component>\r\n  <component name=\"ProjectColorInfo\">{\r\n  &quot;associatedIndex&quot;: 6\r\n}</component>\r\n  <component name=\"ProjectId\" id=\"37wDtHqvRwqTH4QVN0ho4Barfnm\" />\r\n  <component name=\"ProjectViewState\">\r\n    <option name=\"hideEmptyMiddlePackages\" value=\"true\" />\r\n    <option name=\"showLibraryContents\" value=\"true\" />\r\n  </component>\r\n  <component name=\"PropertiesComponent\">{\r\n  &quot;keyToString&quot;: {\r\n    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager&quot;: &quot;true&quot;,\r\n    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,\r\n    &quot;augment.onboarding.workspace.first.indexed.C:/Users/Computia.me/Downloads/everything/engine/Template3&quot;: &quot;true&quot;,\r\n    &quot;git-widget-placeholder&quot;: &quot;main&quot;,\r\n    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,\r\n    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,\r\n    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,\r\n    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,\r\n    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,\r\n    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,\r\n    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;\r\n  }\r\n}</component>\r\n  <component name=\"SharedIndexes\">\r\n    <attachedChunks>\r\n      <set>\r\n        <option value=\"bundled-js-predefined-d6986cc7102b-09060db00ec0-JavaScript-WS-251.26927.40\" />\r\n      </set>\r\n    </attachedChunks>\r\n  </component>\r\n  <component name=\"TaskManager\">\r\n    <task active=\"true\" id=\"Default\" summary=\"Default task\">\r\n      <changelist id=\"9d3f7b7f-8ea3-42b0-a013-cc46a72daf13\" name=\"Changes\" comment=\"\" />\r\n      <created>1767805453127</created>\r\n      <option name=\"number\" value=\"Default\" />\r\n      <option name=\"presentableId\" value=\"Default\" />\r\n      <updated>1767805453127</updated>\r\n      <workItem from=\"1767805454214\" duration=\"154000\" />\r\n      <workItem from=\"1767805615617\" duration=\"145000\" />\r\n      <workItem from=\"1767806342232\" duration=\"710000\" />\r\n    </task>\r\n    <task id=\"LOCAL-00001\" summary=\"de\">\r\n      <option name=\"closed\" value=\"true\" />\r\n      <created>1767805556818</created>\r\n      <option name=\"number\" value=\"00001\" />\r\n      <option name=\"presentableId\" value=\"LOCAL-00001\" />\r\n      <option name=\"project\" value=\"LOCAL\" />\r\n      <updated>1767805556818</updated>\r\n    </task>\r\n    <task id=\"LOCAL-00002\" summary=\"REMOVED VULKAN SUPPORT\">\r\n      <option name=\"closed\" value=\"true\" />\r\n      <created>1767807158294</created>\r\n      <option name=\"number\" value=\"00002\" />\r\n      <option name=\"presentableId\" value=\"LOCAL-00002\" />\r\n      <option name=\"project\" value=\"LOCAL\" />\r\n      <updated>1767807158294</updated>\r\n    </task>\r\n    <task id=\"LOCAL-00003\" summary=\"USING RAII wrappers for dynamic arrays, replaced raw pointers and manual memory management.\">\r\n      <option name=\"closed\" value=\"true\" />\r\n      <created>1767817523058</created>\r\n      <option name=\"number\" value=\"00003\" />\r\n      <option name=\"presentableId\" value=\"LOCAL-00003\" />\r\n      <option name=\"project\" value=\"LOCAL\" />\r\n      <updated>1767817523058</updated>\r\n    </task>\r\n    <task id=\"LOCAL-00004\" summary=\"REMOVED old main file and deprecated game logic\">\r\n      <option name=\"closed\" value=\"true\" />\r\n      <created>1767817840521</created>\r\n      <option name=\"number\" value=\"00004\" />\r\n      <option name=\"presentableId\" value=\"LOCAL-00004\" />\r\n      <option name=\"project\" value=\"LOCAL\" />\r\n      <updated>1767817840521</updated>\r\n    </task>\r\n    <option name=\"localTasksCounter\" value=\"5\" />\r\n    <servers />\r\n  </component>\r\n  <component name=\"TypeScriptGeneratedFilesManager\">\r\n    <option name=\"version\" value=\"3\" />\r\n  </component>\r\n  <component name=\"Vcs.Log.Tabs.Properties\">\r\n    <option name=\"TAB_STATES\">\r\n      <map>\r\n        <entry key=\"MAIN\">\r\n          <value>\r\n            <State>\r\n              <option name=\"FILTERS\">\r\n                <map>\r\n                  <entry key=\"branch\">\r\n                    <value>\r\n                      <list>\r\n                        <option value=\"main\" />\r\n                      </list>\r\n                    </value>\r\n                  </entry>\r\n                </map>\r\n              </option>\r\n            </State>\r\n          </value>\r\n        </entry>\r\n      </map>\r\n    </option>\r\n  </component>\r\n  <component name=\"VcsManagerConfiguration\">\r\n    <MESSAGE value=\"de\" />\r\n    <MESSAGE value=\"REMOVED VULKAN SUPPORT\" />\r\n    <MESSAGE value=\"USING RAII wrappers for dynamic arrays, replaced raw pointers and manual memory management.\" />\r\n    <MESSAGE value=\"REMOVED old main file and deprecated game logic\" />\r\n    <option name=\"LAST_COMMIT_MESSAGE\" value=\"REMOVED old main file and deprecated game logic\" />\r\n  </component>\r\n</project>
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.idea/workspace.xml b/.idea/workspace.xml
+--- a/.idea/workspace.xml	(revision 0a6dee3007d02250f71a393d7867bd5d92e9aaa4)
++++ b/.idea/workspace.xml	(date 1767820191740)
+@@ -4,7 +4,28 @@
+     <option name="autoReloadType" value="SELECTIVE" />
+   </component>
+   <component name="ChangeListManager">
+-    <list default="true" id="7d32de70-0328-47fe-9877-f2408de0c8af" name="Changes" comment="REMOVED old main file and deprecated game logic" />
++    <list default="true" id="7d32de70-0328-47fe-9877-f2408de0c8af" name="Changes" comment="ADDED new buffer pool implementation with RAII-compliant design and integrated benchmarks/tests for performance and correctness.">
++      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/engine/ATMEngine.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/engine/ATMEngine.cpp" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/engine/ATMEngine.h" beforeDir="false" afterPath="$PROJECT_DIR$/engine/ATMEngine.h" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/engine_old/BasicEngine.cpp" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/engine_old/BasicEngine.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/gameBasic/planet_game_basic.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/gameBasic/planet_game_basic.cpp" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/gameOptimized/planet_game.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/gameOptimized/planet_game.cpp" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/ATMCommon.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/ATMEngine.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/ATMEngine/ATMEngine.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/ATMEngine/ATMLog.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/ATMProfiler.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMDefinitions.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMEngine.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMEngineConfig.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMLog.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/engine3D/ATMPipeline.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/include/engine3D/test.h" beforeDir="false" />
++      <change beforePath="$PROJECT_DIR$/lib/ATMBufferPool.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/lib/ATMBufferPool.cpp" afterDir="false" />
++      <change beforePath="$PROJECT_DIR$/windows/CMakeLists.txt" beforeDir="false" afterPath="$PROJECT_DIR$/windows/CMakeLists.txt" afterDir="false" />
++    </list>
+     <option name="SHOW_DIALOG" value="false" />
+     <option name="HIGHLIGHT_CONFLICTS" value="true" />
+     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+@@ -107,7 +128,23 @@
+       <option name="project" value="LOCAL" />
+       <updated>1767817840521</updated>
+     </task>
+-    <option name="localTasksCounter" value="5" />
++    <task id="LOCAL-00005" summary="Removed deprecated files and updated workspace configuration">
++      <option name="closed" value="true" />
++      <created>1767817953357</created>
++      <option name="number" value="00005" />
++      <option name="presentableId" value="LOCAL-00005" />
++      <option name="project" value="LOCAL" />
++      <updated>1767817953357</updated>
++    </task>
++    <task id="LOCAL-00006" summary="ADDED new buffer pool implementation with RAII-compliant design and integrated benchmarks/tests for performance and correctness.">
++      <option name="closed" value="true" />
++      <created>1767818894993</created>
++      <option name="number" value="00006" />
++      <option name="presentableId" value="LOCAL-00006" />
++      <option name="project" value="LOCAL" />
++      <updated>1767818894993</updated>
++    </task>
++    <option name="localTasksCounter" value="7" />
+     <servers />
+   </component>
+   <component name="TypeScriptGeneratedFilesManager">
+@@ -141,6 +178,8 @@
+     <MESSAGE value="REMOVED VULKAN SUPPORT" />
+     <MESSAGE value="USING RAII wrappers for dynamic arrays, replaced raw pointers and manual memory management." />
+     <MESSAGE value="REMOVED old main file and deprecated game logic" />
+-    <option name="LAST_COMMIT_MESSAGE" value="REMOVED old main file and deprecated game logic" />
++    <MESSAGE value="Removed deprecated files and updated workspace configuration" />
++    <MESSAGE value="ADDED new buffer pool implementation with RAII-compliant design and integrated benchmarks/tests for performance and correctness." />
++    <option name="LAST_COMMIT_MESSAGE" value="ADDED new buffer pool implementation with RAII-compliant design and integrated benchmarks/tests for performance and correctness." />
+   </component>
+ </project>
+\ No newline at end of file
+Index: engine/ATMEngine.cpp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>#include \"../game/ATMEngine.h\"\r\n#include <algorithm>\r\n#include <execution>\r\n#include <future>\r\n#include <numeric>\r\n#include <thread>\r\n#define STB_IMAGE_IMPLEMENTATION\r\n#include \"../game/stb_image.h\"\r\n#include \"SDL3_image/SDL_image.h\"\r\n\r\n// EntityContainer implementation\r\nEntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,\r\n                                 int initialCapacity)\r\n    : flags(initialCapacity), entity_ids(initialCapacity),\r\n      parent_ids(initialCapacity, INVALID_ID),\r\n      first_child_ids(initialCapacity, INVALID_ID),\r\n      next_sibling_ids(initialCapacity, INVALID_ID),\r\n      x_positions(initialCapacity, 0.0f), y_positions(initialCapacity, 0.0f),\r\n      cell_x(initialCapacity), cell_y(initialCapacity),\r\n      grid_node_indices(initialCapacity, -1),\r\n      containerFlag((uint8_t)ContainerFlag::UPDATEABLE), type_id(typeId),\r\n      default_layer(defaultLayer), capacity(initialCapacity), count(0) {\r\n  // All arrays initialized via member initializer list - RAII handles cleanup\r\n}\r\n\r\nEntityContainer::~EntityContainer() {\r\n  PROFILE_FUNCTION();\r\n  // RAII: DynamicArray destructors automatically free memory\r\n}\r\n\r\nuint32_t EntityContainer::createEntity() {\r\n  if (count >= capacity) {\r\n    // Resize arrays to accommodate more entities\r\n    int newCapacity = capacity * 2;\r\n    resizeArrays(newCapacity);\r\n  }\r\n\r\n  size_t index = count++;\r\n  x_positions[index] = 0.0f;\r\n  y_positions[index] = 0.0f;\r\n  flags[index] = static_cast<uint8_t>(EntityFlag::NONE);\r\n  entity_ids[index] = index;\r\n  parent_ids[index] = INVALID_ID;\r\n  first_child_ids[index] = INVALID_ID;\r\n  next_sibling_ids[index] = INVALID_ID;\r\n  cell_x[index] = 0;\r\n  cell_y[index] = 0;\r\n  grid_node_indices[index] = -1;\r\n\r\n  return index;\r\n}\r\n\r\nvoid EntityContainer::removeEntity(size_t index) {\r\n  PROFILE_FUNCTION();\r\n  if (index >= count)\r\n    return;\r\n\r\n  // Move last entity to removed position\r\n  size_t last = count - 1;\r\n  if (index < last) {\r\n    x_positions[index] = x_positions[last];\r\n    y_positions[index] = y_positions[last];\r\n    flags[index] = flags[last];\r\n    entity_ids[index] = index; // Update to new position\r\n    parent_ids[index] = parent_ids[last];\r\n    first_child_ids[index] = first_child_ids[last];\r\n    next_sibling_ids[index] = next_sibling_ids[last];\r\n    cell_x[index] = cell_x[last];\r\n    cell_y[index] = cell_y[last];\r\n    grid_node_indices[index] = grid_node_indices[last];\r\n  }\r\n\r\n  count--;\r\n}\r\n\r\nvoid EntityContainer::resizeArrays(int newCapacity) {\r\n  PROFILE_FUNCTION();\r\n  if (newCapacity <= capacity)\r\n    return;\r\n\r\n  // RAII: Use DynamicArray::resize() - handles allocation, copy, and cleanup\r\n  flags.resize(newCapacity, count);\r\n  entity_ids.resize(newCapacity, count);\r\n  parent_ids.resize(newCapacity, count, INVALID_ID);\r\n  first_child_ids.resize(newCapacity, count, INVALID_ID);\r\n  next_sibling_ids.resize(newCapacity, count, INVALID_ID);\r\n  x_positions.resize(newCapacity, count, 0.0f);\r\n  y_positions.resize(newCapacity, count, 0.0f);\r\n  cell_x.resize(newCapacity, count);\r\n  cell_y.resize(newCapacity, count);\r\n  grid_node_indices.resize(newCapacity, count, -1);\r\n\r\n  // Update capacity\r\n  capacity = newCapacity;\r\n}\r\n\r\n// RenderableEntityContainer implementation\r\nRenderableEntityContainer::RenderableEntityContainer(int typeId,\r\n                                                     uint8_t defaultLayer,\r\n                                                     int initialCapacity)\r\n    : EntityContainer(typeId, defaultLayer, initialCapacity),\r\n      widths(initialCapacity), heights(initialCapacity),\r\n      texture_ids(initialCapacity), z_indices(initialCapacity),\r\n      rotations(initialCapacity, 0.0f) {\r\n  this->containerFlag |= (uint8_t)ContainerFlag::RENDERABLE;\r\n}\r\n\r\nRenderableEntityContainer::~RenderableEntityContainer() {\r\n  PROFILE_FUNCTION();\r\n  // RAII: DynamicArray destructors automatically free memory\r\n}\r\n\r\nuint32_t RenderableEntityContainer::createEntity() {\r\n  uint32_t index = EntityContainer::createEntity();\r\n  if (index == INVALID_ID)\r\n    return INVALID_ID;\r\n\r\n  widths[index] = 0;\r\n  heights[index] = 0;\r\n  texture_ids[index] = 0;\r\n  z_indices[index] = 0;\r\n  rotations[index] = 0.0f;\r\n  return index;\r\n}\r\n\r\nvoid RenderableEntityContainer::removeEntity(size_t index) {\r\n  PROFILE_FUNCTION();\r\n  if (index >= count)\r\n    return;\r\n\r\n  size_t last = count - 1;\r\n  if (index < last) {\r\n    widths[index] = widths[last];\r\n    heights[index] = heights[last];\r\n    texture_ids[index] = texture_ids[last];\r\n    z_indices[index] = z_indices[last];\r\n    rotations[index] = rotations[last];\r\n  }\r\n\r\n  EntityContainer::removeEntity(index);\r\n}\r\n\r\nvoid RenderableEntityContainer::resizeArrays(int newCapacity) {\r\n  PROFILE_FUNCTION();\r\n  if (newCapacity <= capacity)\r\n    return;\r\n\r\n  // IMPORTANT: EntityContainer::resizeArrays handles resizing the base arrays\r\n  EntityContainer::resizeArrays(newCapacity);\r\n\r\n  // RAII: Use DynamicArray::resize() for renderable-specific arrays\r\n  widths.resize(newCapacity, count);\r\n  heights.resize(newCapacity, count);\r\n  texture_ids.resize(newCapacity, count);\r\n  z_indices.resize(newCapacity, count);\r\n  rotations.resize(newCapacity, count, 0.0f);\r\n}\r\n\r\n// Layer implementation\r\nLayer::Layer(int id) : layer_id(id), is_active(true) { PROFILE_FUNCTION(); }\r\n\r\nvoid Layer::update(float delta_time) {\r\n  PROFILE_FUNCTION();\r\n  if (!is_active)\r\n    return;\r\n  for (auto container : entity_containers) {\r\n    if (container->containerFlag & (uint8_t)ContainerFlag::UPDATEABLE)\r\n      container->update(delta_time);\r\n  }\r\n}\r\n\r\nvoid Layer::addEntityContainer(EntityContainer *container) {\r\n  PROFILE_FUNCTION();\r\n  entity_containers.push_back(container);\r\n}\r\n\r\n// EntityManager implementation\r\nEntityManager::EntityManager() : next_entity_id(0) {\r\n  PROFILE_FUNCTION();\r\n  layers.push_back(std::make_unique<Layer>(0));\r\n}\r\n\r\nint EntityManager::registerEntityType(EntityContainer *container) {\r\n  PROFILE_FUNCTION();\r\n  int type_id = containers.size();\r\n  containers.emplace_back(container);\r\n\r\n  uint8_t layer_index = container->getDefaultLayer();\r\n  if (layer_index >= layers.size()) {\r\n    layers.resize(layer_index + 1);\r\n  }\r\n  if (!layers[layer_index]) {\r\n    layers[layer_index] = std::make_unique<Layer>(layer_index);\r\n  }\r\n  layers[layer_index]->addEntityContainer(container);\r\n\r\n  return type_id;\r\n}\r\n\r\nuint32_t EntityManager::createEntity(int type_id) {\r\n  PROFILE_FUNCTION();\r\n  if (type_id >= containers.size())\r\n    return INVALID_ID;\r\n  uint32_t index = containers[type_id]->createEntity();\r\n  if (index != INVALID_ID) {\r\n    // Could store a mapping from index to next_entity_id if needed\r\n    next_entity_id++;\r\n  }\r\n  return index;\r\n}\r\n\r\nvoid EntityManager::removeEntity(uint32_t index, int type_id) {\r\n  PROFILE_FUNCTION();\r\n  if (type_id >= containers.size())\r\n    return;\r\n  containers[type_id]->removeEntity(index);\r\n}\r\n\r\nvoid EntityManager::update(float delta_time) {\r\n  PROFILE_FUNCTION();\r\n  for (auto &layer : layers) {\r\n    if (layer)\r\n      layer->update(delta_time);\r\n  }\r\n}\r\n\r\n// RenderBatch implementation\r\nRenderBatch::RenderBatch(int textureId, int zIndex, int initialVertexCapacity)\r\n    : texture_id(textureId), z_index(zIndex) {\r\n  PROFILE_FUNCTION();\r\n  vertices.reserve(initialVertexCapacity);\r\n  indices.reserve(initialVertexCapacity * 1.5);\r\n}\r\n\r\nRenderBatch::~RenderBatch() {}\r\n\r\nRenderBatch::RenderBatch(RenderBatch &&other) noexcept\r\n    : texture_id(other.texture_id), vertices(std::move(other.vertices)),\r\n      indices(std::move(other.indices)) {\r\n  PROFILE_FUNCTION();\r\n}\r\n\r\nRenderBatch &RenderBatch::operator=(RenderBatch &&other) noexcept {\r\n  PROFILE_FUNCTION();\r\n  if (this != &other) {\r\n\r\n    texture_id = other.texture_id;\r\n    vertices = std::move(other.vertices);\r\n    indices = std::move(other.indices);\r\n  }\r\n  return *this;\r\n}\r\n\r\nvoid RenderBatch::addQuad(float x, float y, float w, float h,\r\n                          SDL_FRect tex_region) {\r\n  // Ensure we have enough space\r\n  const uint64_t &base_vert = vertices.size();\r\n\r\n  vertices.resize(vertices.size() + 4);\r\n  indices.resize(indices.size() + 6);\r\n\r\n  // Use direct memory access for better performance\r\n  SDL_Vertex *v = &vertices.data()[vertices.size() - 4];\r\n\r\n  // Top-left\r\n  v[0].position.x = x;\r\n  v[0].position.y = y;\r\n  v[0].color.a = 1;\r\n  v[0].color.b = 1;\r\n  v[0].color.r = 1;\r\n  v[0].color.g = 1;\r\n  v[0].tex_coord.x = tex_region.x;\r\n  v[0].tex_coord.y = tex_region.y;\r\n\r\n  // Top-right\r\n  v[1].position.x = x + w;\r\n  v[1].position.y = y;\r\n  v[1].color.a = 1;\r\n  v[1].color.b = 1;\r\n  v[1].color.r = 1;\r\n  v[1].color.g = 1;\r\n  v[1].tex_coord.x = tex_region.x + tex_region.w;\r\n  v[1].tex_coord.y = tex_region.y;\r\n\r\n  // Bottom-right\r\n  v[2].position.x = x + w;\r\n  v[2].position.y = y + h;\r\n  v[2].color.a = 1;\r\n  v[2].color.b = 1;\r\n  v[2].color.r = 1;\r\n  v[2].color.g = 1;\r\n  v[2].tex_coord.x = tex_region.x + tex_region.w;\r\n  v[2].tex_coord.y = tex_region.y + tex_region.h;\r\n\r\n  // Bottom-left\r\n  v[3].position.x = x;\r\n  v[3].position.y = y + h;\r\n  v[3].color.a = 1;\r\n  v[3].color.b = 1;\r\n  v[3].color.r = 1;\r\n  v[3].color.g = 1;\r\n  v[3].tex_coord.x = tex_region.x;\r\n  v[3].tex_coord.y = tex_region.y + tex_region.h;\r\n\r\n  // Add indices\r\n  int *idx = &indices.data()[indices.size() - 6];\r\n  idx[0] = base_vert;\r\n  idx[1] = base_vert + 1;\r\n  idx[2] = base_vert + 2;\r\n  idx[3] = base_vert;\r\n  idx[4] = base_vert + 2;\r\n  idx[5] = base_vert + 3;\r\n}\r\n\r\nvoid RenderBatch::clear() {\r\n  PROFILE_FUNCTION();\r\n  vertices.clear();\r\n  indices.clear();\r\n}\r\n\r\n// RenderBatchManager implementation\r\n\r\nRenderBatchManager::RenderBatchManager(int initialBatchCount)\r\n    : needsSort(false) {\r\n  batches.reserve(initialBatchCount *\r\n                  2); // Reserve extra space to minimize reallocations\r\n}\r\n\r\nvoid RenderBatchManager::addQuad(int textureId, int zIndex, float x, float y,\r\n                                 float w, float h, SDL_FRect tex_region) {\r\n  // Get or create a batch for this texture/z-index combination\r\n  RenderBatch &batch = getBatch(textureId, zIndex);\r\n  batch.addQuad(x, y, w, h, tex_region);\r\n}\r\n\r\nRenderBatch &RenderBatchManager::getBatch(int textureId, int zIndex) {\r\n  BatchKey key = createKey(textureId, zIndex);\r\n\r\n  // Try to find existing batch\r\n  auto it = batchMap.find(key);\r\n  if (it != batchMap.end()) {\r\n    return batches[it->second];\r\n  }\r\n\r\n  // Create new batch\r\n  size_t newIndex = batches.size();\r\n  batches.emplace_back(textureId, zIndex);\r\n  batchMap[key] = newIndex;\r\n  needsSort = true; // New batch might change sorting order\r\n\r\n  return batches[newIndex];\r\n}\r\n\r\nvoid RenderBatchManager::clear() {\r\n  PROFILE_FUNCTION();\r\n  for (auto &batch : batches) {\r\n    batch.clear();\r\n  }\r\n  // Don't clear the map - reuse the same batches\r\n}\r\n\r\nconst std::vector<RenderBatch> &RenderBatchManager::getBatches() {\r\n  PROFILE_FUNCTION();\r\n  if (needsSort) {\r\n    sortIfNeeded();\r\n  }\r\n  return batches;\r\n}\r\n\r\nvoid RenderBatchManager::sortIfNeeded() {\r\n  PROFILE_FUNCTION();\r\n  std::sort(batches.begin(), batches.end(),\r\n            [](const RenderBatch &a, const RenderBatch &b) {\r\n              if (a.z_index != b.z_index)\r\n                return a.z_index < b.z_index;\r\n              return a.texture_id < b.texture_id;\r\n            });\r\n\r\n  // Rebuild the map labels to reflect new indices\r\n  batchMap.clear();\r\n  for (size_t i = 0; i < batches.size(); ++i) {\r\n    batchMap[createKey(batches[i].texture_id, batches[i].z_index)] = i;\r\n  }\r\n  needsSort = false;\r\n}\r\n\r\nsize_t RenderBatchManager::getBatchCount() const {\r\n  PROFILE_FUNCTION();\r\n  return batches.size();\r\n}\r\n\r\n// Process entities marked for removal\r\nvoid process_pending_removals(Engine *engine) {\r\n  PROFILE_FUNCTION();\r\n\r\n  if (engine->pending_removals.empty())\r\n    return;\r\n\r\n  for (const auto &ref : engine->pending_removals) {\r\n    if (ref.type < 0 || ref.type >= engine->entityManager.containers.size())\r\n      continue;\r\n\r\n    auto container = engine->entityManager.containers[ref.type].get();\r\n    if (!container)\r\n      continue;\r\n\r\n    container->removeEntity(ref.index);\r\n  }\r\n\r\n  engine->pending_removals.clear();\r\n}\r\n\r\n// Update the engine state\r\nvoid engine_update(Engine *engine) {\r\n  PROFILE_FUNCTION();\r\n\r\n  // Calculate delta time\r\n  Uint64 current_time = SDL_GetTicks();\r\n  float delta_time = (current_time - engine->last_frame_time) / 1000.0f;\r\n  engine->last_frame_time = current_time;\r\n\r\n  // Smooth FPS calculation\r\n  engine->fps = 0.95f * engine->fps + 0.05f * (1.0f / delta_time);\r\n\r\n  // Grid is now updated incrementally during entity updates - no full rebuild\r\n  // needed!\r\n\r\n  // Update all entity layers\r\n  engine->entityManager.update(delta_time);\r\n\r\n  // Process pending removals\r\n  process_pending_removals(engine);\r\n}\r\n\r\n// Set entity z_index\r\nvoid engine_set_entity_z_index(Engine *engine, uint32_t entity_idx, int type_id,\r\n                               uint8_t z_index) {\r\n  PROFILE_FUNCTION();\r\n\r\n  if (type_id >= engine->entityManager.containers.size())\r\n    return;\r\n\r\n  auto container = engine->entityManager.containers[type_id].get();\r\n  if (!container)\r\n    return;\r\n\r\n  RenderableEntityContainer *renderable =\r\n      dynamic_cast<RenderableEntityContainer *>(container);\r\n  if (!renderable || entity_idx >= renderable->getCount())\r\n    return;\r\n\r\n  renderable->z_indices[entity_idx] = z_index;\r\n}\r\n\r\n// Present the renderer\r\nvoid engine_present(Engine *engine) {\r\n  PROFILE_FUNCTION();\r\n  // Present with SDL\r\n  SDL_RenderPresent(engine->renderer);\r\n}\r\n\r\n// TextureAtlas implementation\r\nTextureAtlas::TextureAtlas(SDL_Renderer *renderer, int width, int height,\r\n                           int initialCapacity)\r\n    : renderer(renderer), texture_count(0), texture_capacity(initialCapacity),\r\n      region_count(0), region_capacity(64) {\r\n  PROFILE_FUNCTION();\r\n  // Allocate texture array with alignment for better cache performance\r\n  textures = static_cast<SDL_Texture **>(SDL_aligned_alloc(\r\n      CACHE_LINE_SIZE, texture_capacity * sizeof(SDL_Texture *)));\r\n\r\n  // Allocate region array with alignment\r\n  regions = static_cast<SDL_FRect *>(\r\n      SDL_aligned_alloc(CACHE_LINE_SIZE, region_capacity * sizeof(SDL_FRect)));\r\n\r\n  // Create a texture for the atlas\r\n  SDL_Texture *texture =\r\n      SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,\r\n                        SDL_TEXTUREACCESS_TARGET, width, height);\r\n  SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);\r\n\r\n  // Add the texture to the array\r\n  textures[0] = texture;\r\n  texture_count = 1;\r\n}\r\n\r\nTextureAtlas::~TextureAtlas() {\r\n  PROFILE_FUNCTION();\r\n  // Free textures\r\n  for (int i = 0; i < texture_count; i++) {\r\n    SDL_DestroyTexture(textures[i]);\r\n  }\r\n\r\n  // Free arrays\r\n  SDL_aligned_free(textures);\r\n  SDL_aligned_free(regions);\r\n}\r\n\r\nTextureAtlas::TextureAtlas(TextureAtlas &&other) noexcept\r\n    : textures(other.textures), texture_count(other.texture_count),\r\n      texture_capacity(other.texture_capacity), regions(other.regions),\r\n      region_count(other.region_count), region_capacity(other.region_capacity),\r\n      renderer(other.renderer) {\r\n  PROFILE_FUNCTION();\r\n  other.textures = nullptr;\r\n  other.regions = nullptr;\r\n  other.texture_count = 0;\r\n  other.region_count = 0;\r\n}\r\n\r\nTextureAtlas &TextureAtlas::operator=(TextureAtlas &&other) noexcept {\r\n  PROFILE_FUNCTION();\r\n  if (this != &other) {\r\n    // Free current resources\r\n    for (int i = 0; i < texture_count; i++) {\r\n      SDL_DestroyTexture(textures[i]);\r\n    }\r\n    SDL_aligned_free(textures);\r\n    SDL_aligned_free(regions);\r\n\r\n    // Move other's resources\r\n    textures = other.textures;\r\n    texture_count = other.texture_count;\r\n    texture_capacity = other.texture_capacity;\r\n    regions = other.regions;\r\n    region_count = other.region_count;\r\n    region_capacity = other.region_capacity;\r\n    renderer = other.renderer;\r\n\r\n    // Null out other's pointers\r\n    other.textures = nullptr;\r\n    other.regions = nullptr;\r\n    other.texture_count = 0;\r\n    other.region_count = 0;\r\n  }\r\n  return *this;\r\n}\r\n\r\nint TextureAtlas::registerTexture(SDL_Surface *surface, int x, int y, int width,\r\n                                  int height) {\r\n  PROFILE_FUNCTION();\r\n\r\n  int texture_id = region_count;\r\n\r\n  // Ensure capacity\r\n  ensureRegionCapacity(texture_id + 1);\r\n\r\n  // Calculate normalized UV coordinates\r\n  float atlas_width, atlas_height;\r\n  SDL_GetTextureSize(textures[0], &atlas_width, &atlas_height);\r\n\r\n  // Use the provided width/height or the surface dimensions if not specified\r\n  int tex_width = (width > 0) ? width : surface->w;\r\n  int tex_height = (height > 0) ? height : surface->h;\r\n\r\n  SDL_FRect region = {(float)x / atlas_width, (float)y / atlas_height,\r\n                      (float)tex_width / atlas_width,\r\n                      (float)tex_height / atlas_height};\r\n\r\n  regions[texture_id] = region;\r\n  region_count++;\r\n\r\n  // Copy surface to atlas texture\r\n  SDL_Texture *temp = SDL_CreateTextureFromSurface(renderer, surface);\r\n\r\n  // Set render target to atlas\r\n  SDL_Texture *old_target = SDL_GetRenderTarget(renderer);\r\n  SDL_SetRenderTarget(renderer, textures[0]);\r\n\r\n  // Copy texture to atlas\r\n  SDL_FRect dest = {(float)x, (float)y, (float)tex_width, (float)tex_height};\r\n  SDL_RenderTexture(renderer, temp, NULL, &dest);\r\n\r\n  // Reset render target\r\n  SDL_SetRenderTarget(renderer, old_target);\r\n\r\n  // Clean up\r\n  SDL_DestroyTexture(temp);\r\n\r\n  return texture_id;\r\n}\r\n\r\nSDL_FRect TextureAtlas::getRegion(int textureId) const {\r\n  if (textureId >= 0 && textureId < region_count) {\r\n    return regions[textureId];\r\n  }\r\n  // Return empty region if invalid texture ID\r\n  return {0, 0, 1, 1};\r\n}\r\n\r\nSDL_Texture *TextureAtlas::getTexture(int textureId) const {\r\n  PROFILE_FUNCTION();\r\n  // Currently, we use only the first texture in the atlas\r\n  // This simplifies batch rendering while still allowing future expansion\r\n  return textures[0];\r\n}\r\n\r\nvoid TextureAtlas::ensureTextureCapacity(int needed) {\r\n  PROFILE_FUNCTION();\r\n  if (needed <= texture_capacity)\r\n    return;\r\n\r\n  int new_capacity = texture_capacity * 2;\r\n  while (new_capacity < needed)\r\n    new_capacity *= 2;\r\n\r\n  SDL_Texture **new_textures = static_cast<SDL_Texture **>(\r\n      SDL_aligned_alloc(CACHE_LINE_SIZE, new_capacity * sizeof(SDL_Texture *)));\r\n\r\n  // Copy existing textures\r\n  memcpy(new_textures, textures, texture_count * sizeof(SDL_Texture *));\r\n\r\n  SDL_aligned_free(textures);\r\n  textures = new_textures;\r\n  texture_capacity = new_capacity;\r\n}\r\n\r\nvoid TextureAtlas::ensureRegionCapacity(int needed) {\r\n  if (needed <= region_capacity)\r\n    return;\r\n\r\n  int new_capacity = region_capacity * 2;\r\n  while (new_capacity < needed)\r\n    new_capacity *= 2;\r\n\r\n  SDL_FRect *new_regions = static_cast<SDL_FRect *>(\r\n      SDL_aligned_alloc(CACHE_LINE_SIZE, new_capacity * sizeof(SDL_FRect)));\r\n\r\n  // Copy existing regions\r\n  memcpy(new_regions, regions, region_count * sizeof(SDL_FRect));\r\n\r\n  SDL_aligned_free(regions);\r\n  regions = new_regions;\r\n  region_capacity = new_capacity;\r\n}\r\n\r\n// Helper function to get texture region - now a wrapper around TextureAtlas\r\n// method\r\nSDL_FRect get_texture_region(const TextureAtlas &atlas, int16_t texture_id) {\r\n  PROFILE_FUNCTION();\r\n  return atlas.getRegion(texture_id);\r\n}\r\n\r\n// Engine initialization with TextureAtlas class\r\nEngine *engine_create(int window_width, int window_height, int world_width,\r\n                      int world_height, int cell_size) {\r\n  PROFILE_FUNCTION();\r\n\r\n  Engine *engine = static_cast<Engine *>(malloc(sizeof(Engine)));\r\n  if (!engine)\r\n    return NULL;\r\n\r\n  // Use placement new to properly initialize C++ members\r\n  new (&engine->grid) SpatialGrid();\r\n  new (&engine->entityManager) EntityManager();\r\n  new (&engine->pending_removals) std::vector<EntityRef>();\r\n  new (&engine->renderBatchManager) RenderBatchManager(8);\r\n\r\n  // Create window\r\n  Uint32 windowFlags = SDL_WINDOW_HIGH_PIXEL_DENSITY;\r\n\r\n  engine->window = SDL_CreateWindow(\"2D Game Engine\", window_width,\r\n                                    window_height, windowFlags);\r\n  if (!engine->window) {\r\n    engine->renderBatchManager.~RenderBatchManager();\r\n    engine->entityManager.~EntityManager();\r\n    engine->pending_removals.~vector();\r\n    free(engine);\r\n    return NULL;\r\n  }\r\n  SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);\r\n\r\n  // Initialize SDL renderer\r\n  engine->renderer = SDL_CreateRenderer(engine->window, NULL);\r\n  if (!engine->renderer) {\r\n    SDL_DestroyWindow(engine->window);\r\n    engine->renderBatchManager.~RenderBatchManager();\r\n    engine->entityManager.~EntityManager();\r\n    engine->pending_removals.~vector();\r\n    free(engine);\r\n    return NULL;\r\n  }\r\n\r\n  // Initialize the TextureAtlas with placement new\r\n  new (&engine->atlas) TextureAtlas(engine->renderer, 2048, 2048);\r\n\r\n  // Init world bounds\r\n  engine->world_bounds.x = 0;\r\n  engine->world_bounds.y = 0;\r\n  engine->world_bounds.w = (float)world_width;\r\n  engine->world_bounds.h = (float)world_height;\r\n\r\n  // Init camera\r\n  engine->camera.x = 0;\r\n  engine->camera.y = 0;\r\n  engine->camera.width = (float)window_width;\r\n  engine->camera.height = (float)window_height;\r\n  engine->camera.zoom = 1.0f;\r\n\r\n  // Init timing\r\n  engine->last_frame_time = SDL_GetTicks();\r\n  engine->fps = 0.0f;\r\n\r\n  return engine;\r\n}\r\n// Clean up the engine resources\r\nvoid engine_destroy(Engine *engine) {\r\n  PROFILE_FUNCTION();\r\n  if (!engine)\r\n    return;\r\n\r\n  // Call destructors for C++ members in reverse order of construction\r\n  engine->atlas.~TextureAtlas();\r\n  engine->renderBatchManager.~RenderBatchManager();\r\n\r\n  // Destroy SDL resources\r\n  if (engine->renderer) {\r\n    SDL_DestroyRenderer(engine->renderer);\r\n  }\r\n\r\n  SDL_DestroyWindow(engine->window);\r\n\r\n  // Free the engine struct\r\n  free(engine);\r\n}\r\nint engine_register_texture(Engine *engine, SDL_Surface *surface, int x, int y,\r\n                            int width, int height) {\r\n  PROFILE_FUNCTION();\r\n  // Use SDL texture management\r\n  return engine->atlas.registerTexture(surface, x, y, width, height);\r\n}\r\n\r\nvoid engine_render_scene(Engine *engine) {\r\n  PROFILE_FUNCTION();\r\n\r\n  // Modern 2D Aesthetic: Clear to dark gray\r\n  SDL_SetRenderDrawColor(engine->renderer, 15, 15, 20, 255);\r\n  SDL_RenderClear(engine->renderer);\r\n\r\n  engine->renderBatchManager.clear();\r\n\r\n  const float x1 = engine->camera.x - engine->camera.width / 2.0f;\r\n  const float y1 = engine->camera.y - engine->camera.height / 2.0f;\r\n  const float x2 = engine->camera.x + engine->camera.width / 2.0f;\r\n  const float y2 = engine->camera.y + engine->camera.height / 2.0f;\r\n\r\n  // 1. Thread-safe Parallel Query\r\n  std::vector<EntityRef> &visible_entities =\r\n      engine->grid.queryRect(x1 - 50, y1 - 50, x2 + 50, y2 + 50);\r\n  if (visible_entities.empty())\r\n    return;\r\n\r\n  // 2. OPTIMIZED SORTING: Pre-compute sort keys to eliminate pointer derefs\r\n  // during comparison. Key layout: (z_index << 56) | (type << 48) | index\r\n  // This reduces ~40M pointer dereferences to ~N (one per entity during key\r\n  // building)\r\n\r\n  // Pre-computed sort key for zero-cost comparisons during sort\r\n  struct SortableEntity {\r\n    uint64_t sort_key;\r\n    EntityRef ref;\r\n\r\n    bool operator<(const SortableEntity &other) const {\r\n      return sort_key < other.sort_key;\r\n    }\r\n  };\r\n\r\n  // Reuse buffer across frames to avoid allocation\r\n  static thread_local std::vector<SortableEntity> sortable_entities;\r\n  sortable_entities.clear();\r\n  sortable_entities.reserve(visible_entities.size());\r\n\r\n  // Build sort keys - ONE pointer deref per entity (not per comparison)\r\n  for (const auto &entity : visible_entities) {\r\n    auto rCont = static_cast<RenderableEntityContainer *>(\r\n        engine->entityManager.containers[entity.type].get());\r\n\r\n    uint64_t key =\r\n        (static_cast<uint64_t>(rCont->z_indices[entity.index]) << 56) |\r\n        (static_cast<uint64_t>(entity.type) << 48) |\r\n        static_cast<uint64_t>(entity.index);\r\n\r\n    sortable_entities.push_back({key, entity});\r\n  }\r\n\r\n  // Sort on pre-computed keys - ZERO pointer derefs during sort\r\n  std::sort(sortable_entities.begin(), sortable_entities.end());\r\n\r\n  // 3. Build a SINGLE unified batch - preserves sort order for proper layering\r\n  // Since all textures are in the atlas, we render with one draw call\r\n  static std::vector<SDL_Vertex> unified_vertices;\r\n  static std::vector<int> unified_indices;\r\n  unified_vertices.clear();\r\n  unified_indices.clear();\r\n  unified_vertices.reserve(sortable_entities.size() * 4);\r\n  unified_indices.reserve(sortable_entities.size() * 6);\r\n\r\n  for (const auto &se : sortable_entities) {\r\n    const auto &entity = se.ref;\r\n    auto rCont = static_cast<RenderableEntityContainer *>(\r\n        engine->entityManager.containers[entity.type].get());\r\n    float x = rCont->x_positions[entity.index] - x1;\r\n    float y = rCont->y_positions[entity.index] - y1;\r\n    float w = rCont->widths[entity.index];\r\n    float h = rCont->heights[entity.index];\r\n\r\n    if (x + w < 0 || x > engine->camera.width || y + h < 0 ||\r\n        y > engine->camera.height)\r\n      continue;\r\n\r\n    SDL_FRect texRegion =\r\n        engine->atlas.getRegion(rCont->texture_ids[entity.index]);\r\n\r\n    // Add quad directly to unified batch\r\n    int base_vert = unified_vertices.size();\r\n\r\n    // Vertices\r\n    // Vertices - Manual Rotation\r\n    SDL_Vertex v;\r\n    v.color = {1, 1, 1, 1};\r\n\r\n    float angle = rCont->rotations[entity.index];\r\n    float cx = x + w * 0.5f;\r\n    float cy = y + h * 0.5f;\r\n    float c = cosf(angle);\r\n    float s = sinf(angle);\r\n\r\n    // Lambda to rotate point around center\r\n    auto rotate = [&](float vx, float vy) -> SDL_FPoint {\r\n      return {cx + (vx - cx) * c - (vy - cy) * s,\r\n              cy + (vx - cx) * s + (vy - cy) * c};\r\n    };\r\n\r\n    // Top-left\r\n    v.position = rotate(x, y);\r\n    v.tex_coord = {texRegion.x, texRegion.y};\r\n    unified_vertices.push_back(v);\r\n\r\n    // Top-right\r\n    v.position = rotate(x + w, y);\r\n    v.tex_coord = {texRegion.x + texRegion.w, texRegion.y};\r\n    unified_vertices.push_back(v);\r\n\r\n    // Bottom-right\r\n    v.position = rotate(x + w, y + h);\r\n    v.tex_coord = {texRegion.x + texRegion.w, texRegion.y + texRegion.h};\r\n    unified_vertices.push_back(v);\r\n\r\n    // Bottom-left\r\n    v.position = rotate(x, y + h);\r\n    v.tex_coord = {texRegion.x, texRegion.y + texRegion.h};\r\n    unified_vertices.push_back(v);\r\n\r\n    // Indices (two triangles)\r\n    unified_indices.push_back(base_vert);\r\n    unified_indices.push_back(base_vert + 1);\r\n    unified_indices.push_back(base_vert + 2);\r\n    unified_indices.push_back(base_vert);\r\n    unified_indices.push_back(base_vert + 2);\r\n    unified_indices.push_back(base_vert + 3);\r\n  }\r\n\r\n  // 4. Single draw call with atlas texture\r\n  if (!unified_vertices.empty()) {\r\n    SDL_Texture *texture = engine->atlas.getTexture(0);\r\n    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);\r\n    SDL_RenderGeometry(engine->renderer, texture, unified_vertices.data(),\r\n                       (int)unified_vertices.size(), unified_indices.data(),\r\n                       (int)unified_indices.size());\r\n  }\r\n}\r\n\r\nstd::vector<EntityRef> &SpatialGrid::queryRect(float x1, float y1, float x2,\r\n                                               float y2) {\r\n  PROFILE_FUNCTION();\r\n  queryResult.clear();\r\n\r\n  const uint16_t minCellX =\r\n      static_cast<uint16_t>(std::max(0.0f, x1 * INV_GRID_CELL_SIZE));\r\n  const uint16_t minCellY =\r\n      static_cast<uint16_t>(std::max(0.0f, y1 * INV_GRID_CELL_SIZE));\r\n  const uint16_t maxCellX = static_cast<uint16_t>(std::min(\r\n      static_cast<float>(GRID_CELL_WIDTH - 1), x2 * INV_GRID_CELL_SIZE));\r\n  const uint16_t maxCellY = static_cast<uint16_t>(std::min(\r\n      static_cast<float>(GRID_CELL_HEIGHT - 1), y2 * INV_GRID_CELL_SIZE));\r\n\r\n  for (uint16_t cy = minCellY; cy <= maxCellY; ++cy) {\r\n    int32_t rowBase = cy * GRID_CELL_WIDTH;\r\n    for (uint16_t cx = minCellX; cx <= maxCellX; ++cx) {\r\n      int32_t nodeIdx = cell_heads[rowBase + cx];\r\n\r\n      while (nodeIdx != -1) {\r\n        const GridNode &node = nodes[nodeIdx];\r\n        queryResult.push_back(node.entity);\r\n        nodeIdx = node.next;\r\n      }\r\n    }\r\n  }\r\n  return queryResult;\r\n}\r\nvoid SpatialGrid::rebuild_grid(Engine *engine) {\r\n  PROFILE_FUNCTION();\r\n  clearAll();\r\n\r\n  // Re-add all entities to the grid\r\n  int container_count = engine->entityManager.containers.size();\r\n\r\n  // Serial for now to avoid contention on the linked list (or use locks?\r\n  // Node allocation is thread-unsafe if not atomic).\r\n  // The 'add' method modifies global 'cell_heads' and 'nodes' vector.\r\n  // It is NOT thread-safe without locking.\r\n  // Previous version used atomic fetch_add on cells.\r\n  // Intrusive list generally hard to build in parallel without per-cell locks.\r\n  // Given we have 50k entities, serial add might be slow?\r\n  // 50k simple appends is fast. 0.5ms?\r\n  // Let's try serial query first.\r\n\r\n  for (int i = 0; i < container_count; ++i) {\r\n    auto container = engine->entityManager.containers[i].get();\r\n    if (!container || container->count == 0)\r\n      continue;\r\n\r\n    int count = container->count;\r\n    for (int j = 0; j < count; ++j) {\r\n      float x = container->x_positions[j];\r\n      float y = container->y_positions[j];\r\n      EntityRef ref = {(uint32_t)i, (uint32_t)j};\r\n\r\n      int32_t nodeIdx = engine->grid.add(ref, x, y);\r\n      container->grid_node_indices[j] = nodeIdx;\r\n\r\n      // Update cell coords\r\n      uint16_t cx, cy;\r\n      engine->grid.getCellCoords(x, y, cx, cy);\r\n      container->cell_x[j] = cx;\r\n      container->cell_y[j] = cy;\r\n    }\r\n  }\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/engine/ATMEngine.cpp b/engine/ATMEngine.cpp
+--- a/engine/ATMEngine.cpp	(revision 0a6dee3007d02250f71a393d7867bd5d92e9aaa4)
++++ b/engine/ATMEngine.cpp	(date 1767819197180)
+@@ -1,12 +1,13 @@
+-#include "../game/ATMEngine.h"
++#include "ATMEngine.h"
+ #include <algorithm>
+ #include <execution>
+ #include <future>
+ #include <numeric>
+ #include <thread>
+ #define STB_IMAGE_IMPLEMENTATION
+-#include "../game/stb_image.h"
+ #include "SDL3_image/SDL_image.h"
++#include "stb_image.h"
++
+ 
+ // EntityContainer implementation
+ EntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,
+Index: gameOptimized/planet_game.cpp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>#include \"../game/ATMEngine.h\"\r\n#include \"../game/stb_image.h\"\r\n#include \"imgui.h\"\r\n#include \"imgui_impl_sdl3.h\"\r\n#include \"imgui_impl_sdlrenderer3.h\"\r\n#include <SDL3/SDL.h>\r\n#include <SDL3/SDL_main.h>\r\n#include <algorithm>\r\n#include <atomic>\r\n#include <cmath>\r\n#include <cstdlib>\r\n#include <ctime>\r\n#include <execution>\r\n#include <iostream>\r\n#include <numeric>\r\n#include <string>\r\n#include <vector>\r\n\r\n// --- Constants ---\r\n#define WINDOW_WIDTH 1600\r\n#define WINDOW_HEIGHT 1020\r\n#define PLAYER_SIZE 64 // Slightly larger for ship sprite\r\n#define PLANET_SIZE 32 // Slightly larger for ship sprite\r\n#define PLAYER_SPEED 800.0f\r\n#define NUM_PLANETS 1000000\r\n#define BULLET_SIZE 26\r\n#define BULLET_SPEED 600.0f\r\n#define MAX_BULLETS 200000\r\n// #define FIRE_RATE 0.05f       // 20 shots per second\r\n// #define BULLETS_PER_SHOT 300  // Shoot 3 bullets at once\r\n// #define BULLET_SPREAD 0.25f   // Spread angle in radians\r\n// #define BULLET_DAMAGE 1000.0f // Damage per bullet\r\n//  Shooting Constants\r\n#define FIRE_RATE 0.05f\r\n#define BULLETS_PER_SHOT 300\r\n#define BULLET_SPREAD 0.25f\r\n#define BULLET_LIFETIME 11600.0f\r\n#define BULLET_DAMAGE 1000.0f\r\n// --- Planet Type Stats ---\r\nstruct PlanetTypeStats {\r\n  float speed;\r\n  float health;\r\n  int texture_idx; // Index into planet_texture_ids\r\n};\r\n\r\n// Types corresponding to ship2.png through ship6.png\r\nstatic const PlanetTypeStats PLANET_STATS[5] = {\r\n    {200.0f, 200.0f, 0}, // Type 0\r\n    {200.0f, 175.0f, 1}, // Type 1\r\n    {200.0f, 150.0f, 2}, // Type 2\r\n    {200.0f, 250.0f, 3}, // Type 3\r\n    {200.0f, 300.0f, 4}, // Type 4\r\n};\r\n\r\n// --- Game-specific entity types ---\r\nenum GameEntityTypes {\r\n  ENTITY_TYPE_PLAYER = 0,\r\n  ENTITY_TYPE_PLANET,\r\n  ENTITY_TYPE_BULLET,\r\n  ENTITY_TYPE_COUNT\r\n};\r\n\r\n// --- Player Container ---\r\nclass PlayerContainer : public RenderableEntityContainer {\r\npublic:\r\n  PlayerContainer(int typeId, uint8_t defaultLayer, int initialCapacity)\r\n      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity) {}\r\n\r\n  ~PlayerContainer() override {}\r\n\r\n  uint32_t createEntity(float x, float y, int texture_id) {\r\n    uint32_t index = RenderableEntityContainer::createEntity();\r\n    if (index == INVALID_ID)\r\n      return INVALID_ID;\r\n\r\n    x_positions[index] = x;\r\n    y_positions[index] = y;\r\n    widths[index] = PLAYER_SIZE;\r\n    heights[index] = PLAYER_SIZE;\r\n    texture_ids[index] = texture_id;\r\n    rotations[index] = 0.0f;\r\n    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);\r\n    z_indices[index] = 100;\r\n    return index;\r\n  }\r\n\r\n  void update(float delta_time) override {\r\n    for (int i = 0; i < count; ++i) {\r\n      flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);\r\n    }\r\n  }\r\n\r\nprotected:\r\n  void resizeArrays(int newCapacity) override {\r\n    if (newCapacity <= capacity)\r\n      return;\r\n\r\n    RenderableEntityContainer::resizeArrays(newCapacity);\r\n  }\r\n};\r\n\r\n// --- Bullet Container ---\r\nclass BulletContainer : public RenderableEntityContainer {\r\npublic:\r\n  DynamicArray<float> velocities_x;\r\n  DynamicArray<float> velocities_y;\r\n  DynamicArray<float> lifetimes;\r\n  DynamicArray<uint8_t> active;\r\n  Engine *engine;\r\n\r\n  // FREE LIST for O(1) allocation\r\n  std::vector<int> free_list;\r\n\r\n  BulletContainer(Engine *engine, int typeId, uint8_t defaultLayer,\r\n                  int initialCapacity)\r\n      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity),\r\n        velocities_x(initialCapacity, 0.0f),\r\n        velocities_y(initialCapacity, 0.0f), lifetimes(initialCapacity, 0.0f),\r\n        active(initialCapacity, 0), engine(engine) {\r\n    free_list.reserve(initialCapacity);\r\n  }\r\n\r\n  ~BulletContainer() override {\r\n    // RAII: DynamicArray destructors automatically free memory\r\n  }\r\n\r\n  uint32_t createEntity(float x, float y, float vx, float vy, int texture_id) {\r\n    uint32_t index = RenderableEntityContainer::createEntity();\r\n    if (index == INVALID_ID)\r\n      return INVALID_ID;\r\n\r\n    x_positions[index] = x;\r\n    y_positions[index] = y;\r\n    velocities_x[index] = vx;\r\n    velocities_y[index] = vy;\r\n    widths[index] = BULLET_SIZE;\r\n    heights[index] = BULLET_SIZE;\r\n    texture_ids[index] = texture_id;\r\n    lifetimes[index] = BULLET_LIFETIME;\r\n    active[index] = 1;\r\n    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);\r\n    z_indices[index] = 75; // Between planets and player\r\n\r\n    // CRITICAL: Add to spatial grid for rendering!\r\n    EntityRef ref;\r\n    ref.type = type_id;\r\n    ref.index = index;\r\n    grid_node_indices[index] = engine->grid.add(ref, x, y);\r\n    cell_x[index] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);\r\n    cell_y[index] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);\r\n\r\n    return index;\r\n  }\r\n\r\n  // O(1) find inactive using free list\r\n  int findInactive() {\r\n    if (!free_list.empty()) {\r\n      int idx = free_list.back();\r\n      free_list.pop_back();\r\n      return idx;\r\n    }\r\n    return -1;\r\n  }\r\n\r\n  void activateBullet(int index, float x, float y, float vx, float vy) {\r\n    x_positions[index] = x;\r\n    y_positions[index] = y;\r\n    velocities_x[index] = vx;\r\n    velocities_y[index] = vy;\r\n    lifetimes[index] = BULLET_LIFETIME;\r\n    active[index] = 1;\r\n    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);\r\n\r\n    // Update grid\r\n    int32_t nodeIdx = grid_node_indices[index];\r\n    if (nodeIdx != -1) {\r\n      engine->grid.move(nodeIdx, x, y);\r\n    }\r\n    cell_x[index] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);\r\n    cell_y[index] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);\r\n  }\r\n\r\n  void deactivateBullet(int index) {\r\n    if (active[index] == 0)\r\n      return; // Already inactive\r\n    active[index] = 0;\r\n    flags[index] &= ~static_cast<uint8_t>(EntityFlag::VISIBLE);\r\n    x_positions[index] = -10000.0f;\r\n    y_positions[index] = -10000.0f;\r\n\r\n    // Update grid to move off-screen\r\n    int32_t nodeIdx = grid_node_indices[index];\r\n    if (nodeIdx != -1) {\r\n      engine->grid.move(nodeIdx, -10000.0f, -10000.0f);\r\n    }\r\n\r\n    // Add to free list for O(1) reuse\r\n    free_list.push_back(index);\r\n  }\r\n\r\n  void update(float delta_time) override {\r\n    PROFILE_FUNCTION();\r\n    delta_time = std::min(delta_time, 0.1f);\r\n\r\n    for (int i = 0; i < count; ++i) {\r\n      if (active[i] == 0)\r\n        continue;\r\n\r\n      // Move bullet\r\n      x_positions[i] += velocities_x[i] * delta_time;\r\n      y_positions[i] += velocities_y[i] * delta_time;\r\n\r\n      // Update grid\r\n      int32_t nodeIdx = grid_node_indices[i];\r\n      if (nodeIdx != -1) {\r\n        engine->grid.move(nodeIdx, x_positions[i], y_positions[i]);\r\n      }\r\n      cell_x[i] = static_cast<uint16_t>(x_positions[i] * INV_GRID_CELL_SIZE);\r\n      cell_y[i] = static_cast<uint16_t>(y_positions[i] * INV_GRID_CELL_SIZE);\r\n\r\n      // Decrease lifetime\r\n      lifetimes[i] -= delta_time;\r\n      if (lifetimes[i] <= 0 || x_positions[i] < 0 ||\r\n          x_positions[i] > WORLD_WIDTH || y_positions[i] < 0 ||\r\n          y_positions[i] > WORLD_HEIGHT) {\r\n        deactivateBullet(i);\r\n        continue;\r\n      }\r\n\r\n      flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);\r\n    }\r\n  }\r\n\r\nprotected:\r\n  void resizeArrays(int newCapacity) override {\r\n    if (newCapacity <= capacity)\r\n      return;\r\n\r\n    // RAII: Use DynamicArray::resize()\r\n    velocities_x.resize(newCapacity, count, 0.0f);\r\n    velocities_y.resize(newCapacity, count, 0.0f);\r\n    lifetimes.resize(newCapacity, count, 0.0f);\r\n    active.resize(newCapacity, count, 0);\r\n\r\n    RenderableEntityContainer::resizeArrays(newCapacity);\r\n  }\r\n};\r\n\r\n// --- Planet Container (OPTIMIZED) ---\r\nclass PlanetContainer : public RenderableEntityContainer {\r\npublic:\r\n  DynamicArray<float> speeds;\r\n  DynamicArray<float> health;\r\n  DynamicArray<float> max_health;\r\n  DynamicArray<uint8_t> planet_types;\r\n  Engine *engine;\r\n\r\n  // SINGLE global target instead of per-planet arrays!\r\n  float global_target_x = 0.0f;\r\n  float global_target_y = 0.0f;\r\n\r\n  PlanetContainer(Engine *engine, int typeId, uint8_t defaultLayer,\r\n                  int initialCapacity)\r\n      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity),\r\n        speeds(initialCapacity, 50.0f), health(initialCapacity, 100.0f),\r\n        max_health(initialCapacity, 100.0f), planet_types(initialCapacity, 0),\r\n        engine(engine) {}\r\n\r\n  ~PlanetContainer() override {\r\n    // RAII: DynamicArray destructors automatically free memory\r\n  }\r\n\r\n  uint32_t createEntity(float x, float y, int texture_id, uint8_t type) {\r\n    uint32_t index = RenderableEntityContainer::createEntity();\r\n    if (index == INVALID_ID)\r\n      return INVALID_ID;\r\n\r\n    x_positions[index] = x;\r\n    y_positions[index] = y;\r\n    widths[index] = PLANET_SIZE;\r\n    heights[index] = PLANET_SIZE;\r\n    texture_ids[index] = texture_id;\r\n    planet_types[index] = type;\r\n    speeds[index] = PLANET_STATS[type].speed;\r\n    health[index] = PLANET_STATS[type].health;\r\n    max_health[index] = PLANET_STATS[type].health;\r\n    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);\r\n    z_indices[index] = 50;\r\n    return index;\r\n  }\r\n\r\n  // O(1) set target - just 2 assignments!\r\n  void setTarget(float tx, float ty) {\r\n    global_target_x = tx;\r\n    global_target_y = ty;\r\n  }\r\n\r\n  void update(float delta_time) override {\r\n    PROFILE_FUNCTION();\r\n    if (count == 0)\r\n      return;\r\n    delta_time = std::min(delta_time, 0.1f);\r\n\r\n    // Buffer for deferred grid updates\r\n    static std::vector<uint32_t> indices;\r\n    static std::vector<uint32_t> pending_moves;\r\n    static std::atomic<uint32_t> pending_count{0};\r\n\r\n    if (indices.size() < (size_t)count) {\r\n      indices.resize(count);\r\n      std::iota(indices.begin(), indices.end(), 0);\r\n    }\r\n    if (pending_moves.size() < (size_t)count) {\r\n      pending_moves.resize(count);\r\n    }\r\n    pending_count.store(0, std::memory_order_relaxed);\r\n\r\n    // Cache target locally for lambda capture\r\n    const float tx = global_target_x;\r\n    const float ty = global_target_y;\r\n\r\n    // Parallel position update - greedy pathfinding toward target\r\n    std::for_each(std::execution::par, indices.begin(), indices.begin() + count,\r\n                  [&, tx, ty](uint32_t i) {\r\n                    // Skip destroyed planets (health <= 0)\r\n                    if (health[i] <= 0) {\r\n\r\n                      return;\r\n                    }\r\n\r\n                    float &px = x_positions[i];\r\n                    float &py = y_positions[i];\r\n                    const float speed = speeds[i] * delta_time;\r\n\r\n                    uint16_t oldCellX = cell_x[i];\r\n                    uint16_t oldCellY = cell_y[i];\r\n\r\n                    // Greedy pathfinding: move directly toward target\r\n                    float dx = tx - px;\r\n                    float dy = ty - py;\r\n                    float dist = sqrtf(dx * dx + dy * dy);\r\n\r\n                    // Calculate rotation angle toward target\r\n                    rotations[i] = atan2f(dy, dx);\r\n\r\n                    if (dist > 1.0f) {\r\n                      float nx = dx / dist;\r\n                      float ny = dy / dist;\r\n                      px += nx * speed;\r\n                      py += ny * speed;\r\n                    }\r\n\r\n                    // Clamp to world bounds\r\n                    if (px < 0)\r\n                      px = 0;\r\n                    else if (px > WORLD_WIDTH - PLANET_SIZE)\r\n                      px = WORLD_WIDTH - PLANET_SIZE;\r\n\r\n                    if (py < 0)\r\n                      py = 0;\r\n                    else if (py > WORLD_HEIGHT - PLANET_SIZE)\r\n                      py = WORLD_HEIGHT - PLANET_SIZE;\r\n\r\n                    uint16_t newCellX =\r\n                        static_cast<uint16_t>(px * INV_GRID_CELL_SIZE);\r\n                    uint16_t newCellY =\r\n                        static_cast<uint16_t>(py * INV_GRID_CELL_SIZE);\r\n\r\n                    if (oldCellX != newCellX || oldCellY != newCellY) {\r\n                      uint32_t slot =\r\n                          pending_count.fetch_add(1, std::memory_order_relaxed);\r\n                      pending_moves[slot] = i;\r\n                      cell_x[i] = newCellX;\r\n                      cell_y[i] = newCellY;\r\n                    }\r\n\r\n                    flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);\r\n                  });\r\n\r\n    // Serial grid update\r\n    uint32_t num_moves = pending_count.load(std::memory_order_relaxed);\r\n    for (uint32_t j = 0; j < num_moves; ++j) {\r\n      uint32_t i = pending_moves[j];\r\n      int32_t nodeIdx = grid_node_indices[i];\r\n      engine->grid.move(nodeIdx, x_positions[i], y_positions[i]);\r\n    }\r\n  }\r\n\r\nprotected:\r\n  void resizeArrays(int newCapacity) override {\r\n    if (newCapacity <= capacity)\r\n      return;\r\n\r\n    // RAII: Use DynamicArray::resize()\r\n    speeds.resize(newCapacity, count, 50.0f);\r\n    health.resize(newCapacity, count, 100.0f);\r\n    max_health.resize(newCapacity, count, 100.0f);\r\n    planet_types.resize(newCapacity, count, 0);\r\n\r\n    RenderableEntityContainer::resizeArrays(newCapacity);\r\n  }\r\n};\r\n\r\n// --- Game State ---\r\nstruct GameState {\r\n  uint32_t player_index;\r\n  // Player is invincible, always \"alive\"\r\n\r\n  // Textures\r\n  int player_texture_id;\r\n  int planet_texture_ids[5];\r\n  int bullet_texture_id;\r\n\r\n  // Containers\r\n  PlayerContainer *player_container;\r\n  PlanetContainer *planet_container;\r\n  BulletContainer *bullet_container;\r\n\r\n  // Shooting\r\n  float shoot_cooldown;\r\n  bool mouse_pressed;\r\n\r\n  // FPS tracking\r\n  Uint64 last_fps_time;\r\n  int frame_count;\r\n  float current_fps;\r\n\r\n  // Stats\r\n  int hit_count;    // Number of times player got hit\r\n  int killed_count; // Number of planets killed by bullets\r\n};\r\n\r\n// --- Function Declarations ---\r\nvoid setup_game(Engine *engine, GameState *game_state);\r\nvoid handle_input(Engine *engine, const bool *keyboard_state,\r\n                  GameState *game_state, float delta_time);\r\nvoid update_game(Engine *engine, GameState *game_state, float delta_time);\r\nvoid check_collisions(Engine *engine, GameState *game_state);\r\nSDL_Surface *load_image_to_surface(const char *filepath);\r\n\r\n// --- Main Function ---\r\nint main(int argc, char *argv[]) {\r\n  if (SDL_Init(SDL_INIT_VIDEO) < 0) {\r\n    std::cerr << \"SDL_Init Error: \" << SDL_GetError() << std::endl;\r\n    return 1;\r\n  }\r\n  srand(static_cast<unsigned int>(time(nullptr)));\r\n\r\n  SDL_Window *window = SDL_CreateWindow(\"GAME ENGN - Invincible Ship\",\r\n                                        WINDOW_WIDTH, WINDOW_HEIGHT, 0);\r\n  if (!window) {\r\n    std::cerr << \"Failed to create window: \" << SDL_GetError() << std::endl;\r\n    SDL_Quit();\r\n    return 1;\r\n  }\r\n\r\n  SDL_Renderer *renderer = SDL_CreateRenderer(window, NULL);\r\n  if (!renderer) {\r\n    std::cerr << \"Failed to create renderer: \" << SDL_GetError() << std::endl;\r\n    SDL_DestroyWindow(window);\r\n    SDL_Quit();\r\n    return 1;\r\n  }\r\n\r\n  SDL_DestroyRenderer(renderer);\r\n  SDL_DestroyWindow(window);\r\n\r\n  Engine *engine = engine_create(WINDOW_WIDTH, WINDOW_HEIGHT, WORLD_WIDTH,\r\n                                 WORLD_HEIGHT, GRID_CELL_SIZE);\r\n  if (!engine) {\r\n    std::cerr << \"Failed to create engine\" << std::endl;\r\n    SDL_Quit();\r\n    return 1;\r\n  }\r\n\r\n  // Init ImGui Manually\r\n  IMGUI_CHECKVERSION();\r\n  ImGui::CreateContext();\r\n  ImGuiIO &io = ImGui::GetIO();\r\n  (void)io;\r\n  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;\r\n  io.FontGlobalScale = 2.0f;\r\n\r\n  // Setup Dear ImGui style\r\n  ImGui::StyleColorsDark();\r\n\r\n  // Setup Platform/Renderer backends\r\n  if (engine->renderer) {\r\n    ImGui_ImplSDL3_InitForSDLRenderer(engine->window, engine->renderer);\r\n    ImGui_ImplSDLRenderer3_Init(engine->renderer);\r\n  }\r\n\r\n  // Register entity containers\r\n  PlayerContainer *player_container =\r\n      new PlayerContainer(ENTITY_TYPE_PLAYER, 0, 10);\r\n  PlanetContainer *planet_container =\r\n      new PlanetContainer(engine, ENTITY_TYPE_PLANET, 0, NUM_PLANETS + 500);\r\n  BulletContainer *bullet_container =\r\n      new BulletContainer(engine, ENTITY_TYPE_BULLET, 0, MAX_BULLETS);\r\n\r\n  engine->entityManager.registerEntityType(player_container);\r\n  engine->entityManager.registerEntityType(planet_container);\r\n  engine->entityManager.registerEntityType(bullet_container);\r\n\r\n  // Initialize game state (Local struct)\r\n  GameState game_state = {};\r\n  game_state.player_container = player_container;\r\n  game_state.planet_container = planet_container;\r\n  game_state.bullet_container = bullet_container;\r\n  game_state.player_index = INVALID_ID;\r\n  game_state.last_fps_time = SDL_GetTicks();\r\n  game_state.hit_count = 0;\r\n  game_state.killed_count = 0;\r\n  game_state.shoot_cooldown = 0.0f;\r\n  game_state.mouse_pressed = false;\r\n\r\n  setup_game(engine, &game_state);\r\n\r\n  // Initial grid population\r\n  engine->grid.rebuild_grid(engine);\r\n\r\n  // Initialize cell tracking\r\n  for (uint32_t cIdx = 0; cIdx < engine->entityManager.containers.size();\r\n       ++cIdx) {\r\n    auto &container = engine->entityManager.containers[cIdx];\r\n    for (int i = 0; i < container->count; ++i) {\r\n      container->cell_x[i] =\r\n          static_cast<uint16_t>(container->x_positions[i] * INV_GRID_CELL_SIZE);\r\n      container->cell_y[i] =\r\n          static_cast<uint16_t>(container->y_positions[i] * INV_GRID_CELL_SIZE);\r\n    }\r\n  }\r\n\r\n  // Set camera to player\r\n  if (game_state.player_index != INVALID_ID) {\r\n    float player_x = player_container->x_positions[game_state.player_index];\r\n    float player_y = player_container->y_positions[game_state.player_index];\r\n    engine->camera.x = player_x + PLAYER_SIZE / 2.0f;\r\n    engine->camera.y = player_y + PLAYER_SIZE / 2.0f;\r\n  }\r\n\r\n  // Game loop\r\n  bool quit = false;\r\n  SDL_Event event;\r\n  Uint64 last_time = SDL_GetTicks();\r\n\r\n  while (!quit) {\r\n    Uint64 current_time = SDL_GetTicks();\r\n    float delta_time = std::min((current_time - last_time) / 1000.0f, 0.1f);\r\n    last_time = current_time;\r\n\r\n    // FPS calculation\r\n    game_state.frame_count++;\r\n    Uint64 time_since_last_fps = current_time - game_state.last_fps_time;\r\n    if (time_since_last_fps >= 1000) {\r\n      game_state.current_fps =\r\n          static_cast<float>(game_state.frame_count * 1000.0f) /\r\n          static_cast<float>(time_since_last_fps);\r\n      game_state.last_fps_time = current_time;\r\n      game_state.frame_count = 0;\r\n    }\r\n\r\n    // Process events\r\n    while (SDL_PollEvent(&event)) {\r\n      ImGui_ImplSDL3_ProcessEvent(&event);\r\n      if (event.type == SDL_EVENT_QUIT)\r\n        quit = true;\r\n      else if (event.type == SDL_EVENT_KEY_DOWN) {\r\n        if (event.key.scancode == SDL_SCANCODE_ESCAPE)\r\n          quit = true;\r\n      } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {\r\n        // Only process mouse input if ImGui doesn't want it\r\n        ImGuiIO &io = ImGui::GetIO();\r\n        if (event.button.button == SDL_BUTTON_LEFT && !io.WantCaptureMouse) {\r\n          game_state.mouse_pressed = true;\r\n        }\r\n      } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {\r\n        if (event.button.button == SDL_BUTTON_LEFT) {\r\n          game_state.mouse_pressed = false;\r\n        }\r\n      }\r\n    }\r\n\r\n    const bool *keyboard_state = SDL_GetKeyboardState(NULL);\r\n\r\n    handle_input(engine, keyboard_state, &game_state, delta_time);\r\n    update_game(engine, &game_state, delta_time);\r\n    check_collisions(engine, &game_state);\r\n\r\n    // Camera zoom controls\r\n    if (keyboard_state[SDL_SCANCODE_EQUALS] ||\r\n        keyboard_state[SDL_SCANCODE_KP_PLUS]) {\r\n      engine->camera.width *= 0.98f;\r\n      engine->camera.height *= 0.98f;\r\n    }\r\n    if (keyboard_state[SDL_SCANCODE_MINUS] ||\r\n        keyboard_state[SDL_SCANCODE_KP_MINUS]) {\r\n      engine->camera.width *= 1.02f;\r\n      engine->camera.height *= 1.02f;\r\n    }\r\n\r\n    engine_update(engine);\r\n\r\n    // Render Setup\r\n    if (engine->renderer) {\r\n      // Start ImGui frame\r\n      ImGui_ImplSDLRenderer3_NewFrame();\r\n      ImGui_ImplSDL3_NewFrame();\r\n      ImGui::NewFrame();\r\n\r\n      // Render Stats Overlay\r\n      ImGui::SetNextWindowPos(ImVec2(10, 10));\r\n      ImGui::SetNextWindowSize(ImVec2(0, 0)); // Auto resize\r\n      ImGui::Begin(\"Stats\", NULL,\r\n                   ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |\r\n                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |\r\n                       ImGuiWindowFlags_AlwaysAutoResize);\r\n      ImGui::TextColored(ImVec4(1, 1, 0, 1), \"FPS: %.1f\",\r\n                         game_state.current_fps);\r\n      ImGui::TextColored(ImVec4(1, 0, 0, 1), \"HITS: %d\", game_state.hit_count);\r\n      ImGui::TextColored(ImVec4(0, 1, 0, 1), \"KILLS: %d\",\r\n                         game_state.killed_count);\r\n\r\n      // Count active bullets\r\n      int active_bullets = 0;\r\n      for (int i = 0; i < game_state.bullet_container->count; ++i) {\r\n        if (game_state.bullet_container->active[i]) {\r\n          active_bullets++;\r\n        }\r\n      }\r\n      ImGui::TextColored(ImVec4(1, 1, 0, 1), \"Bullets: %d\", active_bullets);\r\n\r\n      ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), \"Planets: %d\",\r\n                         game_state.planet_container->count -\r\n                             game_state.hit_count - game_state.killed_count);\r\n      ImGui::End();\r\n\r\n      ImGui::Render();\r\n\r\n      SDL_SetRenderDrawColor(engine->renderer, 30, 30, 40, 255);\r\n      SDL_RenderClear(engine->renderer);\r\n      engine_render_scene(engine);\r\n\r\n      // Render ImGui Over everything\r\n      ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(),\r\n                                            engine->renderer);\r\n\r\n      engine_present(engine);\r\n    } else {\r\n      // Vulkan path (if enabled, but we are primarily using SDL renderer in\r\n      // this setup based on file)\r\n      engine_render_scene(engine);\r\n      engine_present(engine);\r\n    }\r\n  }\r\n\r\n  // Cleanup ImGui\r\n  ImGui_ImplSDLRenderer3_Shutdown();\r\n  ImGui_ImplSDL3_Shutdown();\r\n  ImGui::DestroyContext();\r\n\r\n  engine_destroy(engine);\r\n  return 0;\r\n}\r\n\r\n// Function to load image\r\nSDL_Surface *load_image_to_surface(const char *filepath) {\r\n  int w, h, c;\r\n  unsigned char *data =\r\n      stbi_load(filepath, &w, &h, &c, 4); // Force 4 channels (RGBA)\r\n  if (!data) {\r\n    std::cerr << \"Failed to load image: \" << filepath << std::endl;\r\n    // Return a fallback surface (magenta square)\r\n    SDL_Surface *surface = SDL_CreateSurface(32, 32, SDL_PIXELFORMAT_RGBA8888);\r\n    SDL_FillSurfaceRect(surface, NULL,\r\n                        SDL_MapRGBA(SDL_GetPixelFormatDetails(surface->format),\r\n                                    NULL, 255, 0, 255, 255));\r\n    return surface;\r\n  }\r\n\r\n  // Create SDL surface from data\r\n\r\n  int pitch = w * 4;\r\n  SDL_Surface *temp =\r\n      SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, data, pitch);\r\n  if (temp) {\r\n    // Create a copy so we can free stbi data\r\n    SDL_Surface *copy = SDL_DuplicateSurface(temp);\r\n    SDL_DestroySurface(temp);\r\n    stbi_image_free(data);\r\n    return copy;\r\n  }\r\n  stbi_image_free(data);\r\n  return nullptr;\r\n}\r\n\r\n// ... (existing defines)\r\n\r\n// ...\r\n\r\nvoid setup_game(Engine *engine, GameState *game_state) {\r\n  // 1. Load Textures with Atlas Packing\r\n  char path_buffer[256];\r\n  int atlas_x = 0;\r\n  int atlas_y = 0; // Simple horizontal packing\r\n  int padding = 2; // Pixel padding to avoid bleeding\r\n\r\n  std::cout << \"--- TEXTURE REGISTER DEBUG ---\" << std::endl;\r\n\r\n  // Player Ship (ship1.png)\r\n  snprintf(path_buffer, sizeof(path_buffer), \"resource/ship1.png\");\r\n  SDL_Surface *player_surf = load_image_to_surface(path_buffer);\r\n  if (!player_surf)\r\n    exit(1);\r\n  game_state->player_texture_id =\r\n      engine_register_texture(engine, player_surf, atlas_x, atlas_y, 0, 0);\r\n  std::cout << \"Player Tex ID: \" << game_state->player_texture_id\r\n            << \" at X: \" << atlas_x << std::endl;\r\n  atlas_x += player_surf->w + padding;\r\n  SDL_DestroySurface(player_surf);\r\n\r\n  // Planet Ships (ship2.png - ship6.png)\r\n  for (int i = 0; i < 5; ++i) {\r\n    snprintf(path_buffer, sizeof(path_buffer), \"resource/ship%d.png\", i + 2);\r\n    SDL_Surface *z_surf = load_image_to_surface(path_buffer);\r\n    if (!z_surf)\r\n      exit(1);\r\n    game_state->planet_texture_ids[i] =\r\n        engine_register_texture(engine, z_surf, atlas_x, atlas_y, 0, 0);\r\n    std::cout << \"Planet \" << i\r\n              << \" Tex ID: \" << game_state->planet_texture_ids[i]\r\n              << \" at X: \" << atlas_x << std::endl;\r\n    atlas_x += z_surf->w + padding;\r\n    SDL_DestroySurface(z_surf);\r\n  }\r\n\r\n  // Bullet texture\r\n  snprintf(path_buffer, sizeof(path_buffer), \"resource/shoot1.png\");\r\n  SDL_Surface *bullet_surf = load_image_to_surface(path_buffer);\r\n  if (!bullet_surf) {\r\n    std::cerr << \"Failed to load bullet texture, creating fallback.\"\r\n              << std::endl;\r\n    // Create a simple yellow circle for bullet\r\n    bullet_surf =\r\n        SDL_CreateSurface(BULLET_SIZE, BULLET_SIZE, SDL_PIXELFORMAT_RGBA8888);\r\n    SDL_FillSurfaceRect(\r\n        bullet_surf, NULL,\r\n        SDL_MapRGBA(SDL_GetPixelFormatDetails(bullet_surf->format), NULL, 255,\r\n                    255, 0, 255));\r\n  }\r\n  game_state->bullet_texture_id =\r\n      engine_register_texture(engine, bullet_surf, atlas_x, atlas_y, 0, 0);\r\n  std::cout << \"Bullet Tex ID: \" << game_state->bullet_texture_id\r\n            << \" at X: \" << atlas_x << std::endl;\r\n  atlas_x += bullet_surf->w + padding;\r\n  SDL_DestroySurface(bullet_surf);\r\n\r\n  std::cout << \"------------------------------\" << std::endl;\r\n\r\n  // 2. Create Player\r\n  game_state->player_index = game_state->player_container->createEntity(\r\n      WORLD_WIDTH / 2.0f, WORLD_HEIGHT / 2.0f, game_state->player_texture_id);\r\n\r\n  // 3. Create Planets\r\n  for (int i = 0; i < NUM_PLANETS; ++i) {\r\n    float x = static_cast<float>(rand() % WORLD_WIDTH);\r\n    float y = static_cast<float>(rand() % WORLD_HEIGHT);\r\n\r\n    // Ensure not spawning on top of player\r\n    float dx = x - (WORLD_WIDTH / 2.0f);\r\n    float dy = y - (WORLD_HEIGHT / 2.0f);\r\n    if (dx * dx + dy * dy < 500 * 500) { // Keep clear area\r\n      x += 1000.0f;\r\n    }\r\n\r\n    uint8_t type = rand() % 5;\r\n    game_state->planet_container->createEntity(\r\n        x, y, game_state->planet_texture_ids[type], type);\r\n  }\r\n}\r\n\r\nvoid handle_input(Engine *engine, const bool *keyboard_state,\r\n                  GameState *game_state, float delta_time) {\r\n  if (game_state->player_index == INVALID_ID)\r\n    return;\r\n\r\n  float dx = 0.0f;\r\n  float dy = 0.0f;\r\n\r\n  if (keyboard_state[SDL_SCANCODE_W])\r\n    dy -= 1.0f;\r\n  if (keyboard_state[SDL_SCANCODE_S])\r\n    dy += 1.0f;\r\n  if (keyboard_state[SDL_SCANCODE_A])\r\n    dx -= 1.0f;\r\n  if (keyboard_state[SDL_SCANCODE_D])\r\n    dx += 1.0f;\r\n\r\n  if (dx != 0.0f || dy != 0.0f) {\r\n    // Normalize\r\n    float length = sqrtf(dx * dx + dy * dy);\r\n    dx /= length;\r\n    dy /= length;\r\n\r\n    float move_speed = PLAYER_SPEED * delta_time;\r\n\r\n    // Sprint\r\n    if (keyboard_state[SDL_SCANCODE_LSHIFT])\r\n      move_speed *= 2.0f;\r\n\r\n    PlayerContainer *player = game_state->player_container;\r\n    float new_x =\r\n        player->x_positions[game_state->player_index] + dx * move_speed;\r\n    float new_y =\r\n        player->y_positions[game_state->player_index] + dy * move_speed;\r\n\r\n    // Clamp to world\r\n    if (new_x < 0)\r\n      new_x = 0;\r\n    if (new_x > WORLD_WIDTH - PLAYER_SIZE)\r\n      new_x = WORLD_WIDTH - PLAYER_SIZE;\r\n    if (new_y < 0)\r\n      new_y = 0;\r\n    if (new_y > WORLD_HEIGHT - PLAYER_SIZE)\r\n      new_y = WORLD_HEIGHT - PLAYER_SIZE;\r\n\r\n    player->x_positions[game_state->player_index] = new_x;\r\n    player->y_positions[game_state->player_index] = new_y;\r\n\r\n    // Update camera\r\n    engine->camera.x = new_x + PLAYER_SIZE / 2.0f;\r\n    engine->camera.y = new_y + PLAYER_SIZE / 2.0f;\r\n\r\n    // Update grid\r\n    int32_t nodeIdx = player->grid_node_indices[game_state->player_index];\r\n    engine->grid.move(nodeIdx, new_x, new_y);\r\n    player->cell_x[game_state->player_index] =\r\n        static_cast<uint16_t>(new_x * INV_GRID_CELL_SIZE);\r\n    player->cell_y[game_state->player_index] =\r\n        static_cast<uint16_t>(new_y * INV_GRID_CELL_SIZE);\r\n  }\r\n\r\n  // Shooting mechanics\r\n  if (game_state->shoot_cooldown > 0) {\r\n    game_state->shoot_cooldown -= delta_time;\r\n  }\r\n\r\n  if (keyboard_state[SDL_SCANCODE_SPACE] || game_state->mouse_pressed) {\r\n    if (game_state->shoot_cooldown <= 0) {\r\n      // Shoot!\r\n      PlayerContainer *player = game_state->player_container;\r\n      float px =\r\n          player->x_positions[game_state->player_index] + PLAYER_SIZE / 2.0f;\r\n      float py =\r\n          player->y_positions[game_state->player_index] + PLAYER_SIZE / 2.0f;\r\n\r\n      // Get mouse position in world coordinates\r\n      float mouse_x, mouse_y;\r\n      SDL_GetMouseState(&mouse_x, &mouse_y);\r\n\r\n      // Convert screen to world coordinates\r\n      float world_mouse_x =\r\n          engine->camera.x - (engine->camera.width / 2.0f) + mouse_x;\r\n      float world_mouse_y =\r\n          engine->camera.y - (engine->camera.height / 2.0f) + mouse_y;\r\n\r\n      // Calculate direction from player to mouse\r\n      float shoot_vx = world_mouse_x - px;\r\n      float shoot_vy = world_mouse_y - py;\r\n      float dist = sqrtf(shoot_vx * shoot_vx + shoot_vy * shoot_vy);\r\n\r\n      // Normalize direction (if mouse is not exactly on player)\r\n      if (dist > 1.0f) {\r\n        shoot_vx /= dist;\r\n        shoot_vy /= dist;\r\n      } else {\r\n        // Default to right if mouse is on player\r\n        shoot_vx = 1.0f;\r\n        shoot_vy = 0.0f;\r\n      }\r\n\r\n      // Shoot multiple bullets with spread\r\n      BulletContainer *bullets = game_state->bullet_container;\r\n\r\n      for (int i = 0; i < BULLETS_PER_SHOT; ++i) {\r\n        // Calculate spread angle\r\n        float spread_angle =\r\n            (i - (BULLETS_PER_SHOT - 1) / 2.0f) * BULLET_SPREAD;\r\n        float cos_spread = cosf(spread_angle);\r\n        float sin_spread = sinf(spread_angle);\r\n\r\n        // Rotate direction by spread angle\r\n        float spread_vx = shoot_vx * cos_spread - shoot_vy * sin_spread;\r\n        float spread_vy = shoot_vx * sin_spread + shoot_vy * cos_spread;\r\n\r\n        int bullet_idx = bullets->findInactive();\r\n        if (bullet_idx != -1) {\r\n          bullets->activateBullet(\r\n              bullet_idx, px - BULLET_SIZE / 2.0f, py - BULLET_SIZE / 2.0f,\r\n              spread_vx * BULLET_SPEED, spread_vy * BULLET_SPEED);\r\n        } else if (bullets->count < MAX_BULLETS) {\r\n          bullets->createEntity(\r\n              px - BULLET_SIZE / 2.0f, py - BULLET_SIZE / 2.0f,\r\n              spread_vx * BULLET_SPEED, spread_vy * BULLET_SPEED,\r\n              game_state->bullet_texture_id);\r\n        }\r\n\r\n        // Update rotation for the just activated/created bullet\r\n        int last_idx = (bullet_idx != -1) ? bullet_idx : (bullets->count - 1);\r\n        bullets->rotations[last_idx] =\r\n            atan2f(spread_vy, spread_vx) + 3.14 / 2.0f;\r\n      }\r\n\r\n      game_state->shoot_cooldown = FIRE_RATE;\r\n    }\r\n  }\r\n}\r\n\r\nvoid update_game(Engine *engine, GameState *game_state, float delta_time) {\r\n  // Update Planets Target (Player)\r\n  if (game_state->player_index != INVALID_ID) {\r\n    float px =\r\n        game_state->player_container->x_positions[game_state->player_index];\r\n    float py =\r\n        game_state->player_container->y_positions[game_state->player_index];\r\n    game_state->planet_container->setTarget(px, py);\r\n  }\r\n}\r\n\r\nvoid check_collisions(Engine *engine, GameState *game_state) {\r\n  if (game_state->player_index == INVALID_ID)\r\n    return;\r\n\r\n  PlayerContainer *player = game_state->player_container;\r\n  PlanetContainer *planets = game_state->planet_container;\r\n\r\n  float px = player->x_positions[game_state->player_index];\r\n  float py = player->y_positions[game_state->player_index];\r\n  float p_radius = PLAYER_SIZE / 2.2f; // Increased collision radius\r\n  float p_center_x = px + PLAYER_SIZE / 2.0f;\r\n  float p_center_y = py + PLAYER_SIZE / 2.0f;\r\n\r\n  // Query planets near player\r\n  // Broad phase: Circle query around player\r\n  const std::vector<EntityRef> &nearby =\r\n      engine->grid.queryCircle(p_center_x, p_center_y, p_radius + PLANET_SIZE);\r\n\r\n  for (const auto &ref : nearby) {\r\n    if (ref.type == ENTITY_TYPE_PLANET) {\r\n      // Precise check\r\n      float zx = planets->x_positions[ref.index];\r\n      float zy = planets->y_positions[ref.index];\r\n      float z_radius = PLANET_SIZE / 2.2f; // Increased collision radius\r\n      float z_center_x = zx + PLANET_SIZE / 2.0f;\r\n      float z_center_y = zy + PLANET_SIZE / 2.0f;\r\n\r\n      float dx = p_center_x - z_center_x;\r\n      float dy = p_center_y - z_center_y;\r\n      float distSq = dx * dx + dy * dy;\r\n      float combinedRadius = p_radius + z_radius;\r\n\r\n      if (distSq < combinedRadius * combinedRadius) {\r\n        // HIT!\r\n        // 1. Increment Counter\r\n        game_state->hit_count++;\r\n\r\n        // 2. Destroy Planet\r\n        planets->health[ref.index] = -1.0f; // Mark as destroyed\r\n\r\n        // Move off-screen\r\n        engine->grid.move(planets->grid_node_indices[ref.index], -10000.0f,\r\n                          -10000.0f);\r\n      }\r\n    }\r\n  }\r\n\r\n  // Bullet-Planet Collision Detection\r\n  BulletContainer *bullets = game_state->bullet_container;\r\n  for (int b = 0; b < bullets->count; ++b) {\r\n    if (bullets->active[b] == 0)\r\n      continue; // Skip inactive bullets\r\n\r\n    float bx = bullets->x_positions[b];\r\n    float by = bullets->y_positions[b];\r\n    float b_radius = BULLET_SIZE / 2.0f;\r\n\r\n    // Query planets near bullet\r\n    const std::vector<EntityRef> &nearby_planets =\r\n        engine->grid.queryCircle(bx, by, b_radius);\r\n\r\n    bool bullet_hit = false;\r\n\r\n    for (const auto &ref : nearby_planets) {\r\n      if (ref.type == ENTITY_TYPE_PLANET && !bullet_hit) {\r\n        // Check if planet is active\r\n        if (planets->health[ref.index] <= 0)\r\n          continue;\r\n\r\n        float zx = planets->x_positions[ref.index];\r\n        float zy = planets->y_positions[ref.index];\r\n        float z_radius = PLANET_SIZE / 2.2f;\r\n        float z_center_x = zx + PLANET_SIZE / 2.0f;\r\n        float z_center_y = zy + PLANET_SIZE / 2.0f;\r\n\r\n        float dx = bx - z_center_x;\r\n        float dy = by - z_center_y;\r\n        float distSq = dx * dx + dy * dy;\r\n        float combinedRadius = b_radius + z_radius;\r\n\r\n        if (distSq < combinedRadius * combinedRadius) {\r\n          planets->health[ref.index] -= BULLET_DAMAGE;\r\n\r\n          if (planets->health[ref.index] <= 0) {\r\n            // Destroyed!\r\n            game_state->killed_count++;\r\n          }\r\n          // Move planet off-screen\r\n          engine->grid.move(planets->grid_node_indices[ref.index], -10000,\r\n                            -10000);\r\n\r\n          // Deactivate bullet\r\n          bullets->deactivateBullet(b);\r\n          bullet_hit = true;\r\n          break; // Bullet can only hit one planet\r\n        }\r\n      }\r\n    }\r\n  }\r\n}\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/gameOptimized/planet_game.cpp b/gameOptimized/planet_game.cpp
+--- a/gameOptimized/planet_game.cpp	(revision 0a6dee3007d02250f71a393d7867bd5d92e9aaa4)
++++ b/gameOptimized/planet_game.cpp	(date 1767820071061)
+@@ -1,5 +1,5 @@
+-#include "../game/ATMEngine.h"
+-#include "../game/stb_image.h"
++#include "../engine/ATMEngine.h"
++#include "../engine/stb_image.h"
+ #include "imgui.h"
+ #include "imgui_impl_sdl3.h"
+ #include "imgui_impl_sdlrenderer3.h"
+Index: lib/ATMBufferPool.cpp
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>#include \"ATMCommon.h\"\r\n#include \"ATMBufferPool.h\"\r\n\r\n\r\n\r\n\r\n\r\n\r\n// ATMBufferPool implementations\r\nATMBufferPool::BufferHandle::BufferHandle()\r\n    : buffer(nullptr), pool(nullptr) {}\r\n\r\nATMBufferPool::BufferHandle::BufferHandle(std::vector<uint8_t>* buffer, ATMBufferPool* pool)\r\n    : buffer(buffer), pool(pool) {}\r\n\r\nATMBufferPool::BufferHandle::BufferHandle(BufferHandle&& handle) noexcept\r\n    : buffer(handle.buffer), pool(handle.pool) {\r\n    handle.buffer = nullptr;\r\n    handle.pool = nullptr;\r\n}\r\n\r\nATMBufferPool::BufferHandle& ATMBufferPool::BufferHandle::operator=(BufferHandle&& handle) noexcept {\r\n    if (this != &handle) {\r\n        if (buffer && pool) pool->releaseBuffer(buffer);\r\n        buffer = handle.buffer;\r\n        pool = handle.pool;\r\n        handle.buffer = nullptr;\r\n        handle.pool = nullptr;\r\n    }\r\n    return *this;\r\n}\r\n\r\nATMBufferPool::BufferHandle::~BufferHandle() {\r\n    if (buffer && pool) pool->releaseBuffer(buffer);\r\n}\r\n\r\nATMBufferPool::ATMBufferPool(const int& size)\r\n    : default_buffer_size(size) {\r\n    buffers.reserve(16); // Pre-reserve space for some buffers\r\n}\r\n\r\nATMBufferPool::BufferHandle ATMBufferPool::getBuffer() {\r\n    std::vector<uint8_t>* buffer;\r\n\r\n    if (buffers.empty()) {\r\n        buffer = new std::vector<uint8_t>();\r\n        buffer->reserve(default_buffer_size);\r\n    }\r\n    else {\r\n        buffer = buffers.back();\r\n        buffers.pop_back();\r\n    }\r\n\r\n    buffer->clear();\r\n    return BufferHandle(buffer, this);\r\n}\r\n\r\nvoid ATMBufferPool::releaseBuffer(std::vector<uint8_t>* buff) {\r\n    buffers.push_back(buff);\r\n}\r\n\r\nsize_t ATMBufferPool::size() const {\r\n    return buffers.size();\r\n}\r\n\r\n///////////////////////////////Test////////////////////////\r\n#include <chrono>\r\n#include <functional>\r\n#include <assert.h>\r\n#include <random>\r\n#include <iomanip>\r\n#include <sstream>\r\n#include <chrono>\r\n\r\n\r\n#define ATMLOG(...) SDL_Log(__VA_ARGS__)\r\n\r\n// FixedBufferPool Tests\r\nvoid TestFixedBufferPoolBasic() {\r\n\r\n    // Create a buffer pool with 1KB buffers, 10 initial buffers\r\n    FixedBufferPool pool(1024, 10);\r\n\r\n    // Verify initial state\r\n    assert(pool.getTotalBuffers() == 64);\r\n    assert(pool.getAvailableBuffers() == 64);\r\n    assert(pool.getBufferSize() == 1024);\r\n\r\n    // Get a buffer\r\n    auto handle = pool.getBuffer();\r\n    assert(handle.valid());\r\n    assert(handle.data() != nullptr);\r\n    assert(pool.getAvailableBuffers() == 63);\r\n\r\n    // Release the buffer\r\n    handle.release();\r\n    assert(!handle.valid());\r\n    assert(pool.getAvailableBuffers() == 64);\r\n\r\n    ATMLOG(\"TestFixedBufferPoolBasic PASSED\");\r\n}\r\n\r\nvoid TestFixedBufferPoolMoveSemantics() {\r\n\r\n    FixedBufferPool pool(1024, 5);\r\n\r\n    // Test move constructor\r\n    {\r\n        auto handle1 = pool.getBuffer();\r\n        uint8_t* data = handle1.data();\r\n\r\n        auto handle2 = std::move(handle1);\r\n        assert(handle2.data() == data);\r\n        assert(!handle1.valid());\r\n        assert(handle2.valid());\r\n    }\r\n\r\n    // Test move assignment\r\n    {\r\n        auto handle1 = pool.getBuffer();\r\n        auto handle2 = pool.getBuffer();\r\n        uint8_t* data1 = handle1.data();\r\n\r\n        handle2 = std::move(handle1);\r\n        assert(handle2.data() == data1);\r\n        assert(!handle1.valid());\r\n        assert(handle2.valid());\r\n    }\r\n\r\n    ATMLOG(\"TestFixedBufferPoolMoveSemantics PASSED\");\r\n}\r\n\r\nvoid TestFixedBufferPoolExpansion() {\r\n\r\n    // Start with 5 buffers\r\n    FixedBufferPool pool(1024, 5);\r\n    assert(pool.getTotalBuffers() == 64);\r\n\r\n    // Get all 5 buffers\r\n    std::vector<FixedBufferPool::BufferHandle> handles;\r\n    for (int i = 0; i < 5; i++) {\r\n        handles.push_back(pool.getBuffer());\r\n    }\r\n\r\n    assert(pool.getAvailableBuffers() == 59);\r\n\r\n    // Get one more - should cause expansion\r\n    auto extraHandle = pool.getBuffer();\r\n\r\n    // Should have doubled capacity to 10\r\n    assert(pool.getTotalBuffers() == 64);\r\n    assert(pool.getAvailableBuffers() == 58);  // 5 new buffers - 1 we just took\r\n\r\n    ATMLOG(\"TestFixedBufferPoolExpansion PASSED\");\r\n}\r\n\r\n// ATMBufferPool Tests\r\nvoid TestATMBufferPoolBasic() {\r\n\r\n    ATMBufferPool pool(1024);\r\n\r\n    // Initial size should be 0\r\n    assert(pool.size() == 0);\r\n\r\n    // Get a buffer\r\n    auto handle = pool.getBuffer();\r\n\r\n    // Size should still be 0 as the buffer is in use\r\n    assert(pool.size() == 0);\r\n\r\n    // The buffer should be empty but usable\r\n    assert(handle.buffer->empty());\r\n    handle.buffer->push_back(42);\r\n    assert(handle.buffer->size() == 1);\r\n    assert((*handle.buffer)[0] == 42);\r\n\r\n    // Releasing the buffer (via destructor)\r\n    {\r\n        auto temp = std::move(handle);\r\n        // temp goes out of scope here and releases the buffer\r\n    }\r\n\r\n    // Buffer should now be back in the pool\r\n    assert(pool.size() == 1);\r\n\r\n    ATMLOG(\"TestATMBufferPoolBasic PASSED\");\r\n}\r\n\r\nvoid TestATMBufferPoolMoveSemantics() {\r\n\r\n    ATMBufferPool pool(1024);\r\n\r\n    // Get a buffer and store data in it\r\n    auto handle1 = pool.getBuffer();\r\n    handle1.buffer->push_back(123);\r\n    std::vector<uint8_t>* bufferAddr = handle1.buffer;\r\n\r\n    // Move the handle\r\n    auto handle2 = std::move(handle1);\r\n\r\n    // Check that handle1 is now invalid\r\n    assert(handle1.buffer == nullptr);\r\n    assert(handle1.pool == nullptr);\r\n\r\n    // Check that handle2 now has the buffer\r\n    assert(handle2.buffer == bufferAddr);\r\n    assert(handle2.buffer->size() == 1);\r\n    assert((*handle2.buffer)[0] == 123);\r\n\r\n    ATMLOG(\"TestATMBufferPoolMoveSemantics PASSED\");\r\n}\r\n\r\nvoid TestATMBufferPoolMultipleBuffers() {\r\n\r\n    ATMBufferPool pool(1024);\r\n\r\n    // Get 10 buffers\r\n    std::vector<ATMBufferPool::BufferHandle> handles;\r\n    for (int i = 0; i < 10; i++) {\r\n        auto handle = pool.getBuffer();\r\n        // Put some data in each buffer to make sure they're distinct\r\n        for (int j = 0; j <= i; j++) {\r\n            handle.buffer->push_back(static_cast<uint8_t>(i));\r\n        }\r\n        handles.push_back(std::move(handle));\r\n    }\r\n\r\n    // Verify the data\r\n    for (int i = 0; i < 10; i++) {\r\n        assert(handles[i].buffer->size() == i + 1);\r\n        for (int j = 0; j <= i; j++) {\r\n            assert((*handles[i].buffer)[j] == i);\r\n        }\r\n    }\r\n\r\n    // Release all buffers by clearing the vector\r\n    handles.clear();\r\n\r\n    // All buffers should be back in the pool\r\n    assert(pool.size() == 10);\r\n\r\n    ATMLOG(\"TestATMBufferPoolMultipleBuffers PASSED\");\r\n}\r\n\r\n// Benchmarks\r\n\r\n// Utility to measure execution time\r\ntemplate<typename Func>\r\ndouble measureExecutionTime(Func&& func) {\r\n    auto start = std::chrono::high_resolution_clock::now();\r\n    func();\r\n    auto end = std::chrono::high_resolution_clock::now();\r\n    return std::chrono::duration<double, std::milli>(end - start).count();\r\n}\r\n\r\nvoid BenchmarkFixedBufferPoolAllocation() {\r\n    ATMLOG(\"Running BenchmarkFixedBufferPoolAllocation\");\r\n\r\n    const int numBuffers = 10000;\r\n    const int bufferSize = 1024;\r\n\r\n    double createTime = measureExecutionTime([&]() {\r\n        FixedBufferPool pool(bufferSize, numBuffers);\r\n        });\r\n\r\n    FixedBufferPool pool(bufferSize, numBuffers);\r\n\r\n    double allocTime = measureExecutionTime([&]() {\r\n        std::vector<FixedBufferPool::BufferHandle> handles;\r\n        handles.reserve(numBuffers);\r\n        for (int i = 0; i < numBuffers; i++) {\r\n            handles.push_back(pool.getBuffer());\r\n        }\r\n        });\r\n\r\n    ATMLOG(\"FixedBufferPool: Creating pool with %d buffers of size %d: %.2f ms\",\r\n        numBuffers, bufferSize, createTime);\r\n    ATMLOG(\"FixedBufferPool: Allocating %d buffers: %.2f ms\",\r\n        numBuffers, allocTime);\r\n}\r\n\r\nvoid BenchmarkFixedBufferPoolReuse() {\r\n    ATMLOG(\"Running BenchmarkFixedBufferPoolReuse\");\r\n\r\n    const int numBuffers = 1000;\r\n    const int iterations = 100;\r\n    const int bufferSize = 1024;\r\n\r\n    FixedBufferPool pool(bufferSize, numBuffers);\r\n\r\n    double reuseTime = measureExecutionTime([&]() {\r\n        for (int iter = 0; iter < iterations; iter++) {\r\n            std::vector<FixedBufferPool::BufferHandle> handles;\r\n            handles.reserve(numBuffers);\r\n\r\n            // Allocate all buffers\r\n            for (int i = 0; i < numBuffers; i++) {\r\n                handles.push_back(pool.getBuffer());\r\n            }\r\n\r\n            // Write some data to each buffer\r\n            for (auto& handle : handles) {\r\n                handle.data()[0] = 42;\r\n            }\r\n\r\n            // Release all buffers\r\n            handles.clear();\r\n        }\r\n        });\r\n\r\n    ATMLOG(\"FixedBufferPool: Allocating and releasing %d buffers %d times: %.2f ms\",\r\n        numBuffers, iterations, reuseTime);\r\n    ATMLOG(\"FixedBufferPool: Average time per cycle: %.2f ms\",\r\n        reuseTime / iterations);\r\n}\r\n\r\nvoid BenchmarkATMBufferPoolAllocation() {\r\n    ATMLOG(\"Running BenchmarkATMBufferPoolAllocation\");\r\n\r\n    const int numBuffers = 10000;\r\n    const int bufferSize = 1024;\r\n\r\n    double createTime = measureExecutionTime([&]() {\r\n        ATMBufferPool pool(bufferSize);\r\n        });\r\n\r\n    ATMBufferPool pool(bufferSize);\r\n\r\n    double allocTime = measureExecutionTime([&]() {\r\n        std::vector<ATMBufferPool::BufferHandle> handles;\r\n        handles.reserve(numBuffers);\r\n        for (int i = 0; i < numBuffers; i++) {\r\n            handles.push_back(pool.getBuffer());\r\n        }\r\n        });\r\n\r\n    ATMLOG(\"ATMBufferPool: Creating pool with buffer size %d: %.2f ms\",\r\n        bufferSize, createTime);\r\n    ATMLOG(\"ATMBufferPool: Allocating %d buffers: %.2f ms\",\r\n        numBuffers, allocTime);\r\n}\r\n\r\nvoid BenchmarkATMBufferPoolReuse() {\r\n    ATMLOG(\"Running BenchmarkATMBufferPoolReuse\");\r\n\r\n    const int numBuffers = 1000;\r\n    const int iterations = 100;\r\n    const int bufferSize = 1024;\r\n\r\n    ATMBufferPool pool(bufferSize);\r\n\r\n    double reuseTime = measureExecutionTime([&]() {\r\n        for (int iter = 0; iter < iterations; iter++) {\r\n            std::vector<ATMBufferPool::BufferHandle> handles;\r\n            handles.reserve(numBuffers);\r\n\r\n            // Allocate all buffers\r\n            for (int i = 0; i < numBuffers; i++) {\r\n                handles.push_back(pool.getBuffer());\r\n            }\r\n\r\n            // Write some data to each buffer\r\n            for (auto& handle : handles) {\r\n                handle.buffer->push_back(42);\r\n            }\r\n\r\n            // Release all buffers\r\n            handles.clear();\r\n        }\r\n        });\r\n\r\n    ATMLOG(\"ATMBufferPool: Allocating and releasing %d buffers %d times: %.2f ms\",\r\n        numBuffers, iterations, reuseTime);\r\n    ATMLOG(\"ATMBufferPool: Average time per cycle: %.2f ms\",\r\n        reuseTime / iterations);\r\n}\r\n\r\nvoid BenchmarkCompareRealWorldUsage() {\r\n    ATMLOG(\"Running BenchmarkCompareRealWorldUsage\");\r\n\r\n    const int bufferSize = 1024;\r\n    const int numOperations = 1000000;\r\n\r\n    // Random number generator for buffer sizes\r\n    std::random_device rd;\r\n    std::mt19937 gen(rd());\r\n    std::uniform_int_distribution<> bufferSizeDist(10, bufferSize);\r\n    std::uniform_int_distribution<> holdTimeDist(1, 100);\r\n\r\n    // Create pools\r\n    FixedBufferPool fixedPool(bufferSize, 100000);\r\n    ATMBufferPool atmPool(bufferSize);\r\n\r\n    // Simulate real-world usage of FixedBufferPool\r\n    double fixedPoolTime = measureExecutionTime([&]() {\r\n        std::vector<FixedBufferPool::BufferHandle> handles;\r\n        handles.reserve(100000);  // Reserve space to avoid reallocations\r\n\r\n        for (int i = 0; i < numOperations; i++) {\r\n            // Occasionally release a random buffer\r\n            if (!handles.empty() && holdTimeDist(gen) < 20) {\r\n                int index = gen() % handles.size();\r\n                handles[index] = std::move(handles.back());\r\n                handles.pop_back();\r\n            }\r\n\r\n            // Get a new buffer and use it\r\n            auto handle = fixedPool.getBuffer();\r\n            int dataSize = bufferSizeDist(gen);\r\n            for (int j = 0; j < dataSize; j++) {\r\n                handle.data()[j] = static_cast<uint8_t>(j & 0xFF);\r\n            }\r\n\r\n            handles.push_back(std::move(handle));\r\n        }\r\n        });\r\n\r\n    // Simulate real-world usage of ATMBufferPool\r\n    double atmPoolTime = measureExecutionTime([&]() {\r\n        std::vector<ATMBufferPool::BufferHandle> handles;\r\n        handles.reserve(100000);  // Reserve space to avoid reallocations\r\n\r\n        for (int i = 0; i < numOperations; i++) {\r\n            // Occasionally release a random buffer\r\n            if (!handles.empty() && holdTimeDist(gen) < 20) {\r\n                int index = gen() % handles.size();\r\n                handles[index] = std::move(handles.back());\r\n                handles.pop_back();\r\n            }\r\n\r\n            // Get a new buffer and use it\r\n            auto handle = atmPool.getBuffer();\r\n            int dataSize = bufferSizeDist(gen);\r\n            handle.buffer->resize(dataSize);\r\n            for (int j = 0; j < dataSize; j++) {\r\n                (*handle.buffer)[j] = static_cast<uint8_t>(j & 0xFF);\r\n            }\r\n\r\n            handles.push_back(std::move(handle));\r\n        }\r\n        });\r\n\r\n    ATMLOG(\"Real-world simulation with %d operations:\", numOperations);\r\n    ATMLOG(\"FixedBufferPool: %.2f ms\", fixedPoolTime);\r\n    ATMLOG(\"ATMBufferPool: %.2f ms\", atmPoolTime);\r\n    ATMLOG(\"Performance ratio: FixedBufferPool is %.2f times %s than ATMBufferPool\",\r\n        std::abs(fixedPoolTime / atmPoolTime),\r\n        fixedPoolTime < atmPoolTime ? \"faster\" : \"slower\");\r\n}\r\n\r\n// Main test and benchmark functions\r\nvoid ATMBufferPoolRunAllTests() {\r\n    ATMLOG(\"=== Running all buffer pool tests ===\");\r\n\r\n    // FixedBufferPool tests\r\n    TestFixedBufferPoolBasic();\r\n    TestFixedBufferPoolMoveSemantics();\r\n    TestFixedBufferPoolExpansion();\r\n\r\n    // ATMBufferPool tests\r\n    TestATMBufferPoolBasic();\r\n    TestATMBufferPoolMoveSemantics();\r\n    TestATMBufferPoolMultipleBuffers();\r\n\r\n    ATMLOG(\"=== All tests PASSED ===\");\r\n}\r\n\r\nvoid ATMBufferPoolRunAllBenchmarks() {\r\n    ATMLOG(\"=== Running all buffer pool benchmarks ===\");\r\n\r\n    // FixedBufferPool benchmarks\r\n    BenchmarkFixedBufferPoolAllocation();\r\n    BenchmarkFixedBufferPoolReuse();\r\n\r\n    // ATMBufferPool benchmarks\r\n    BenchmarkATMBufferPoolAllocation();\r\n    BenchmarkATMBufferPoolReuse();\r\n\r\n    // Comparison benchmark\r\n    BenchmarkCompareRealWorldUsage();\r\n\r\n    ATMLOG(\"=== All benchmarks completed ===\");\r\n}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/lib/ATMBufferPool.cpp b/lib/ATMBufferPool.cpp
+--- a/lib/ATMBufferPool.cpp	(revision 0a6dee3007d02250f71a393d7867bd5d92e9aaa4)
++++ b/lib/ATMBufferPool.cpp	(date 1767819207734)
+@@ -1,483 +1,474 @@
+-#include "ATMCommon.h"
+ #include "ATMBufferPool.h"
+-
+-
+-
+-
+-
++#include <SDL3/SDL.h>
+ 
+ // ATMBufferPool implementations
+-ATMBufferPool::BufferHandle::BufferHandle()
+-    : buffer(nullptr), pool(nullptr) {}
++ATMBufferPool::BufferHandle::BufferHandle() : buffer(nullptr), pool(nullptr) {}
+ 
+-ATMBufferPool::BufferHandle::BufferHandle(std::vector<uint8_t>* buffer, ATMBufferPool* pool)
++ATMBufferPool::BufferHandle::BufferHandle(std::vector<uint8_t> *buffer,
++                                          ATMBufferPool *pool)
+     : buffer(buffer), pool(pool) {}
+ 
+-ATMBufferPool::BufferHandle::BufferHandle(BufferHandle&& handle) noexcept
++ATMBufferPool::BufferHandle::BufferHandle(BufferHandle &&handle) noexcept
+     : buffer(handle.buffer), pool(handle.pool) {
+-    handle.buffer = nullptr;
+-    handle.pool = nullptr;
++  handle.buffer = nullptr;
++  handle.pool = nullptr;
+ }
+ 
+-ATMBufferPool::BufferHandle& ATMBufferPool::BufferHandle::operator=(BufferHandle&& handle) noexcept {
+-    if (this != &handle) {
+-        if (buffer && pool) pool->releaseBuffer(buffer);
+-        buffer = handle.buffer;
+-        pool = handle.pool;
+-        handle.buffer = nullptr;
+-        handle.pool = nullptr;
+-    }
+-    return *this;
++ATMBufferPool::BufferHandle &
++ATMBufferPool::BufferHandle::operator=(BufferHandle &&handle) noexcept {
++  if (this != &handle) {
++    if (buffer && pool)
++      pool->releaseBuffer(buffer);
++    buffer = handle.buffer;
++    pool = handle.pool;
++    handle.buffer = nullptr;
++    handle.pool = nullptr;
++  }
++  return *this;
+ }
+ 
+ ATMBufferPool::BufferHandle::~BufferHandle() {
+-    if (buffer && pool) pool->releaseBuffer(buffer);
++  if (buffer && pool)
++    pool->releaseBuffer(buffer);
+ }
+ 
+-ATMBufferPool::ATMBufferPool(const int& size)
+-    : default_buffer_size(size) {
+-    buffers.reserve(16); // Pre-reserve space for some buffers
++ATMBufferPool::ATMBufferPool(const int &size) : default_buffer_size(size) {
++  buffers.reserve(16); // Pre-reserve space for some buffers
+ }
+ 
+ ATMBufferPool::BufferHandle ATMBufferPool::getBuffer() {
+-    std::vector<uint8_t>* buffer;
++  std::vector<uint8_t> *buffer;
+ 
+-    if (buffers.empty()) {
+-        buffer = new std::vector<uint8_t>();
+-        buffer->reserve(default_buffer_size);
+-    }
+-    else {
+-        buffer = buffers.back();
+-        buffers.pop_back();
+-    }
++  if (buffers.empty()) {
++    buffer = new std::vector<uint8_t>();
++    buffer->reserve(default_buffer_size);
++  } else {
++    buffer = buffers.back();
++    buffers.pop_back();
++  }
+ 
+-    buffer->clear();
+-    return BufferHandle(buffer, this);
++  buffer->clear();
++  return BufferHandle(buffer, this);
+ }
+ 
+-void ATMBufferPool::releaseBuffer(std::vector<uint8_t>* buff) {
+-    buffers.push_back(buff);
++void ATMBufferPool::releaseBuffer(std::vector<uint8_t> *buff) {
++  buffers.push_back(buff);
+ }
+ 
+-size_t ATMBufferPool::size() const {
+-    return buffers.size();
+-}
++size_t ATMBufferPool::size() const { return buffers.size(); }
+ 
+ ///////////////////////////////Test////////////////////////
++#include <assert.h>
+ #include <chrono>
+ #include <functional>
+-#include <assert.h>
+-#include <random>
+ #include <iomanip>
++#include <random>
+ #include <sstream>
+-#include <chrono>
+-
+ 
+ #define ATMLOG(...) SDL_Log(__VA_ARGS__)
+ 
+ // FixedBufferPool Tests
+ void TestFixedBufferPoolBasic() {
+ 
+-    // Create a buffer pool with 1KB buffers, 10 initial buffers
+-    FixedBufferPool pool(1024, 10);
++  // Create a buffer pool with 1KB buffers, 10 initial buffers
++  FixedBufferPool pool(1024, 10);
+ 
+-    // Verify initial state
+-    assert(pool.getTotalBuffers() == 64);
+-    assert(pool.getAvailableBuffers() == 64);
+-    assert(pool.getBufferSize() == 1024);
++  // Verify initial state
++  assert(pool.getTotalBuffers() == 64);
++  assert(pool.getAvailableBuffers() == 64);
++  assert(pool.getBufferSize() == 1024);
+ 
+-    // Get a buffer
+-    auto handle = pool.getBuffer();
+-    assert(handle.valid());
+-    assert(handle.data() != nullptr);
+-    assert(pool.getAvailableBuffers() == 63);
++  // Get a buffer
++  auto handle = pool.getBuffer();
++  assert(handle.valid());
++  assert(handle.data() != nullptr);
++  assert(pool.getAvailableBuffers() == 63);
+ 
+-    // Release the buffer
+-    handle.release();
+-    assert(!handle.valid());
+-    assert(pool.getAvailableBuffers() == 64);
++  // Release the buffer
++  handle.release();
++  assert(!handle.valid());
++  assert(pool.getAvailableBuffers() == 64);
+ 
+-    ATMLOG("TestFixedBufferPoolBasic PASSED");
++  ATMLOG("TestFixedBufferPoolBasic PASSED");
+ }
+ 
+ void TestFixedBufferPoolMoveSemantics() {
+ 
+-    FixedBufferPool pool(1024, 5);
++  FixedBufferPool pool(1024, 5);
+ 
+-    // Test move constructor
+-    {
+-        auto handle1 = pool.getBuffer();
+-        uint8_t* data = handle1.data();
++  // Test move constructor
++  {
++    auto handle1 = pool.getBuffer();
++    uint8_t *data = handle1.data();
+ 
+-        auto handle2 = std::move(handle1);
+-        assert(handle2.data() == data);
+-        assert(!handle1.valid());
+-        assert(handle2.valid());
+-    }
++    auto handle2 = std::move(handle1);
++    assert(handle2.data() == data);
++    assert(!handle1.valid());
++    assert(handle2.valid());
++  }
+ 
+-    // Test move assignment
+-    {
+-        auto handle1 = pool.getBuffer();
+-        auto handle2 = pool.getBuffer();
+-        uint8_t* data1 = handle1.data();
++  // Test move assignment
++  {
++    auto handle1 = pool.getBuffer();
++    auto handle2 = pool.getBuffer();
++    uint8_t *data1 = handle1.data();
+ 
+-        handle2 = std::move(handle1);
+-        assert(handle2.data() == data1);
+-        assert(!handle1.valid());
+-        assert(handle2.valid());
+-    }
++    handle2 = std::move(handle1);
++    assert(handle2.data() == data1);
++    assert(!handle1.valid());
++    assert(handle2.valid());
++  }
+ 
+-    ATMLOG("TestFixedBufferPoolMoveSemantics PASSED");
++  ATMLOG("TestFixedBufferPoolMoveSemantics PASSED");
+ }
+ 
+ void TestFixedBufferPoolExpansion() {
+ 
+-    // Start with 5 buffers
+-    FixedBufferPool pool(1024, 5);
+-    assert(pool.getTotalBuffers() == 64);
++  // Start with 5 buffers
++  FixedBufferPool pool(1024, 5);
++  assert(pool.getTotalBuffers() == 64);
+ 
+-    // Get all 5 buffers
+-    std::vector<FixedBufferPool::BufferHandle> handles;
+-    for (int i = 0; i < 5; i++) {
+-        handles.push_back(pool.getBuffer());
+-    }
++  // Get all 5 buffers
++  std::vector<FixedBufferPool::BufferHandle> handles;
++  for (int i = 0; i < 5; i++) {
++    handles.push_back(pool.getBuffer());
++  }
+ 
+-    assert(pool.getAvailableBuffers() == 59);
++  assert(pool.getAvailableBuffers() == 59);
+ 
+-    // Get one more - should cause expansion
+-    auto extraHandle = pool.getBuffer();
++  // Get one more - should cause expansion
++  auto extraHandle = pool.getBuffer();
+ 
+-    // Should have doubled capacity to 10
+-    assert(pool.getTotalBuffers() == 64);
+-    assert(pool.getAvailableBuffers() == 58);  // 5 new buffers - 1 we just took
++  // Should have doubled capacity to 10
++  assert(pool.getTotalBuffers() == 64);
++  assert(pool.getAvailableBuffers() == 58); // 5 new buffers - 1 we just took
+ 
+-    ATMLOG("TestFixedBufferPoolExpansion PASSED");
++  ATMLOG("TestFixedBufferPoolExpansion PASSED");
+ }
+ 
+ // ATMBufferPool Tests
+ void TestATMBufferPoolBasic() {
+ 
+-    ATMBufferPool pool(1024);
++  ATMBufferPool pool(1024);
+ 
+-    // Initial size should be 0
+-    assert(pool.size() == 0);
++  // Initial size should be 0
++  assert(pool.size() == 0);
+ 
+-    // Get a buffer
+-    auto handle = pool.getBuffer();
++  // Get a buffer
++  auto handle = pool.getBuffer();
+ 
+-    // Size should still be 0 as the buffer is in use
+-    assert(pool.size() == 0);
++  // Size should still be 0 as the buffer is in use
++  assert(pool.size() == 0);
+ 
+-    // The buffer should be empty but usable
+-    assert(handle.buffer->empty());
+-    handle.buffer->push_back(42);
+-    assert(handle.buffer->size() == 1);
+-    assert((*handle.buffer)[0] == 42);
++  // The buffer should be empty but usable
++  assert(handle.buffer->empty());
++  handle.buffer->push_back(42);
++  assert(handle.buffer->size() == 1);
++  assert((*handle.buffer)[0] == 42);
+ 
+-    // Releasing the buffer (via destructor)
+-    {
+-        auto temp = std::move(handle);
+-        // temp goes out of scope here and releases the buffer
+-    }
++  // Releasing the buffer (via destructor)
++  {
++    auto temp = std::move(handle);
++    // temp goes out of scope here and releases the buffer
++  }
+ 
+-    // Buffer should now be back in the pool
+-    assert(pool.size() == 1);
++  // Buffer should now be back in the pool
++  assert(pool.size() == 1);
+ 
+-    ATMLOG("TestATMBufferPoolBasic PASSED");
++  ATMLOG("TestATMBufferPoolBasic PASSED");
+ }
+ 
+ void TestATMBufferPoolMoveSemantics() {
+ 
+-    ATMBufferPool pool(1024);
++  ATMBufferPool pool(1024);
+ 
+-    // Get a buffer and store data in it
+-    auto handle1 = pool.getBuffer();
+-    handle1.buffer->push_back(123);
+-    std::vector<uint8_t>* bufferAddr = handle1.buffer;
++  // Get a buffer and store data in it
++  auto handle1 = pool.getBuffer();
++  handle1.buffer->push_back(123);
++  std::vector<uint8_t> *bufferAddr = handle1.buffer;
+ 
+-    // Move the handle
+-    auto handle2 = std::move(handle1);
++  // Move the handle
++  auto handle2 = std::move(handle1);
+ 
+-    // Check that handle1 is now invalid
+-    assert(handle1.buffer == nullptr);
+-    assert(handle1.pool == nullptr);
++  // Check that handle1 is now invalid
++  assert(handle1.buffer == nullptr);
++  assert(handle1.pool == nullptr);
+ 
+-    // Check that handle2 now has the buffer
+-    assert(handle2.buffer == bufferAddr);
+-    assert(handle2.buffer->size() == 1);
+-    assert((*handle2.buffer)[0] == 123);
++  // Check that handle2 now has the buffer
++  assert(handle2.buffer == bufferAddr);
++  assert(handle2.buffer->size() == 1);
++  assert((*handle2.buffer)[0] == 123);
+ 
+-    ATMLOG("TestATMBufferPoolMoveSemantics PASSED");
++  ATMLOG("TestATMBufferPoolMoveSemantics PASSED");
+ }
+ 
+ void TestATMBufferPoolMultipleBuffers() {
+ 
+-    ATMBufferPool pool(1024);
++  ATMBufferPool pool(1024);
+ 
+-    // Get 10 buffers
+-    std::vector<ATMBufferPool::BufferHandle> handles;
+-    for (int i = 0; i < 10; i++) {
+-        auto handle = pool.getBuffer();
+-        // Put some data in each buffer to make sure they're distinct
+-        for (int j = 0; j <= i; j++) {
+-            handle.buffer->push_back(static_cast<uint8_t>(i));
+-        }
+-        handles.push_back(std::move(handle));
+-    }
++  // Get 10 buffers
++  std::vector<ATMBufferPool::BufferHandle> handles;
++  for (int i = 0; i < 10; i++) {
++    auto handle = pool.getBuffer();
++    // Put some data in each buffer to make sure they're distinct
++    for (int j = 0; j <= i; j++) {
++      handle.buffer->push_back(static_cast<uint8_t>(i));
++    }
++    handles.push_back(std::move(handle));
++  }
+ 
+-    // Verify the data
+-    for (int i = 0; i < 10; i++) {
+-        assert(handles[i].buffer->size() == i + 1);
+-        for (int j = 0; j <= i; j++) {
+-            assert((*handles[i].buffer)[j] == i);
+-        }
+-    }
++  // Verify the data
++  for (int i = 0; i < 10; i++) {
++    assert(handles[i].buffer->size() == i + 1);
++    for (int j = 0; j <= i; j++) {
++      assert((*handles[i].buffer)[j] == i);
++    }
++  }
+ 
+-    // Release all buffers by clearing the vector
+-    handles.clear();
++  // Release all buffers by clearing the vector
++  handles.clear();
+ 
+-    // All buffers should be back in the pool
+-    assert(pool.size() == 10);
++  // All buffers should be back in the pool
++  assert(pool.size() == 10);
+ 
+-    ATMLOG("TestATMBufferPoolMultipleBuffers PASSED");
++  ATMLOG("TestATMBufferPoolMultipleBuffers PASSED");
+ }
+ 
+ // Benchmarks
+ 
+ // Utility to measure execution time
+-template<typename Func>
+-double measureExecutionTime(Func&& func) {
+-    auto start = std::chrono::high_resolution_clock::now();
+-    func();
+-    auto end = std::chrono::high_resolution_clock::now();
+-    return std::chrono::duration<double, std::milli>(end - start).count();
++template <typename Func> double measureExecutionTime(Func &&func) {
++  auto start = std::chrono::high_resolution_clock::now();
++  func();
++  auto end = std::chrono::high_resolution_clock::now();
++  return std::chrono::duration<double, std::milli>(end - start).count();
+ }
+ 
+ void BenchmarkFixedBufferPoolAllocation() {
+-    ATMLOG("Running BenchmarkFixedBufferPoolAllocation");
++  ATMLOG("Running BenchmarkFixedBufferPoolAllocation");
+ 
+-    const int numBuffers = 10000;
+-    const int bufferSize = 1024;
++  const int numBuffers = 10000;
++  const int bufferSize = 1024;
+ 
+-    double createTime = measureExecutionTime([&]() {
+-        FixedBufferPool pool(bufferSize, numBuffers);
+-        });
+-
+-    FixedBufferPool pool(bufferSize, numBuffers);
++  double createTime = measureExecutionTime(
++      [&]() { FixedBufferPool pool(bufferSize, numBuffers); });
++
++  FixedBufferPool pool(bufferSize, numBuffers);
+ 
+-    double allocTime = measureExecutionTime([&]() {
+-        std::vector<FixedBufferPool::BufferHandle> handles;
+-        handles.reserve(numBuffers);
+-        for (int i = 0; i < numBuffers; i++) {
+-            handles.push_back(pool.getBuffer());
+-        }
+-        });
++  double allocTime = measureExecutionTime([&]() {
++    std::vector<FixedBufferPool::BufferHandle> handles;
++    handles.reserve(numBuffers);
++    for (int i = 0; i < numBuffers; i++) {
++      handles.push_back(pool.getBuffer());
++    }
++  });
+ 
+-    ATMLOG("FixedBufferPool: Creating pool with %d buffers of size %d: %.2f ms",
+-        numBuffers, bufferSize, createTime);
+-    ATMLOG("FixedBufferPool: Allocating %d buffers: %.2f ms",
+-        numBuffers, allocTime);
++  ATMLOG("FixedBufferPool: Creating pool with %d buffers of size %d: %.2f ms",
++         numBuffers, bufferSize, createTime);
++  ATMLOG("FixedBufferPool: Allocating %d buffers: %.2f ms", numBuffers,
++         allocTime);
+ }
+ 
+ void BenchmarkFixedBufferPoolReuse() {
+-    ATMLOG("Running BenchmarkFixedBufferPoolReuse");
++  ATMLOG("Running BenchmarkFixedBufferPoolReuse");
+ 
+-    const int numBuffers = 1000;
+-    const int iterations = 100;
+-    const int bufferSize = 1024;
++  const int numBuffers = 1000;
++  const int iterations = 100;
++  const int bufferSize = 1024;
+ 
+-    FixedBufferPool pool(bufferSize, numBuffers);
++  FixedBufferPool pool(bufferSize, numBuffers);
+ 
+-    double reuseTime = measureExecutionTime([&]() {
+-        for (int iter = 0; iter < iterations; iter++) {
+-            std::vector<FixedBufferPool::BufferHandle> handles;
+-            handles.reserve(numBuffers);
++  double reuseTime = measureExecutionTime([&]() {
++    for (int iter = 0; iter < iterations; iter++) {
++      std::vector<FixedBufferPool::BufferHandle> handles;
++      handles.reserve(numBuffers);
+ 
+-            // Allocate all buffers
+-            for (int i = 0; i < numBuffers; i++) {
+-                handles.push_back(pool.getBuffer());
+-            }
++      // Allocate all buffers
++      for (int i = 0; i < numBuffers; i++) {
++        handles.push_back(pool.getBuffer());
++      }
+ 
+-            // Write some data to each buffer
+-            for (auto& handle : handles) {
+-                handle.data()[0] = 42;
+-            }
++      // Write some data to each buffer
++      for (auto &handle : handles) {
++        handle.data()[0] = 42;
++      }
+ 
+-            // Release all buffers
+-            handles.clear();
+-        }
+-        });
++      // Release all buffers
++      handles.clear();
++    }
++  });
+ 
+-    ATMLOG("FixedBufferPool: Allocating and releasing %d buffers %d times: %.2f ms",
+-        numBuffers, iterations, reuseTime);
+-    ATMLOG("FixedBufferPool: Average time per cycle: %.2f ms",
+-        reuseTime / iterations);
++  ATMLOG(
++      "FixedBufferPool: Allocating and releasing %d buffers %d times: %.2f ms",
++      numBuffers, iterations, reuseTime);
++  ATMLOG("FixedBufferPool: Average time per cycle: %.2f ms",
++         reuseTime / iterations);
+ }
+ 
+ void BenchmarkATMBufferPoolAllocation() {
+-    ATMLOG("Running BenchmarkATMBufferPoolAllocation");
++  ATMLOG("Running BenchmarkATMBufferPoolAllocation");
+ 
+-    const int numBuffers = 10000;
+-    const int bufferSize = 1024;
++  const int numBuffers = 10000;
++  const int bufferSize = 1024;
+ 
+-    double createTime = measureExecutionTime([&]() {
+-        ATMBufferPool pool(bufferSize);
+-        });
+-
+-    ATMBufferPool pool(bufferSize);
++  double createTime =
++      measureExecutionTime([&]() { ATMBufferPool pool(bufferSize); });
++
++  ATMBufferPool pool(bufferSize);
+ 
+-    double allocTime = measureExecutionTime([&]() {
+-        std::vector<ATMBufferPool::BufferHandle> handles;
+-        handles.reserve(numBuffers);
+-        for (int i = 0; i < numBuffers; i++) {
+-            handles.push_back(pool.getBuffer());
+-        }
+-        });
++  double allocTime = measureExecutionTime([&]() {
++    std::vector<ATMBufferPool::BufferHandle> handles;
++    handles.reserve(numBuffers);
++    for (int i = 0; i < numBuffers; i++) {
++      handles.push_back(pool.getBuffer());
++    }
++  });
+ 
+-    ATMLOG("ATMBufferPool: Creating pool with buffer size %d: %.2f ms",
+-        bufferSize, createTime);
+-    ATMLOG("ATMBufferPool: Allocating %d buffers: %.2f ms",
+-        numBuffers, allocTime);
++  ATMLOG("ATMBufferPool: Creating pool with buffer size %d: %.2f ms",
++         bufferSize, createTime);
++  ATMLOG("ATMBufferPool: Allocating %d buffers: %.2f ms", numBuffers,
++         allocTime);
+ }
+ 
+ void BenchmarkATMBufferPoolReuse() {
+-    ATMLOG("Running BenchmarkATMBufferPoolReuse");
++  ATMLOG("Running BenchmarkATMBufferPoolReuse");
+ 
+-    const int numBuffers = 1000;
+-    const int iterations = 100;
+-    const int bufferSize = 1024;
++  const int numBuffers = 1000;
++  const int iterations = 100;
++  const int bufferSize = 1024;
+ 
+-    ATMBufferPool pool(bufferSize);
++  ATMBufferPool pool(bufferSize);
+ 
+-    double reuseTime = measureExecutionTime([&]() {
+-        for (int iter = 0; iter < iterations; iter++) {
+-            std::vector<ATMBufferPool::BufferHandle> handles;
+-            handles.reserve(numBuffers);
++  double reuseTime = measureExecutionTime([&]() {
++    for (int iter = 0; iter < iterations; iter++) {
++      std::vector<ATMBufferPool::BufferHandle> handles;
++      handles.reserve(numBuffers);
+ 
+-            // Allocate all buffers
+-            for (int i = 0; i < numBuffers; i++) {
+-                handles.push_back(pool.getBuffer());
+-            }
++      // Allocate all buffers
++      for (int i = 0; i < numBuffers; i++) {
++        handles.push_back(pool.getBuffer());
++      }
+ 
+-            // Write some data to each buffer
+-            for (auto& handle : handles) {
+-                handle.buffer->push_back(42);
+-            }
++      // Write some data to each buffer
++      for (auto &handle : handles) {
++        handle.buffer->push_back(42);
++      }
+ 
+-            // Release all buffers
+-            handles.clear();
+-        }
+-        });
++      // Release all buffers
++      handles.clear();
++    }
++  });
+ 
+-    ATMLOG("ATMBufferPool: Allocating and releasing %d buffers %d times: %.2f ms",
+-        numBuffers, iterations, reuseTime);
+-    ATMLOG("ATMBufferPool: Average time per cycle: %.2f ms",
+-        reuseTime / iterations);
++  ATMLOG("ATMBufferPool: Allocating and releasing %d buffers %d times: %.2f ms",
++         numBuffers, iterations, reuseTime);
++  ATMLOG("ATMBufferPool: Average time per cycle: %.2f ms",
++         reuseTime / iterations);
+ }
+ 
+ void BenchmarkCompareRealWorldUsage() {
+-    ATMLOG("Running BenchmarkCompareRealWorldUsage");
++  ATMLOG("Running BenchmarkCompareRealWorldUsage");
+ 
+-    const int bufferSize = 1024;
+-    const int numOperations = 1000000;
++  const int bufferSize = 1024;
++  const int numOperations = 1000000;
+ 
+-    // Random number generator for buffer sizes
+-    std::random_device rd;
+-    std::mt19937 gen(rd());
+-    std::uniform_int_distribution<> bufferSizeDist(10, bufferSize);
+-    std::uniform_int_distribution<> holdTimeDist(1, 100);
++  // Random number generator for buffer sizes
++  std::random_device rd;
++  std::mt19937 gen(rd());
++  std::uniform_int_distribution<> bufferSizeDist(10, bufferSize);
++  std::uniform_int_distribution<> holdTimeDist(1, 100);
+ 
+-    // Create pools
+-    FixedBufferPool fixedPool(bufferSize, 100000);
+-    ATMBufferPool atmPool(bufferSize);
++  // Create pools
++  FixedBufferPool fixedPool(bufferSize, 100000);
++  ATMBufferPool atmPool(bufferSize);
+ 
+-    // Simulate real-world usage of FixedBufferPool
+-    double fixedPoolTime = measureExecutionTime([&]() {
+-        std::vector<FixedBufferPool::BufferHandle> handles;
+-        handles.reserve(100000);  // Reserve space to avoid reallocations
++  // Simulate real-world usage of FixedBufferPool
++  double fixedPoolTime = measureExecutionTime([&]() {
++    std::vector<FixedBufferPool::BufferHandle> handles;
++    handles.reserve(100000); // Reserve space to avoid reallocations
+ 
+-        for (int i = 0; i < numOperations; i++) {
+-            // Occasionally release a random buffer
+-            if (!handles.empty() && holdTimeDist(gen) < 20) {
+-                int index = gen() % handles.size();
+-                handles[index] = std::move(handles.back());
+-                handles.pop_back();
+-            }
++    for (int i = 0; i < numOperations; i++) {
++      // Occasionally release a random buffer
++      if (!handles.empty() && holdTimeDist(gen) < 20) {
++        int index = gen() % handles.size();
++        handles[index] = std::move(handles.back());
++        handles.pop_back();
++      }
+ 
+-            // Get a new buffer and use it
+-            auto handle = fixedPool.getBuffer();
+-            int dataSize = bufferSizeDist(gen);
+-            for (int j = 0; j < dataSize; j++) {
+-                handle.data()[j] = static_cast<uint8_t>(j & 0xFF);
+-            }
++      // Get a new buffer and use it
++      auto handle = fixedPool.getBuffer();
++      int dataSize = bufferSizeDist(gen);
++      for (int j = 0; j < dataSize; j++) {
++        handle.data()[j] = static_cast<uint8_t>(j & 0xFF);
++      }
+ 
+-            handles.push_back(std::move(handle));
+-        }
+-        });
++      handles.push_back(std::move(handle));
++    }
++  });
+ 
+-    // Simulate real-world usage of ATMBufferPool
+-    double atmPoolTime = measureExecutionTime([&]() {
+-        std::vector<ATMBufferPool::BufferHandle> handles;
+-        handles.reserve(100000);  // Reserve space to avoid reallocations
++  // Simulate real-world usage of ATMBufferPool
++  double atmPoolTime = measureExecutionTime([&]() {
++    std::vector<ATMBufferPool::BufferHandle> handles;
++    handles.reserve(100000); // Reserve space to avoid reallocations
+ 
+-        for (int i = 0; i < numOperations; i++) {
+-            // Occasionally release a random buffer
+-            if (!handles.empty() && holdTimeDist(gen) < 20) {
+-                int index = gen() % handles.size();
+-                handles[index] = std::move(handles.back());
+-                handles.pop_back();
+-            }
++    for (int i = 0; i < numOperations; i++) {
++      // Occasionally release a random buffer
++      if (!handles.empty() && holdTimeDist(gen) < 20) {
++        int index = gen() % handles.size();
++        handles[index] = std::move(handles.back());
++        handles.pop_back();
++      }
+ 
+-            // Get a new buffer and use it
+-            auto handle = atmPool.getBuffer();
+-            int dataSize = bufferSizeDist(gen);
+-            handle.buffer->resize(dataSize);
+-            for (int j = 0; j < dataSize; j++) {
+-                (*handle.buffer)[j] = static_cast<uint8_t>(j & 0xFF);
+-            }
++      // Get a new buffer and use it
++      auto handle = atmPool.getBuffer();
++      int dataSize = bufferSizeDist(gen);
++      handle.buffer->resize(dataSize);
++      for (int j = 0; j < dataSize; j++) {
++        (*handle.buffer)[j] = static_cast<uint8_t>(j & 0xFF);
++      }
+ 
+-            handles.push_back(std::move(handle));
+-        }
+-        });
++      handles.push_back(std::move(handle));
++    }
++  });
+ 
+-    ATMLOG("Real-world simulation with %d operations:", numOperations);
+-    ATMLOG("FixedBufferPool: %.2f ms", fixedPoolTime);
+-    ATMLOG("ATMBufferPool: %.2f ms", atmPoolTime);
+-    ATMLOG("Performance ratio: FixedBufferPool is %.2f times %s than ATMBufferPool",
+-        std::abs(fixedPoolTime / atmPoolTime),
+-        fixedPoolTime < atmPoolTime ? "faster" : "slower");
++  ATMLOG("Real-world simulation with %d operations:", numOperations);
++  ATMLOG("FixedBufferPool: %.2f ms", fixedPoolTime);
++  ATMLOG("ATMBufferPool: %.2f ms", atmPoolTime);
++  ATMLOG(
++      "Performance ratio: FixedBufferPool is %.2f times %s than ATMBufferPool",
++      std::abs(fixedPoolTime / atmPoolTime),
++      fixedPoolTime < atmPoolTime ? "faster" : "slower");
+ }
+ 
+ // Main test and benchmark functions
+ void ATMBufferPoolRunAllTests() {
+-    ATMLOG("=== Running all buffer pool tests ===");
++  ATMLOG("=== Running all buffer pool tests ===");
+ 
+-    // FixedBufferPool tests
+-    TestFixedBufferPoolBasic();
+-    TestFixedBufferPoolMoveSemantics();
+-    TestFixedBufferPoolExpansion();
++  // FixedBufferPool tests
++  TestFixedBufferPoolBasic();
++  TestFixedBufferPoolMoveSemantics();
++  TestFixedBufferPoolExpansion();
+ 
+-    // ATMBufferPool tests
+-    TestATMBufferPoolBasic();
+-    TestATMBufferPoolMoveSemantics();
+-    TestATMBufferPoolMultipleBuffers();
++  // ATMBufferPool tests
++  TestATMBufferPoolBasic();
++  TestATMBufferPoolMoveSemantics();
++  TestATMBufferPoolMultipleBuffers();
+ 
+-    ATMLOG("=== All tests PASSED ===");
++  ATMLOG("=== All tests PASSED ===");
+ }
+ 
+ void ATMBufferPoolRunAllBenchmarks() {
+-    ATMLOG("=== Running all buffer pool benchmarks ===");
++  ATMLOG("=== Running all buffer pool benchmarks ===");
+ 
+-    // FixedBufferPool benchmarks
+-    BenchmarkFixedBufferPoolAllocation();
+-    BenchmarkFixedBufferPoolReuse();
++  // FixedBufferPool benchmarks
++  BenchmarkFixedBufferPoolAllocation();
++  BenchmarkFixedBufferPoolReuse();
+ 
+-    // ATMBufferPool benchmarks
+-    BenchmarkATMBufferPoolAllocation();
+-    BenchmarkATMBufferPoolReuse();
++  // ATMBufferPool benchmarks
++  BenchmarkATMBufferPoolAllocation();
++  BenchmarkATMBufferPoolReuse();
+ 
+-    // Comparison benchmark
+-    BenchmarkCompareRealWorldUsage();
++  // Comparison benchmark
++  BenchmarkCompareRealWorldUsage();
+ 
+-    ATMLOG("=== All benchmarks completed ===");
++  ATMLOG("=== All benchmarks completed ===");
+ }
+\ No newline at end of file

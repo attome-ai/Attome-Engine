@@ -1,5 +1,5 @@
-#include "../game/ATMEngine.h"
-#include "../game/stb_image.h"
+#include "../engine/ATMEngine.h"
+#include "../engine/stb_image.h"
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
