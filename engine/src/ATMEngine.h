@@ -13,6 +13,71 @@
 #include <string>
 #include <vector>
 
+// =============================================================================
+// DynamicArray<T> - Minimal RAII wrapper for dynamic arrays
+// =============================================================================
+// Lightweight RAII wrapper that just manages pointer lifecycle.
+// Size tracking omitted - use container's capacity/count instead.
+// Zero overhead: compiler optimizes this wrapper away completely.
+// =============================================================================
+template <typename T> class DynamicArray {
+private:
+  T *ptr_;
+
+public:
+  // Constructor: allocate and fill with value
+  explicit DynamicArray(int size, T fillValue = T{}) : ptr_(new T[size]) {
+    std::fill(ptr_, ptr_ + size, fillValue);
+  }
+
+  // Default constructor
+  DynamicArray() : ptr_(nullptr) {}
+
+  // Destructor: automatic cleanup
+  ~DynamicArray() { delete[] ptr_; }
+
+  // Move constructor
+  DynamicArray(DynamicArray &&other) noexcept : ptr_(other.ptr_) {
+    other.ptr_ = nullptr;
+  }
+
+  // Move assignment
+  DynamicArray &operator=(DynamicArray &&other) noexcept {
+    if (this != &other) {
+      delete[] ptr_;
+      ptr_ = other.ptr_;
+      other.ptr_ = nullptr;
+    }
+    return *this;
+  }
+
+  // Delete copy
+  DynamicArray(const DynamicArray &) = delete;
+  DynamicArray &operator=(const DynamicArray &) = delete;
+
+  // Resize: allocate new, copy existing data, fill remainder
+  void resize(int newSize, int copyCount, T fillValue = T{}) {
+    T *newPtr = new T[newSize];
+    if (ptr_ && copyCount > 0) {
+      std::copy(ptr_, ptr_ + copyCount, newPtr);
+    }
+    std::fill(newPtr + copyCount, newPtr + newSize, fillValue);
+    delete[] ptr_;
+    ptr_ = newPtr;
+  }
+
+  // Pointer-like access
+  T &operator[](int index) { return ptr_[index]; }
+  const T &operator[](int index) const { return ptr_[index]; }
+
+  // Implicit conversion to raw pointer
+  operator T *() { return ptr_; }
+  operator const T *() const { return ptr_; }
+
+  // Explicit raw pointer access
+  T *data() { return ptr_; }
+  const T *data() const { return ptr_; }
+};
 
 // Forward declarations
 class Engine;

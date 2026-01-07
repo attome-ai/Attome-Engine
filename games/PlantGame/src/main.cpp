@@ -2,6 +2,7 @@
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
+#define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -21,10 +22,10 @@
 #define WINDOW_HEIGHT 1020
 #define PLAYER_SIZE 64 // Slightly larger for ship sprite
 #define PLANET_SIZE 32 // Slightly larger for ship sprite
-#define PLAYER_SPEED 800.0f
+#define PLAYER_SPEED 600.0f
 #define NUM_PLANETS 100000
 #define BULLET_SIZE 26
-#define BULLET_SPEED 600.0f
+#define BULLET_SPEED 800.0f
 #define MAX_BULLETS 200000
 // #define FIRE_RATE 0.05f       // 20 shots per second
 // #define BULLETS_PER_SHOT 300  // Shoot 3 bullets at once
@@ -99,13 +100,14 @@ protected:
   }
 };
 
-// --- Bullet Container ---
+// --- Bullet Container (RAII-enabled) ---
 class BulletContainer : public RenderableEntityContainer {
 public:
-  float *velocities_x;
-  float *velocities_y;
-  float *lifetimes;
-  uint8_t *active;
+  // RAII arrays - automatically managed!
+  DynamicArray<float> velocities_x;
+  DynamicArray<float> velocities_y;
+  DynamicArray<float> lifetimes;
+  DynamicArray<uint8_t> active;
   Engine *engine;
 
   // FREE LIST for O(1) allocation
@@ -114,26 +116,14 @@ public:
   BulletContainer(Engine *engine, int typeId, uint8_t defaultLayer,
                   int initialCapacity)
       : RenderableEntityContainer(typeId, defaultLayer, initialCapacity),
-        engine(engine) {
-    velocities_x = new float[capacity];
-    velocities_y = new float[capacity];
-    lifetimes = new float[capacity];
-    active = new uint8_t[capacity];
-
-    std::fill(velocities_x, velocities_x + capacity, 0.0f);
-    std::fill(velocities_y, velocities_y + capacity, 0.0f);
-    std::fill(lifetimes, lifetimes + capacity, 0.0f);
-    std::fill(active, active + capacity, 0);
-
+        engine(engine), velocities_x(initialCapacity, 0.0f),
+        velocities_y(initialCapacity, 0.0f), lifetimes(initialCapacity, 0.0f),
+        active(initialCapacity, 0) {
     free_list.reserve(capacity);
   }
 
-  ~BulletContainer() override {
-    delete[] velocities_x;
-    delete[] velocities_y;
-    delete[] lifetimes;
-    delete[] active;
-  }
+  // Destructor: DynamicArrays clean themselves up automatically!
+  ~BulletContainer() override = default;
 
   uint32_t createEntity(float x, float y, float vx, float vy, int texture_id) {
     uint32_t index = RenderableEntityContainer::createEntity();
@@ -247,43 +237,24 @@ protected:
     if (newCapacity <= capacity)
       return;
 
-    float *newVelX = new float[newCapacity];
-    float *newVelY = new float[newCapacity];
-    float *newLifetimes = new float[newCapacity];
-    uint8_t *newActive = new uint8_t[newCapacity];
-
-    if (count > 0) {
-      std::copy(velocities_x, velocities_x + count, newVelX);
-      std::copy(velocities_y, velocities_y + count, newVelY);
-      std::copy(lifetimes, lifetimes + count, newLifetimes);
-      std::copy(active, active + count, newActive);
-    }
-    std::fill(newVelX + count, newVelX + newCapacity, 0.0f);
-    std::fill(newVelY + count, newVelY + newCapacity, 0.0f);
-    std::fill(newLifetimes + count, newLifetimes + newCapacity, 0.0f);
-    std::fill(newActive + count, newActive + newCapacity, 0);
-
-    delete[] velocities_x;
-    delete[] velocities_y;
-    delete[] lifetimes;
-    delete[] active;
-
-    velocities_x = newVelX;
-    velocities_y = newVelY;
-    lifetimes = newLifetimes;
-    active = newActive;
+    // DynamicArray handles all the allocation, copying, and filling!
+    velocities_x.resize(newCapacity, count, 0.0f);
+    velocities_y.resize(newCapacity, count, 0.0f);
+    lifetimes.resize(newCapacity, count, 0.0f);
+    active.resize(newCapacity, count, 0);
 
     RenderableEntityContainer::resizeArrays(newCapacity);
   }
 };
 
-// --- Planet Container (OPTIMIZED) ---
+// --- Planet Container (RAII-enabled) ---
 class PlanetContainer : public RenderableEntityContainer {
 public:
-  float *speeds;
-  float *health;
-  float *max_health;
-  uint8_t *planet_types;
+  // RAII arrays - automatically managed!
+  DynamicArray<float> speeds;
+  DynamicArray<float> health;
+  DynamicArray<float> max_health;
+  DynamicArray<uint8_t> planet_types;
   Engine *engine;
 
   // SINGLE global target instead of per-planet arrays!
@@ -293,26 +264,12 @@ public:
   PlanetContainer(Engine *engine, int typeId, uint8_t defaultLayer,
                   int initialCapacity)
       : RenderableEntityContainer(typeId, defaultLayer, initialCapacity),
-        engine(engine) {
-    speeds = new float[capacity];
-    health = new float[capacity];
-    max_health = new float[capacity];
+        engine(engine), speeds(initialCapacity, 50.0f),
+        health(initialCapacity, 100.0f), max_health(initialCapacity, 100.0f),
+        planet_types(initialCapacity, 0) {}
 
-    planet_types = new uint8_t[capacity];
-
-    std::fill(speeds, speeds + capacity, 50.0f);
-    std::fill(health, health + capacity, 100.0f);
-    std::fill(max_health, max_health + capacity, 100.0f);
-    std::fill(planet_types, planet_types + capacity, 0);
-  }
-
-  ~PlanetContainer() override {
-    delete[] speeds;
-    delete[] health;
-    delete[] max_health;
-
-    delete[] planet_types;
-  }
+  // Destructor: DynamicArrays clean themselves up automatically!
+  ~PlanetContainer() override = default;
 
   uint32_t createEntity(float x, float y, int texture_id, uint8_t type) {
     uint32_t index = RenderableEntityContainer::createEntity();
@@ -435,31 +392,11 @@ protected:
     if (newCapacity <= capacity)
       return;
 
-    float *newSpeeds = new float[newCapacity];
-    float *newHealth = new float[newCapacity];
-    float *newMaxHealth = new float[newCapacity];
-    uint8_t *newTypes = new uint8_t[newCapacity];
-
-    if (count > 0) {
-      std::copy(speeds, speeds + count, newSpeeds);
-      std::copy(health, health + count, newHealth);
-      std::copy(max_health, max_health + count, newMaxHealth);
-      std::copy(planet_types, planet_types + count, newTypes);
-    }
-    std::fill(newSpeeds + count, newSpeeds + newCapacity, 50.0f);
-    std::fill(newHealth + count, newHealth + newCapacity, 100.0f);
-    std::fill(newMaxHealth + count, newMaxHealth + newCapacity, 100.0f);
-    std::fill(newTypes + count, newTypes + newCapacity, 0);
-
-    delete[] speeds;
-    delete[] health;
-    delete[] max_health;
-    delete[] planet_types;
-
-    speeds = newSpeeds;
-    health = newHealth;
-    max_health = newMaxHealth;
-    planet_types = newTypes;
+    // DynamicArray handles all the allocation, copying, and filling!
+    speeds.resize(newCapacity, count, 50.0f);
+    health.resize(newCapacity, count, 100.0f);
+    max_health.resize(newCapacity, count, 100.0f);
+    planet_types.resize(newCapacity, count, 0);
 
     RenderableEntityContainer::resizeArrays(newCapacity);
   }
