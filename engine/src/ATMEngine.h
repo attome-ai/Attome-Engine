@@ -24,7 +24,7 @@ class EntityContainer;
 
 #define WORLD_WIDTH 50000
 #define WORLD_HEIGHT 50000
-#define GRID_CELL_SIZE 32
+#define GRID_CELL_SIZE 64
 #define INV_GRID_CELL_SIZE (1.0f / GRID_CELL_SIZE)
 
 // Flags
