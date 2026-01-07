@@ -712,15 +712,14 @@ int main(int argc, char *argv[]) {
       engine_present(engine);
     }
   }
-}
 
-// Cleanup ImGui
-ImGui_ImplSDLRenderer3_Shutdown();
-ImGui_ImplSDL3_Shutdown();
-ImGui::DestroyContext();
+  // Cleanup ImGui
+  ImGui_ImplSDLRenderer3_Shutdown();
+  ImGui_ImplSDL3_Shutdown();
+  ImGui::DestroyContext();
 
-engine_destroy(engine);
-return 0;
+  engine_destroy(engine);
+  return 0;
 }
 
 // Function to load image

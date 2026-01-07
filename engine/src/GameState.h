@@ -2,7 +2,6 @@
 
 #include <SDL3/SDL.h>
 #include "ATMEngine.h"
-#include "ATMNetwork.h"
 #include "ATMProtocol.h"
 
 // Game state enum for UI flow
@@ -66,10 +65,7 @@ struct GameState {
     float fps_history[100];
     int fps_history_index;
 
-    // Authentication-related fields
-    UDPNode network;
-
-    SocketAddress serverAddr;
+   
     bool isConnected;
     uint16_t userId;
     char errorMessage[256];
