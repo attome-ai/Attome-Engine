@@ -1,59 +1,67 @@
 # CMake
 /build/
-/build_test/
+/build*/
 /out/
 /CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+!/cmake/*.cmake
+!CMakeLists.txt
+!/vcpkg.json
 
 # Visual Studio
 .vs/
 *.user
-*.userosscache
-*.sln.doccache
 *.suo
+*.ipch
+*.aps
+*.vcxproj.user
+*.opensdf
+*.sdf
+*.cachefile
+*.sty
+*.idb
+*.pdb
+
+# VS Code
+.vscode/
+
+# IntelliJ / CLion
+.idea/
+cmake-build-*/
+
+# Compilation
+*.obj
+*.exe
+*.dll
+*.lib
+*.a
+*.so
+*.dylib
+*.exp
+*.ilk
 
 # vcpkg
 vcpkg_installed/
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Logs and Temp
+*.log
+*.tlog
+*.tmp
+build_output*.txt
+build_log*.txt
+cmake_*.txt
+full_log.txt
+config_error.txt
+verify_output*.txt
+unused_files.txt
 
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# OS files
+# System
 .DS_Store
 Thumbs.db
 
-# Project specific
-/test_find.cmake
-/test_output.txt
-/config_output.txt
-/config_output_2.txt
-/config_output_utf8.txt
-/build_log.txt
-/build_log_ascii.txt
-/build_output.txt
+# Misc
+*.old
+*.bak

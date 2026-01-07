@@ -1,1415 +1,1209 @@
-
-#define SDL_MAIN_USE_CALLBACKS 1
-
-#include "ATMCommon.h"
+#include "ATMEngine/ATMEngine.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
-#include "SDL3_image/SDL_image.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <time.h>
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+#include <ctime>
+#include <deque>
+#include <execution>
+#include <iostream>
+#include <numeric>
+#include <vector>
 
-// ImGui includes
-#include "imgui.h"
-#include "imgui_impl_sdl3.h"
-#include "imgui_impl_sdlrenderer3.h"
-
-#ifdef __EMSCRIPTEN__
-#include <emscripten.h>
-#endif
-
-#include "ATMEngine.h"
-
-// SIMD detection macros
-#if defined(__EMSCRIPTEN__)
-    // Emscripten SIMD detection
-#if defined(__wasm_simd128__)
-#define HAS_WASM_SIMD 1
-#include <wasm_simd128.h>
-#else
-#define HAS_WASM_SIMD 0
-#endif
-#define HAS_SSE 0
-#elif defined(__SSE__) && !defined(__EMSCRIPTEN__)
-    // x86/x64 SSE detection
-#define HAS_SSE 1
-#include <xmmintrin.h> // SSE
-#if defined(__SSE2__)
-#include <emmintrin.h> // SSE2
-#endif
-#else
-#define HAS_SSE 0
-#endif
-
-// Configuration for window and world
+// --- Constants ---
 #define WINDOW_WIDTH 1600
 #define WINDOW_HEIGHT 1020
-#define WORLD_WIDTH 50000
-#define WORLD_HEIGHT 50000
+#define GRID_SIZE 32      // Size of each snake segment / food / enemy
+#define SNAKE_SPEED 15.0f // Segments per second (faster = responsive)
+#define NUM_FOODS 1000000 // Increased food count
+#define NUM_ENEMIES 5000  // Increased enemy count
+#define NUM_POWER_UPS 1000
+#define INITIAL_SNAKE_LENGTH 5
+#define NUM_FOOD_TYPES 10 // 10 different food types
 
-// Entity performance test configuration
-#define NUM_ENTITY_TYPES 10                // Total different entity types to create
-#define MIN_ENTITIES_PER_TYPE 10      // Minimum entities per type
-#define MAX_ENTITIES_PER_TYPE 10       // Maximum entities per type
-#define ENTITY_WIDTH 32                    // Width of entities
-#define ENTITY_HEIGHT 32                   // Height of entities
+// --- Game-specific entity types ---
+enum GameEntityTypes {
+  ENTITY_TYPE_SNAKE_HEAD = 0,
+  ENTITY_TYPE_SNAKE_BODY,
+  ENTITY_TYPE_FOOD,
+  ENTITY_TYPE_ENEMY,
+  ENTITY_TYPE_POWER_UP,
+  ENTITY_TYPE_COUNT
+};
 
-// Player configuration
-#define PLAYER_WIDTH 32
-#define PLAYER_HEIGHT 32
+// --- Snake Segment ---
+struct SnakeSegment {
+  float x, y;               // Logic position (grid-aligned)
+  float visual_x, visual_y; // Visual position (smooth)
+  uint32_t entity_index;
+};
 
-// Game state enum for UI flow
-typedef enum {
-    GAME_STATE_TITLE,
-    GAME_STATE_MENU,    // New menu state after login
-    GAME_STATE_PLAYING,
-    GAME_STATE_PAUSED,
-    GAME_STATE_GAME_OVER
-} GameStateEnum;
+// --- Direction enum ---
+enum Direction { UP = 0, DOWN, LEFT, RIGHT };
 
-// Generic entity data structure (used by all test entity types)
-typedef struct {
-    float speed;
-    float direction[2];   // Normalized direction vector
-    Uint8 color[3];       // RGB color values
-    int behavior_flags;   // Flags to control entity behavior
-} GenericEntityData;
+// --- Snake Head Container ---
+class SnakeHeadContainer : public RenderableEntityContainer {
+public:
+  Direction *directions;
+  float *speeds;
 
-// Player entity data structure (used only for player)
-typedef struct {
-    float speed;
-    int current_frame;
-    int texture_ids[3];
-    Uint64 animation_timer;
-    SDL_Scancode keys_pressed[4];
-} PlayerData;
+  SnakeHeadContainer(int typeId, uint8_t defaultLayer, int initialCapacity)
+      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity) {
+    directions = new Direction[capacity];
+    speeds = new float[capacity];
+    std::fill(directions, directions + capacity, RIGHT);
+    std::fill(speeds, speeds + capacity, SNAKE_SPEED);
+  }
 
-typedef struct {
-    Engine* engine;
-    int player_entity;
-    int player_type_id;   // Added to track player entity type ID
-    int score;
-    bool game_over;
-    Uint64 last_spawn_time;
+  ~SnakeHeadContainer() override {
+    delete[] directions;
+    delete[] speeds;
+  }
 
-    // Game state and UI
-    GameStateEnum current_state;
-    float player_health;
-    int max_health;
-    Uint64 game_time_start;
-    bool show_controls;
-    bool show_debug_info;
+  uint32_t createEntity() override {
+    uint32_t index = RenderableEntityContainer::createEntity();
+    if (index == INVALID_ID)
+      return INVALID_ID;
 
-    // Animation variables for UI
-    float title_animation;
-    float score_animation;
-    float health_animation;
-    float damage_flash;
+    directions[index] = RIGHT;
+    speeds[index] = SNAKE_SPEED;
+    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[index] = 100; // High z-index to render above all food
+    return index;
+  }
 
-    // Tracking for entity types and textures
-    int num_entity_types;               // Actual number of entity types created
-    int* entity_type_ids;               // Array of entity type IDs
-    int* entity_counts;                 // How many entities of each type
-    int* entity_texture_ids;            // Texture ID for each entity type
-    Uint64* entity_update_times;        // Performance tracking
+  uint32_t createEntity(float x, float y, int texture_id) {
+    uint32_t index = createEntity();
+    if (index == INVALID_ID)
+      return INVALID_ID;
 
-    // ImGui-related fields
-    float fps;                          // Current FPS value
-    float fps_history[100];             // Store FPS history for plotting
-    int fps_history_index;              // Current index in the FPS history array
+    x_positions[index] = x;
+    y_positions[index] = y;
+    widths[index] = GRID_SIZE;
+    heights[index] = GRID_SIZE;
+    texture_ids[index] = texture_id;
+    return index;
+  }
 
-
-    ClientNetworkManager* networkManager;
-    LoginUIManager* loginUI;
-    bool isNetworkInitialized;
-    bool showLoginUI;
-    char serverIpBuffer[64];
-    int serverPort;
-
-} GameState;
-
-// Forward declarations for new functions
-void renderMainMenu(GameState* state);
-void renderPauseMenu(GameState* state);
-void renderGameOverScreen(GameState* state);
-void renderUserInfoUI(GameState* state);
-void renderInGameMenuUI(GameState* state);
-
-void renderMainMenu(GameState* state) {
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
-    ImVec2 windowSize(500, 350);
-    ImGui::SetNextWindowPos(ImVec2(center.x - windowSize.x * 0.5f, center.y - windowSize.y * 0.5f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(windowSize, ImGuiCond_Always);
-
-    if (ImGui::Begin("Main Menu", nullptr,
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
-
-        // Title with user info
-        ImGui::SetCursorPosX((windowSize.x - ImGui::CalcTextSize("ATM GAME MENU").x) * 0.5f);
-        ImGui::Text("ATM GAME MENU");
-
-        ImGui::Separator();
-        ImGui::Text("Welcome, %s!", state->networkManager->getUsername().c_str());
-        ImGui::Text("User ID: %d", state->networkManager->getUserId());
-        ImGui::Separator();
-
-        // Game modes section
-        ImGui::SetCursorPosX((windowSize.x - ImGui::CalcTextSize("GAME MODES").x) * 0.5f);
-        ImGui::SetCursorPosY(130);
-        ImGui::Text("GAME MODES");
-
-        // Menu buttons - centered
-        const float buttonWidth = 200;
-        const float buttonHeight = 40;
-        const float buttonSpacing = 10;
-
-        ImGui::SetCursorPosX((windowSize.x - buttonWidth) * 0.5f);
-        ImGui::SetCursorPosY(160);
-        if (ImGui::Button("Start Game", ImVec2(buttonWidth, buttonHeight))) {
-            state->current_state = GAME_STATE_PLAYING;
-
-            // Initialize entities for new game
-            init_entities(state);
-
-            // Reset score and health
-            state->score = 0;
-            state->player_health = state->max_health;
-            state->game_over = false;
-        }
-
-        ImGui::SetCursorPosX((windowSize.x - buttonWidth) * 0.5f);
-        ImGui::SetCursorPosY(160 + buttonHeight + buttonSpacing);
-        if (ImGui::Button("Options", ImVec2(buttonWidth, buttonHeight))) {
-            // Options functionality could be added here
-        }
-
-        ImGui::SetCursorPosX((windowSize.x - buttonWidth) * 0.5f);
-        ImGui::SetCursorPosY(160 + (buttonHeight + buttonSpacing) * 2);
-        if (ImGui::Button("Logout", ImVec2(buttonWidth, buttonHeight))) {
-            // Logout and show login UI
-            state->networkManager->disconnect();
-            state->showLoginUI = true;
-            state->current_state = GAME_STATE_TITLE;
-        }
-
-        // Version info at bottom
-        ImGui::SetCursorPosY(windowSize.y - 25);
-        ImGui::SetCursorPosX(10);
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "ATM Game v1.0");
-
-        ImGui::End();
+  void removeEntity(size_t index) override {
+    if (index >= count)
+      return;
+    size_t last = count - 1;
+    if (index < last) {
+      directions[index] = directions[last];
+      speeds[index] = speeds[last];
     }
-}
-// User info UI that shows when logged in
-void renderUserInfoUI(GameState* state) {
-    // Show user info in top-right corner if logged in and in playing state
-    if (!state->showLoginUI && state->current_state == GAME_STATE_PLAYING) {
-        ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDecoration |
-            ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoFocusOnAppearing |
-            ImGuiWindowFlags_NoNav;
+    RenderableEntityContainer::removeEntity(index);
+  }
 
-        const float PAD = 10.0f;
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImVec2 workPos = viewport->WorkPos;
-        ImVec2 workSize = viewport->WorkSize;
-        ImVec2 windowPos = ImVec2(workPos.x + workSize.x - PAD, workPos.y + PAD);
-        ImVec2 windowPosPivot = ImVec2(1.0f, 0.0f);
-        ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always, windowPosPivot);
-
-        ImGui::SetNextWindowBgAlpha(0.7f);
-        if (ImGui::Begin("UserInfo", nullptr, windowFlags)) {
-            ImGui::Text("User: %s", state->networkManager->getUsername().c_str());
-            ImGui::Text("ID: %d", state->networkManager->getUserId());
-            ImGui::Separator();
-
-            if (ImGui::Button("Menu")) {
-                state->current_state = GAME_STATE_MENU;
-            }
-        }
-        ImGui::End();
+  void update(float delta_time) override {
+    for (int i = 0; i < count; ++i) {
+      flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
     }
-}
+  }
 
-// In-game menu UI
-void renderInGameMenuUI(GameState* state) {
-    // Only show when in playing state
-    if (!state->showLoginUI && state->current_state == GAME_STATE_PLAYING) {
-        ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDecoration |
-            ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoFocusOnAppearing |
-            ImGuiWindowFlags_NoNav;
+protected:
+  void resizeArrays(int newCapacity) override {
+    if (newCapacity <= capacity)
+      return;
 
-        const float PAD = 10.0f;
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImVec2 workPos = viewport->WorkPos;
-        ImVec2 windowPos = ImVec2(workPos.x + PAD, workPos.y + PAD);
-        ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
+    Direction *newDirections = new Direction[newCapacity];
+    float *newSpeeds = new float[newCapacity];
 
-        ImGui::SetNextWindowBgAlpha(0.7f);
-        if (ImGui::Begin("GameMenu", nullptr, windowFlags)) {
-            ImGui::Text("Score: %d", state->score);
-            ImGui::Text("Health: %d/%d", (int)state->player_health, state->max_health);
-
-            ImGui::Separator();
-
-            if (ImGui::Button("Pause (ESC)")) {
-                state->current_state = GAME_STATE_PAUSED;
-            }
-
-            if (state->show_debug_info) {
-                ImGui::Separator();
-                ImGui::Text("FPS: %.1f", state->fps);
-                ImGui::Text("Entities: %d", state->engine->entities.total_count);
-            }
-        }
-        ImGui::End();
+    if (count > 0) {
+      std::copy(directions, directions + count, newDirections);
+      std::copy(speeds, speeds + count, newSpeeds);
     }
-}
+    std::fill(newDirections + count, newDirections + newCapacity, RIGHT);
+    std::fill(newSpeeds + count, newSpeeds + newCapacity, SNAKE_SPEED);
 
-// Pause menu rendering
-void renderPauseMenu(GameState* state) {
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
-    ImVec2 windowSize(300, 230);
-    ImGui::SetNextWindowPos(ImVec2(center.x - windowSize.x * 0.5f, center.y - windowSize.y * 0.5f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(windowSize, ImGuiCond_Always);
+    delete[] directions;
+    delete[] speeds;
 
-    if (ImGui::Begin("Pause Menu", nullptr,
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+    directions = newDirections;
+    speeds = newSpeeds;
 
-        ImGui::SetCursorPosY(40);
-        ImGui::SetCursorPosX((windowSize.x - ImGui::CalcTextSize("GAME PAUSED").x) * 0.5f);
-        ImGui::Text("GAME PAUSED");
+    RenderableEntityContainer::resizeArrays(newCapacity);
+  }
+};
 
-        ImGui::SetCursorPosY(90);
-        ImGui::SetCursorPosX((windowSize.x - 120) * 0.5f);
-        if (ImGui::Button("Resume", ImVec2(120, 30))) {
-            state->current_state = GAME_STATE_PLAYING;
-        }
+// --- Snake Body Container ---
+class SnakeBodyContainer : public RenderableEntityContainer {
+public:
+  SnakeBodyContainer(int typeId, uint8_t defaultLayer, int initialCapacity)
+      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity) {}
 
-        ImGui::SetCursorPosY(130);
-        ImGui::SetCursorPosX((windowSize.x - 120) * 0.5f);
-        if (ImGui::Button("Main Menu", ImVec2(120, 30))) {
-            state->current_state = GAME_STATE_MENU;
-        }
+  uint32_t createEntity(float x, float y, int texture_id) {
+    uint32_t index = RenderableEntityContainer::createEntity();
+    if (index == INVALID_ID)
+      return INVALID_ID;
 
-        ImGui::SetCursorPosY(170);
-        ImGui::SetCursorPosX((windowSize.x - 120) * 0.5f);
-        if (ImGui::Button("Logout", ImVec2(120, 30))) {
-            // Logout and return to login screen
-            state->networkManager->disconnect();
-            state->showLoginUI = true;
-            state->current_state = GAME_STATE_TITLE;
-        }
+    x_positions[index] = x;
+    y_positions[index] = y;
+    widths[index] = GRID_SIZE;
+    heights[index] = GRID_SIZE;
+    texture_ids[index] = texture_id;
+    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[index] = 99; // High z-index to render above food
+    return index;
+  }
 
-        ImGui::End();
+  void update(float delta_time) override {
+    for (int i = 0; i < count; ++i) {
+      flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
     }
-}
+  }
+};
 
-// Game over screen rendering
-void renderGameOverScreen(GameState* state) {
-    ImGuiIO& io = ImGui::GetIO();
-    ImVec2 center = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
-    ImVec2 windowSize(300, 230);
-    ImGui::SetNextWindowPos(ImVec2(center.x - windowSize.x * 0.5f, center.y - windowSize.y * 0.5f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(windowSize, ImGuiCond_Always);
+// --- Food Container with 10 types ---
+class FoodContainer : public RenderableEntityContainer {
+public:
+  int *values;     // Points for eating
+  int *growth;     // Segments to add when eaten (1-10)
+  int *food_types; // Food type (0-9)
 
-    if (ImGui::Begin("Game Over", nullptr,
-        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+  FoodContainer(int typeId, uint8_t defaultLayer, int initialCapacity)
+      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity) {
+    values = new int[capacity];
+    growth = new int[capacity];
+    food_types = new int[capacity];
+    std::fill(values, values + capacity, 10);
+    std::fill(growth, growth + capacity, 1);
+    std::fill(food_types, food_types + capacity, 0);
+  }
 
-        ImGui::SetCursorPosY(40);
-        ImGui::SetCursorPosX((windowSize.x - ImGui::CalcTextSize("GAME OVER").x) * 0.5f);
-        ImGui::Text("GAME OVER");
+  ~FoodContainer() override {
+    delete[] values;
+    delete[] growth;
+    delete[] food_types;
+  }
 
-        ImGui::SetCursorPosY(70);
-        char scoreText[64];
-        snprintf(scoreText, sizeof(scoreText), "Score: %d", state->score);
-        ImGui::SetCursorPosX((windowSize.x - ImGui::CalcTextSize(scoreText).x) * 0.5f);
-        ImGui::Text("%s", scoreText);
+  uint32_t createEntity(float x, float y, int texture_id, int value, int grow,
+                        int type) {
+    uint32_t index = RenderableEntityContainer::createEntity();
+    if (index == INVALID_ID)
+      return INVALID_ID;
 
-        ImGui::SetCursorPosY(110);
-        ImGui::SetCursorPosX((windowSize.x - 120) * 0.5f);
-        if (ImGui::Button("Restart", ImVec2(120, 30))) {
-            // Reset game state
-            state->current_state = GAME_STATE_PLAYING;
-            state->game_over = false;
-            state->score = 0;
-            state->player_health = state->max_health;
+    x_positions[index] = x;
+    y_positions[index] = y;
+    widths[index] = GRID_SIZE;
+    heights[index] = GRID_SIZE;
+    texture_ids[index] = texture_id;
+    values[index] = value;
+    growth[index] = grow;
+    food_types[index] = type;
+    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[index] = 5;
+    return index;
+  }
 
-            // Reinitialize entities
-            init_entities(state);
-        }
-
-        ImGui::SetCursorPosY(150);
-        ImGui::SetCursorPosX((windowSize.x - 120) * 0.5f);
-        if (ImGui::Button("Main Menu", ImVec2(120, 30))) {
-            state->current_state = GAME_STATE_MENU;
-        }
-
-        ImGui::SetCursorPosY(190);
-        ImGui::SetCursorPosX((windowSize.x - 120) * 0.5f);
-        if (ImGui::Button("Logout", ImVec2(120, 30))) {
-            // Logout and return to login screen
-            state->networkManager->disconnect();
-            state->showLoginUI = true;
-            state->current_state = GAME_STATE_TITLE;
-        }
-
-        ImGui::End();
+  void removeEntity(size_t index) override {
+    if (index >= count)
+      return;
+    size_t last = count - 1;
+    if (index < last) {
+      values[index] = values[last];
+      growth[index] = growth[last];
+      food_types[index] = food_types[last];
     }
-}
+    RenderableEntityContainer::removeEntity(index);
+  }
 
-
-// Function declarations
-SDL_Surface* load_texture(const char* filename);
-SDL_Surface* create_colored_surface(int width, int height, Uint8 r, Uint8 g, Uint8 b);
-void init_entities(GameState* state);
-bool check_collision(Engine* engine, int entity1, int entity2);
-bool is_entity_in_view(Engine* engine, int entity_id, SDL_FRect* view_rect);
-
-// Entity update functions
-void player_entity_update(EntityChunk* chunk, int count, float delta_time);
-void generic_entity_update(EntityChunk* chunk, int count, float delta_time);
-
-// Function to load a texture from file
-SDL_Surface* load_texture(const char* filename) {
-    SDL_Surface* surface = IMG_Load(filename);
-    if (!surface) {
-        SDL_Log("Failed to load texture %s: %s", filename, SDL_GetError());
-        // Create a colored surface as fallback
-        surface = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
-        SDL_FillSurfaceRect(surface, NULL, SDL_MapRGBA(SDL_GetPixelFormatDetails(surface->format), 0, 0, 255, 0, 255));
+  void update(float delta_time) override {
+    for (int i = 0; i < count; ++i) {
+      flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
     }
-    return surface;
-}
+  }
 
-// Create a colored surface (fallback if textures fail to load)
-SDL_Surface* create_colored_surface(int width, int height, Uint8 r, Uint8 g, Uint8 b) {
-    SDL_Surface* surface = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32);
-    if (!surface) {
-        SDL_Log("Failed to create surface: %s", SDL_GetError());
-        return NULL;
+protected:
+  void resizeArrays(int newCapacity) override {
+    if (newCapacity <= capacity)
+      return;
+
+    int *newValues = new int[newCapacity];
+    int *newGrowth = new int[newCapacity];
+    int *newFoodTypes = new int[newCapacity];
+    if (count > 0) {
+      std::copy(values, values + count, newValues);
+      std::copy(growth, growth + count, newGrowth);
+      std::copy(food_types, food_types + count, newFoodTypes);
     }
-    SDL_FillSurfaceRect(surface, NULL, SDL_MapRGBA(SDL_GetPixelFormatDetails(surface->format), 0, r, g, b, 255));
-    return surface;
-}
+    std::fill(newValues + count, newValues + newCapacity, 10);
+    std::fill(newGrowth + count, newGrowth + newCapacity, 1);
+    std::fill(newFoodTypes + count, newFoodTypes + newCapacity, 0);
 
-// Add to your client app - User info UI that shows when logged in
-void renderUserInfoUI(GameState* state) {
-    // Show user info in top-right corner if logged in
-    if (!state->showLoginUI && state->networkManager->getAuthState() == AuthState::AUTHENTICATED) {
-        ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDecoration |
-            ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoFocusOnAppearing |
-            ImGuiWindowFlags_NoNav;
+    delete[] values;
+    delete[] growth;
+    delete[] food_types;
+    values = newValues;
+    growth = newGrowth;
+    food_types = newFoodTypes;
 
-        const float PAD = 10.0f;
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImVec2 workPos = viewport->WorkPos;
-        ImVec2 workSize = viewport->WorkSize;
-        ImVec2 windowPos = ImVec2(workPos.x + workSize.x - PAD, workPos.y + PAD);
-        ImVec2 windowPosPivot = ImVec2(1.0f, 0.0f);
-        ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always, windowPosPivot);
+    RenderableEntityContainer::resizeArrays(newCapacity);
+  }
+};
 
-        ImGui::SetNextWindowBgAlpha(0.7f);
-        if (ImGui::Begin("UserInfo", nullptr, windowFlags)) {
-            ImGui::Text("User: %s", state->networkManager->getUsername().c_str());
-            ImGui::Text("ID: %d", state->networkManager->getUserId());
-            ImGui::Separator();
+// --- Enemy Container ---
+class EnemyContainer : public RenderableEntityContainer {
+public:
+  float *speeds;
+  float *dir_x;
+  float *dir_y;
+  Engine *engine;
 
-            if (ImGui::Button("Logout")) {
-                // Logout and return to login screen
-                state->networkManager->disconnect();
-                state->showLoginUI = true;
-                state->current_state = GAME_STATE_TITLE;
-            }
-        }
-        ImGui::End();
+  EnemyContainer(Engine *engine, int typeId, uint8_t defaultLayer,
+                 int initialCapacity)
+      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity),
+        engine(engine) {
+    speeds = new float[capacity];
+    dir_x = new float[capacity];
+    dir_y = new float[capacity];
+    std::fill(speeds, speeds + capacity, 50.0f);
+    std::fill(dir_x, dir_x + capacity, 1.0f);
+    std::fill(dir_y, dir_y + capacity, 0.0f);
+  }
+
+  ~EnemyContainer() override {
+    delete[] speeds;
+    delete[] dir_x;
+    delete[] dir_y;
+  }
+
+  uint32_t createEntity(float x, float y, int texture_id, float speed = 50.0f) {
+    uint32_t index = RenderableEntityContainer::createEntity();
+    if (index == INVALID_ID)
+      return INVALID_ID;
+
+    x_positions[index] = x;
+    y_positions[index] = y;
+    widths[index] = GRID_SIZE;
+    heights[index] = GRID_SIZE;
+    texture_ids[index] = texture_id;
+    speeds[index] = speed;
+
+    // Random direction
+    float angle = static_cast<float>(rand()) / RAND_MAX * 2.0f * 3.14159265f;
+    dir_x[index] = cosf(angle);
+    dir_y[index] = sinf(angle);
+
+    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[index] = 6;
+    return index;
+  }
+
+  void removeEntity(size_t index) override {
+    if (index >= count)
+      return;
+    size_t last = count - 1;
+    if (index < last) {
+      speeds[index] = speeds[last];
+      dir_x[index] = dir_x[last];
+      dir_y[index] = dir_y[last];
     }
-}
+    RenderableEntityContainer::removeEntity(index);
+  }
 
-// Add to your client app - In-game menu UI
-void renderInGameMenuUI(GameState* state) {
-    // Only show when in playing state and logged in
-    if (!state->showLoginUI && state->current_state == GAME_STATE_PLAYING) {
-        ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoDecoration |
-            ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoSavedSettings |
-            ImGuiWindowFlags_NoFocusOnAppearing |
-            ImGuiWindowFlags_NoNav;
+  void update(float delta_time) override {
+    PROFILE_FUNCTION();
+    if (count == 0)
+      return;
+    delta_time = std::min(delta_time, 0.1f);
 
-        const float PAD = 10.0f;
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImVec2 workPos = viewport->WorkPos;
-        ImVec2 windowPos = ImVec2(workPos.x + PAD, workPos.y + PAD);
-        ImGui::SetNextWindowPos(windowPos, ImGuiCond_Always);
+    // Buffer for deferred grid updates
+    static std::vector<uint32_t> indices;
+    static std::vector<uint32_t> pending_moves;
+    static std::atomic<uint32_t> pending_count{0};
 
-        ImGui::SetNextWindowBgAlpha(0.7f);
-        if (ImGui::Begin("GameMenu", nullptr, windowFlags)) {
-            ImGui::Text("Score: %d", state->score);
-            ImGui::Text("Health: %d/%d", (int)state->player_health, state->max_health);
-
-            ImGui::Separator();
-
-            if (ImGui::Button("Pause (ESC)")) {
-                state->current_state = GAME_STATE_PAUSED;
-            }
-
-            if (state->show_debug_info) {
-                ImGui::Separator();
-                ImGui::Text("FPS: %.1f", state->fps);
-                ImGui::Text("Entities: %d", state->engine->entities.total_count);
-            }
-        }
-        ImGui::End();
+    if (indices.size() < (size_t)count) {
+      indices.resize(count);
+      std::iota(indices.begin(), indices.end(), 0);
     }
-}
-
-// Generic entity update function - processes an entire chunk of entities
-void generic_entity_update(EntityChunk* chunk, int count, float delta_time) {
-    // Skip empty chunks
-    if (count == 0) return;
-
-#if HAS_SSE
-    // SSE implementation for x86/x64
-    // Constants for vectorization
-    const __m128 zero = _mm_setzero_ps();
-    const __m128 world_width = _mm_set1_ps(WORLD_WIDTH);
-    const __m128 world_height = _mm_set1_ps(WORLD_HEIGHT);
-    const __m128 neg_one = _mm_set1_ps(-1.0f);
-    const __m128 point_nine = _mm_set1_ps(0.9f);
-    const __m128 point_one = _mm_set1_ps(0.1f);
-    const __m128 delta = _mm_set1_ps(delta_time);
-    const __m128 center_x = _mm_set1_ps(WORLD_WIDTH / 2);
-    const __m128 center_y = _mm_set1_ps(WORLD_HEIGHT / 2);
-
-    // Process entities in blocks of 4 (SSE width)
-    int i = 0;
-    for (; i + 3 < count; i += 4) {
-        // Load entity data for 4 entities
-        GenericEntityData* data0 = (GenericEntityData*)((uint8_t*)chunk->type_data + i * sizeof(GenericEntityData));
-        GenericEntityData* data1 = (GenericEntityData*)((uint8_t*)chunk->type_data + (i + 1) * sizeof(GenericEntityData));
-        GenericEntityData* data2 = (GenericEntityData*)((uint8_t*)chunk->type_data + (i + 2) * sizeof(GenericEntityData));
-        GenericEntityData* data3 = (GenericEntityData*)((uint8_t*)chunk->type_data + (i + 3) * sizeof(GenericEntityData));
-
-        // Load positions
-        __m128 x = _mm_set_ps(chunk->x[i + 3], chunk->x[i + 2], chunk->x[i + 1], chunk->x[i]);
-        __m128 y = _mm_set_ps(chunk->y[i + 3], chunk->y[i + 2], chunk->y[i + 1], chunk->y[i]);
-
-        // Load widths and heights
-        __m128 width = _mm_set_ps(chunk->width[i + 3], chunk->width[i + 2], chunk->width[i + 1], chunk->width[i]);
-        __m128 height = _mm_set_ps(chunk->height[i + 3], chunk->height[i + 2], chunk->height[i + 1], chunk->height[i]);
-
-        // Load directions and speeds
-        __m128 dir_x = _mm_set_ps(
-            data3->direction[0], data2->direction[0],
-            data1->direction[0], data0->direction[0]
-        );
-
-        __m128 dir_y = _mm_set_ps(
-            data3->direction[1], data2->direction[1],
-            data1->direction[1], data0->direction[1]
-        );
-
-        __m128 speed = _mm_set_ps(
-            data3->speed, data2->speed, data1->speed, data0->speed
-        );
-
-        // Calculate movement
-        __m128 speed_time = _mm_mul_ps(speed, delta);
-        __m128 dx = _mm_mul_ps(dir_x, speed_time);
-        __m128 dy = _mm_mul_ps(dir_y, speed_time);
-        __m128 new_x = _mm_add_ps(x, dx);
-        __m128 new_y = _mm_add_ps(y, dy);
-
-        // Calculate world boundaries
-        __m128 max_x = _mm_sub_ps(world_width, width);
-        __m128 max_y = _mm_sub_ps(world_height, height);
-
-        // Check for boundary collisions
-        __m128 x_min_cmp = _mm_cmplt_ps(new_x, zero);
-        __m128 x_max_cmp = _mm_cmpgt_ps(new_x, max_x);
-        __m128 y_min_cmp = _mm_cmplt_ps(new_y, zero);
-        __m128 y_max_cmp = _mm_cmpgt_ps(new_y, max_y);
-
-        // Combine collision masks
-        __m128 x_bounce = _mm_or_ps(x_min_cmp, x_max_cmp);
-        __m128 y_bounce = _mm_or_ps(y_min_cmp, y_max_cmp);
-
-        // Apply direction reflection where needed
-        __m128 dir_x_reflect = _mm_and_ps(x_bounce, neg_one);
-        __m128 dir_y_reflect = _mm_and_ps(y_bounce, neg_one);
-        __m128 dir_x_keep = _mm_andnot_ps(x_bounce, _mm_set1_ps(1.0f));
-        __m128 dir_y_keep = _mm_andnot_ps(y_bounce, _mm_set1_ps(1.0f));
-
-        __m128 dir_x_factor = _mm_or_ps(dir_x_reflect, dir_x_keep);
-        __m128 dir_y_factor = _mm_or_ps(dir_y_reflect, dir_y_keep);
-
-        dir_x = _mm_mul_ps(dir_x, dir_x_factor);
-        dir_y = _mm_mul_ps(dir_y, dir_y_factor);
-
-        // Clamp positions to world boundaries
-        new_x = _mm_max_ps(zero, new_x);
-        new_x = _mm_min_ps(max_x, new_x);
-        new_y = _mm_max_ps(zero, new_y);
-        new_y = _mm_min_ps(max_y, new_y);
-
-        // Calculate right/bottom values
-        __m128 right = _mm_add_ps(new_x, width);
-        __m128 bottom = _mm_add_ps(new_y, height);
-
-        // Process orbit behavior
-        __m128 behavior_mask = _mm_set_ps(
-            (data3->behavior_flags & 0x1) ? -1.0f : 0.0f,
-            (data2->behavior_flags & 0x1) ? -1.0f : 0.0f,
-            (data1->behavior_flags & 0x1) ? -1.0f : 0.0f,
-            (data0->behavior_flags & 0x1) ? -1.0f : 0.0f
-        );
-
-        // Only perform orbit calculations if at least one entity needs it
-        if (_mm_movemask_ps(behavior_mask)) {
-            // Calculate vector to center
-            __m128 dx_center = _mm_sub_ps(new_x, center_x);
-            __m128 dy_center = _mm_sub_ps(new_y, center_y);
-
-            // Distance calculation
-            __m128 dist_sq = _mm_add_ps(
-                _mm_mul_ps(dx_center, dx_center),
-                _mm_mul_ps(dy_center, dy_center)
-            );
-            __m128 dist = _mm_sqrt_ps(dist_sq);
-
-            // Avoid division by zero - create a safe denominator
-            __m128 valid_dist = _mm_cmpgt_ps(dist, _mm_set1_ps(0.001f));
-            __m128 safe_dist = _mm_or_ps(
-                _mm_and_ps(valid_dist, dist),
-                _mm_andnot_ps(valid_dist, _mm_set1_ps(1.0f))
-            );
-
-            // Perpendicular normalized vector components (-dy/dist, dx/dist)
-            __m128 nx = _mm_div_ps(_mm_mul_ps(dy_center, neg_one), safe_dist);
-            __m128 ny = _mm_div_ps(dx_center, safe_dist);
-
-            // Mix with current direction (0.9*current + 0.1*orbit)
-            __m128 new_dir_x = _mm_add_ps(
-                _mm_mul_ps(dir_x, point_nine),
-                _mm_mul_ps(nx, point_one)
-            );
-            __m128 new_dir_y = _mm_add_ps(
-                _mm_mul_ps(dir_y, point_nine),
-                _mm_mul_ps(ny, point_one)
-            );
-
-            // Apply only to entities with orbit behavior flag
-            dir_x = _mm_or_ps(
-                _mm_and_ps(behavior_mask, new_dir_x),
-                _mm_andnot_ps(behavior_mask, dir_x)
-            );
-            dir_y = _mm_or_ps(
-                _mm_and_ps(behavior_mask, new_dir_y),
-                _mm_andnot_ps(behavior_mask, dir_y)
-            );
-
-            // Normalize direction vector
-            __m128 len_sq = _mm_add_ps(
-                _mm_mul_ps(dir_x, dir_x),
-                _mm_mul_ps(dir_y, dir_y)
-            );
-            __m128 len = _mm_sqrt_ps(len_sq);
-            __m128 valid_len = _mm_cmpgt_ps(len, _mm_set1_ps(0.001f));
-            __m128 safe_len = _mm_or_ps(
-                _mm_and_ps(valid_len, len),
-                _mm_andnot_ps(valid_len, _mm_set1_ps(1.0f))
-            );
-            dir_x = _mm_div_ps(dir_x, safe_len);
-            dir_y = _mm_div_ps(dir_y, safe_len);
-        }
-
-        // Store results back to memory - only for active entities
-        float x_out[4], y_out[4], right_out[4], bottom_out[4], dir_x_out[4], dir_y_out[4];
-        _mm_storeu_ps(x_out, new_x);
-        _mm_storeu_ps(y_out, new_y);
-        _mm_storeu_ps(right_out, right);
-        _mm_storeu_ps(bottom_out, bottom);
-        _mm_storeu_ps(dir_x_out, dir_x);
-        _mm_storeu_ps(dir_y_out, dir_y);
-
-        // Only update active entities
-        chunk->x[i] = x_out[0];
-        chunk->y[i] = y_out[0];
-        chunk->right[i] = right_out[0];
-        chunk->bottom[i] = bottom_out[0];
-        data0->direction[0] = dir_x_out[0];
-        data0->direction[1] = dir_y_out[0];
-
-        chunk->x[i + 1] = x_out[1];
-        chunk->y[i + 1] = y_out[1];
-        chunk->right[i + 1] = right_out[1];
-        chunk->bottom[i + 1] = bottom_out[1];
-        data1->direction[0] = dir_x_out[1];
-        data1->direction[1] = dir_y_out[1];
-
-        chunk->x[i + 2] = x_out[2];
-        chunk->y[i + 2] = y_out[2];
-        chunk->right[i + 2] = right_out[2];
-        chunk->bottom[i + 2] = bottom_out[2];
-        data2->direction[0] = dir_x_out[2];
-        data2->direction[1] = dir_y_out[2];
-
-        chunk->x[i + 3] = x_out[3];
-        chunk->y[i + 3] = y_out[3];
-        chunk->right[i + 3] = right_out[3];
-        chunk->bottom[i + 3] = bottom_out[3];
-        data3->direction[0] = dir_x_out[3];
-        data3->direction[1] = dir_y_out[3];
+    if (pending_moves.size() < (size_t)count) {
+      pending_moves.resize(count);
     }
+    pending_count.store(0, std::memory_order_relaxed);
 
-#elif HAS_WASM_SIMD
-    // WebAssembly SIMD implementation
-    // Note: This would require implementation using WebAssembly SIMD intrinsics
-    // For now, we'll use the scalar fallback, but this section could be expanded
-    // to use WebAssembly SIMD in the future
-    int i = 0;
-#else
-    // No SIMD available, start with scalar code directly
-    int i = 0;
-#endif
+    // Parallel position update
+    std::for_each(std::execution::par, indices.begin(), indices.begin() + count,
+                  [&](uint32_t i) {
+                    float &px = x_positions[i];
+                    float &py = y_positions[i];
+                    float &dx = dir_x[i];
+                    float &dy = dir_y[i];
+                    const float speed = speeds[i] * delta_time;
 
+                    uint16_t oldCellX = cell_x[i];
+                    uint16_t oldCellY = cell_y[i];
 
-    // Process remaining entities using scalar code (either all entities if no SIMD, 
-    // or just the remainder if SIMD was used)
-    for (; i < count; i++) {
-        GenericEntityData* data = (GenericEntityData*)((uint8_t*)chunk->type_data + i * sizeof(GenericEntityData));
+                    px += dx * speed;
+                    py += dy * speed;
 
-        float new_x = chunk->x[i] + data->direction[0] * data->speed * delta_time;
-        float new_y = chunk->y[i] + data->direction[1] * data->speed * delta_time;
+                    // Boundary bounce
+                    if (px < 0) {
+                      px = 0;
+                      dx = -dx;
+                    } else if (px > WORLD_WIDTH - GRID_SIZE) {
+                      px = WORLD_WIDTH - GRID_SIZE;
+                      dx = -dx;
+                    }
 
-        bool bounce_x = false;
-        bool bounce_y = false;
+                    if (py < 0) {
+                      py = 0;
+                      dy = -dy;
+                    } else if (py > WORLD_HEIGHT - GRID_SIZE) {
+                      py = WORLD_HEIGHT - GRID_SIZE;
+                      dy = -dy;
+                    }
 
-        if (new_x < 0 || new_x > WORLD_WIDTH - chunk->width[i]) {
-            data->direction[0] *= -1;
-            bounce_x = true;
-        }
+                    uint16_t newCellX =
+                        static_cast<uint16_t>(px * INV_GRID_CELL_SIZE);
+                    uint16_t newCellY =
+                        static_cast<uint16_t>(py * INV_GRID_CELL_SIZE);
 
-        if (new_y < 0 || new_y > WORLD_HEIGHT - chunk->height[i]) {
-            data->direction[1] *= -1;
-            bounce_y = true;
-        }
+                    if (oldCellX != newCellX || oldCellY != newCellY) {
+                      uint32_t slot =
+                          pending_count.fetch_add(1, std::memory_order_relaxed);
+                      pending_moves[slot] = i;
+                      cell_x[i] = newCellX;
+                      cell_y[i] = newCellY;
+                    }
 
-        if (bounce_x) {
-            new_x = SDL_clamp(new_x, 0, WORLD_WIDTH - chunk->width[i]);
-        }
+                    flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+                  });
 
-        if (bounce_y) {
-            new_y = SDL_clamp(new_y, 0, WORLD_HEIGHT - chunk->height[i]);
-        }
-
-        chunk->x[i] = new_x;
-        chunk->y[i] = new_y;
-        chunk->right[i] = new_x + chunk->width[i];
-        chunk->bottom[i] = new_y + chunk->height[i];
-
-        if (data->behavior_flags & 0x1) {
-            float cx = WORLD_WIDTH / 2;
-            float cy = WORLD_HEIGHT / 2;
-            float dx = new_x - cx;
-            float dy = new_y - cy;
-            float dist = SDL_sqrtf(dx * dx + dy * dy);
-            if (dist > 0) {
-                float nx = -dy / dist;
-                float ny = dx / dist;
-                data->direction[0] = 0.9f * data->direction[0] + 0.1f * nx;
-                data->direction[1] = 0.9f * data->direction[1] + 0.1f * ny;
-                float len = SDL_sqrtf(data->direction[0] * data->direction[0] +
-                    data->direction[1] * data->direction[1]);
-                if (len > 0) {
-                    data->direction[0] /= len;
-                    data->direction[1] /= len;
-                }
-            }
-        }
+    // Serial grid update
+    uint32_t num_moves = pending_count.load(std::memory_order_relaxed);
+    for (uint32_t j = 0; j < num_moves; ++j) {
+      uint32_t i = pending_moves[j];
+      int32_t nodeIdx = grid_node_indices[i];
+      engine->grid.move(nodeIdx, x_positions[i], y_positions[i]);
     }
-}
+  }
 
-// Player entity update function - processes an entire chunk of player entities
-void player_entity_update(EntityChunk* chunk, int count, float delta_time) {
-    // Skip empty chunks
-    if (count == 0) return;
+protected:
+  void resizeArrays(int newCapacity) override {
+    if (newCapacity <= capacity)
+      return;
 
-    // Get current time once for all entities in the chunk
-    Uint64 current_time = SDL_GetTicks();
+    float *newSpeeds = new float[newCapacity];
+    float *newDirX = new float[newCapacity];
+    float *newDirY = new float[newCapacity];
 
-    // Process all player entities in the chunk
-    for (int i = 0; i < count; i++) {
-
-        // Get type-specific data for this entity
-        PlayerData* data = (PlayerData*)((uint8_t*)chunk->type_data + i * sizeof(PlayerData));
-
-        // Update animation
-        if (current_time - data->animation_timer > 200) {
-            data->current_frame = (data->current_frame + 1) % 3;
-            chunk->texture_id[i] = data->texture_ids[data->current_frame];
-            data->animation_timer = current_time;
-        }
-
-        // Process movement based on key presses
-        float move_x = 0.0f;
-        float move_y = 0.0f;
-
-        if (data->keys_pressed[0])
-            move_y -= 1.0f; // W - up
-        if (data->keys_pressed[1])
-            move_x -= 1.0f; // A - left
-        if (data->keys_pressed[2])
-            move_y += 1.0f; // S - down
-        if (data->keys_pressed[3])
-            move_x += 1.0f; // D - right
-
-        // Normalize diagonal movement
-        if (move_x != 0.0f && move_y != 0.0f) {
-            float length = SDL_sqrtf(move_x * move_x + move_y * move_y);
-            move_x /= length;
-            move_y /= length;
-        }
-
-        // Apply movement
-        float new_x = chunk->x[i] + move_x * data->speed * delta_time;
-        float new_y = chunk->y[i] + move_y * data->speed * delta_time;
-
-        // Clamp to world bounds
-        new_x = SDL_clamp(new_x, 0, WORLD_WIDTH - chunk->width[i]);
-        new_y = SDL_clamp(new_y, 0, WORLD_HEIGHT - chunk->height[i]);
-
-        // Update position
-        chunk->x[i] = new_x;
-        chunk->y[i] = new_y;
-
-        // Update precomputed right/bottom values
-        chunk->right[i] = new_x + chunk->width[i];
-        chunk->bottom[i] = new_y + chunk->height[i];
+    if (count > 0) {
+      std::copy(speeds, speeds + count, newSpeeds);
+      std::copy(dir_x, dir_x + count, newDirX);
+      std::copy(dir_y, dir_y + count, newDirY);
     }
-}
+    std::fill(newSpeeds + count, newSpeeds + newCapacity, 50.0f);
+    std::fill(newDirX + count, newDirX + newCapacity, 1.0f);
+    std::fill(newDirY + count, newDirY + newCapacity, 0.0f);
 
-// Initialize entities with random positions, speeds, and directions
-void init_entities(GameState* state) {
-    Engine* engine = state->engine;
+    delete[] speeds;
+    delete[] dir_x;
+    delete[] dir_y;
 
-    SDL_Log("Creating entities for %d types...", state->num_entity_types);
+    speeds = newSpeeds;
+    dir_x = newDirX;
+    dir_y = newDirY;
 
-    // Loop through each entity type
-    for (int type_idx = 0; type_idx < state->num_entity_types; type_idx++) {
-        int entity_type_id = state->entity_type_ids[type_idx];
-        int entity_count = state->entity_counts[type_idx];
-        int texture_id = state->entity_texture_ids[type_idx];
+    RenderableEntityContainer::resizeArrays(newCapacity);
+  }
+};
 
-        SDL_Log("Creating %d entities of type %d with texture %d",
-            entity_count, entity_type_id, texture_id);
+// --- Power-Up Container ---
+class PowerUpContainer : public RenderableEntityContainer {
+public:
+  int *types; // 0=speed boost, 1=invincibility, 2=score multiplier
 
-        // Create entities of this type
-        for (int i = 0; i < entity_count; i++) {
-            // Random position within world bounds
-            float x = (float)(rand() % (WORLD_WIDTH - ENTITY_WIDTH));
-            float y = (float)(rand() % (WORLD_HEIGHT - ENTITY_HEIGHT));
+  PowerUpContainer(int typeId, uint8_t defaultLayer, int initialCapacity)
+      : RenderableEntityContainer(typeId, defaultLayer, initialCapacity) {
+    types = new int[capacity];
+    std::fill(types, types + capacity, 0);
+  }
 
-            // Place entities away from player's starting position
-            if (x > WINDOW_WIDTH / 2 - 200 && x < WINDOW_WIDTH / 2 + 200) {
-                x += 250;
-            }
-            if (y > WINDOW_HEIGHT / 2 - 200 && y < WINDOW_HEIGHT / 2 + 200) {
-                y += 250;
-            }
+  ~PowerUpContainer() override { delete[] types; }
 
-            // Create entity with specific entity type
-            int entity_id = engine_add_entity_with_type(engine, entity_type_id,
-                x, y, ENTITY_WIDTH, ENTITY_HEIGHT, texture_id, 1, entity_type_id);
+  uint32_t createEntity(float x, float y, int texture_id, int type = 0) {
+    uint32_t index = RenderableEntityContainer::createEntity();
+    if (index == INVALID_ID)
+      return INVALID_ID;
 
-            // Get the type-specific data and initialize it
-            GenericEntityData* data = (GenericEntityData*)engine_get_entity_type_data(engine, entity_id);
-            if (data) {
-                // Random movement speed
-                data->speed = 30.0f + (rand() % 150) + ((float)type_idx * 5.0f);
+    x_positions[index] = x;
+    y_positions[index] = y;
+    widths[index] = GRID_SIZE;
+    heights[index] = GRID_SIZE;
+    texture_ids[index] = texture_id;
+    types[index] = type;
+    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[index] = 4;
+    return index;
+  }
 
-                // Normalized direction vector
-                float dir_x = (float)((rand() % 200) - 100) / 100.0f;
-                float dir_y = (float)((rand() % 200) - 100) / 100.0f;
-
-                // Normalize
-                float length = SDL_sqrtf(dir_x * dir_x + dir_y * dir_y);
-                if (length > 0) {
-                    dir_x /= length;
-                    dir_y /= length;
-                }
-                else {
-                    dir_x = 1.0f;
-                    dir_y = 0.0f;
-                }
-
-                data->direction[0] = dir_x;
-                data->direction[1] = dir_y;
-
-                // Store the color (matches texture color)
-                data->color[0] = (type_idx * 25) % 255;
-                data->color[1] = (type_idx * 40) % 255;
-                data->color[2] = (type_idx * 60) % 255;
-
-                // Set behavior flags (every third type gets orbit behavior)
-                data->behavior_flags = (type_idx % 3 == 0) ? 0x1 : 0x0;
-            }
-        }
+  void removeEntity(size_t index) override {
+    if (index >= count)
+      return;
+    size_t last = count - 1;
+    if (index < last) {
+      types[index] = types[last];
     }
+    RenderableEntityContainer::removeEntity(index);
+  }
 
-    SDL_Log("All entities created successfully");
-}
-
-// Check if entity is in view rect - used for culling
-bool is_entity_in_view(Engine* engine, int entity_id, SDL_FRect* view_rect) {
-    EntityManager* em = &engine->entities;
-
-    int chunk_idx, local_idx;
-    em->getChunkIndices(entity_id, &chunk_idx, &local_idx);
-
-    float x = em->chunks[chunk_idx]->x[local_idx];
-    float y = em->chunks[chunk_idx]->y[local_idx];
-    float right = em->chunks[chunk_idx]->right[local_idx];
-    float bottom = em->chunks[chunk_idx]->bottom[local_idx];
-
-    return !(right < view_rect->x || x > view_rect->x + view_rect->w ||
-        bottom < view_rect->y || y > view_rect->y + view_rect->h);
-}
-
-// Check if two entities are colliding using spatial grid optimization
-bool check_collision(Engine* engine, int entity1, int entity2) {
-    EntityManager* em = &engine->entities;
-
-    // Get chunk and local indices for both entities
-    int chunk_idx1, local_idx1, chunk_idx2, local_idx2;
-    em->getChunkIndices(entity1, &chunk_idx1, &local_idx1);
-    em->getChunkIndices(entity2, &chunk_idx2, &local_idx2);
-
-    // Get entity coordinates
-    float x1 = em->chunks[chunk_idx1]->x[local_idx1];
-    float y1 = em->chunks[chunk_idx1]->y[local_idx1];
-    float r1 = em->chunks[chunk_idx1]->right[local_idx1];
-    float b1 = em->chunks[chunk_idx1]->bottom[local_idx1];
-
-    float x2 = em->chunks[chunk_idx2]->x[local_idx2];
-    float y2 = em->chunks[chunk_idx2]->y[local_idx2];
-    float r2 = em->chunks[chunk_idx2]->right[local_idx2];
-    float b2 = em->chunks[chunk_idx2]->bottom[local_idx2];
-
-    // AABB collision check
-    return !(r1 <= x2 || r2 <= x1 || b1 <= y2 || b2 <= y1);
-}
-
-SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
-    // Initialize SDL
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        SDL_Log("Could not initialize SDL: %s", SDL_GetError());
-        return SDL_APP_FAILURE;
+  void update(float delta_time) override {
+    for (int i = 0; i < count; ++i) {
+      flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
     }
+  }
 
-    // Seed random number generator
-    srand((unsigned int)time(NULL));
+protected:
+  void resizeArrays(int newCapacity) override {
+    if (newCapacity <= capacity)
+      return;
 
-    // Create game state
-    GameState* state = (GameState*)SDL_malloc(sizeof(GameState));
-    if (!state) {
-        SDL_Log("Failed to allocate game state");
-        SDL_Quit();
-        return SDL_APP_FAILURE;
+    int *newTypes = new int[newCapacity];
+    if (count > 0) {
+      std::copy(types, types + count, newTypes);
     }
-
-    // Zero-initialize
-    memset(state, 0, sizeof(GameState));
-
-    // Initialize ImGui-related fields in game state
-    state->fps = 0.0f;
-    state->fps_history_index = 0;
-    for (int i = 0; i < 100; i++) {
-        state->fps_history[i] = 0.0f;
-    }
-
-    // Initialize game state variables - start with login UI showing
-    state->current_state = GAME_STATE_TITLE;
-    state->max_health = 100;
-    state->player_health = state->max_health;
-    state->show_controls = false;
-    state->show_debug_info = false;
-    state->title_animation = 0.0f;
-    state->score_animation = 0.0f;
-    state->health_animation = (float)state->max_health;
-    state->damage_flash = 0.0f;
-
-    // Initialize network and login components - show login UI by default
-    state->networkManager = new ClientNetworkManager();
-    state->loginUI = new LoginUIManager(state->networkManager);
-    state->isNetworkInitialized = false;
-    state->showLoginUI = true;
-
-    // Set default server info
-    strncpy(state->serverIpBuffer, "127.0.0.1", sizeof(state->serverIpBuffer) - 1);
-    state->serverPort = 7777;
-
-    // Initialize game engine with spatial grid cell size parameter
-    state->engine = engine_create(WINDOW_WIDTH, WINDOW_HEIGHT, WORLD_WIDTH, WORLD_HEIGHT, GRID_CELL_SIZE);
-    if (!state->engine) {
-        SDL_Log("Failed to create engine");
-        delete state->loginUI;
-        delete state->networkManager;
-        SDL_free(state);
-        SDL_Quit();
-        return SDL_APP_FAILURE;
-    }
-
-    SDL_Log("engine created successfully");
-    // Get window and renderer from engine (already created in engine_create)
-    SDL_Window* window = state->engine->window;
-    SDL_Renderer* renderer = state->engine->renderer;
-
-    // Initialize ImGui
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
-    io.ConfigFlags |= ImGuiConfigFlags_IsSRGB;      // Enable Docking
-
-    // Set up custom ImGui game style
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-
-    // More game-like rounded corners
-    style.WindowRounding = 8.0f;
-    style.FrameRounding = 4.0f;
-    style.PopupRounding = 4.0f;
-    style.ScrollbarRounding = 6.0f;
-    style.GrabRounding = 4.0f;
-    style.TabRounding = 4.0f;
-
-    // Slightly larger padding for better touch/click targets
-    style.WindowPadding = ImVec2(10, 10);
-    style.FramePadding = ImVec2(6, 4);
-    style.ItemSpacing = ImVec2(8, 6);
-
-    // Thicker borders for visibility
-    style.WindowBorderSize = 1.0f;
-    style.FrameBorderSize = 1.0f;
-
-    // Adjust colors for a game UI feel with blue accent color
-    ImVec4* colors = style.Colors;
-    colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.12f, 0.95f);
-    colors[ImGuiCol_Header] = ImVec4(0.20f, 0.25f, 0.58f, 0.55f);
-    colors[ImGuiCol_HeaderHovered] = ImVec4(0.26f, 0.33f, 0.75f, 0.80f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.24f, 0.31f, 0.70f, 1.00f);
-    colors[ImGuiCol_Button] = ImVec4(0.20f, 0.25f, 0.58f, 0.55f);
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.26f, 0.33f, 0.75f, 0.80f);
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.24f, 0.31f, 0.70f, 1.00f);
-    colors[ImGuiCol_TitleBg] = ImVec4(0.13f, 0.14f, 0.30f, 1.00f);
-    colors[ImGuiCol_TitleBgActive] = ImVec4(0.17f, 0.19f, 0.40f, 1.00f);
-    colors[ImGuiCol_PlotLines] = ImVec4(0.30f, 0.65f, 0.95f, 1.00f);
-    colors[ImGuiCol_Text] = ImVec4(0.90f, 0.90f, 0.90f, 1.00f);
-    colors[ImGuiCol_Border] = ImVec4(0.30f, 0.30f, 0.50f, 0.60f);
-
-    // Setup Platform/Renderer backends using the engine's window and renderer
-    ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
-    ImGui_ImplSDLRenderer3_Init(renderer);
-
-    // Engine already has renderer and window set up in engine_create
-
-    // Register player entity type with the engine and store the ID
-    state->player_type_id = engine_register_entity_type(state->engine, player_entity_update, sizeof(PlayerData));
-    SDL_Log("Registered player entity type with ID: %d", state->player_type_id);
-
-    // Determine actual number of entity types to create based on configuration 
-    // (limited by NUM_ENTITY_TYPES)
-    state->num_entity_types = NUM_ENTITY_TYPES;
-
-    // Allocate arrays for entity type tracking
-    state->entity_type_ids = (int*)SDL_malloc(state->num_entity_types * sizeof(int));
-    state->entity_counts = (int*)SDL_malloc(state->num_entity_types * sizeof(int));
-    state->entity_texture_ids = (int*)SDL_malloc(state->num_entity_types * sizeof(int));
-    state->entity_update_times = (Uint64*)SDL_malloc(state->num_entity_types * sizeof(Uint64));
-
-    if (!state->entity_type_ids || !state->entity_counts ||
-        !state->entity_texture_ids || !state->entity_update_times) {
-        SDL_Log("Failed to allocate memory for entity tracking");
-        // Free any successfully allocated memory
-        if (state->entity_type_ids) SDL_free(state->entity_type_ids);
-        if (state->entity_counts) SDL_free(state->entity_counts);
-        if (state->entity_texture_ids) SDL_free(state->entity_texture_ids);
-        if (state->entity_update_times) SDL_free(state->entity_update_times);
-        delete state->loginUI;
-        delete state->networkManager;
-        engine_destroy(state->engine);
-        SDL_free(state);
-        ImGui_ImplSDLRenderer3_Shutdown();
-        ImGui_ImplSDL3_Shutdown();
-        ImGui::DestroyContext();
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return SDL_APP_FAILURE;
-    }
-
-    // Create player textures
-    SDL_Surface* player_surface1 = create_colored_surface(PLAYER_WIDTH, PLAYER_HEIGHT, 0, 0, 255);
-    SDL_Surface* player_surface2 = create_colored_surface(PLAYER_WIDTH, PLAYER_HEIGHT, 0, 100, 255);
-    SDL_Surface* player_surface3 = create_colored_surface(PLAYER_WIDTH, PLAYER_HEIGHT, 100, 100, 255);
-
-    // Add player textures to engine
-    int player_texture1 = engine_add_texture(state->engine, player_surface1, 0, 0);
-    int player_texture2 = engine_add_texture(state->engine, player_surface2, 0, 0);
-    int player_texture3 = engine_add_texture(state->engine, player_surface3, 0, 0);
-
-    // Clean up player surfaces
-    SDL_DestroySurface(player_surface1);
-    SDL_DestroySurface(player_surface2);
-    SDL_DestroySurface(player_surface3);
-
-    // Create player entity using the stored player type ID
-    state->player_entity = engine_add_entity_with_type(state->engine,
-        state->player_type_id,  // Use the explicitly stored player type ID
-        WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2,
-        PLAYER_WIDTH, PLAYER_HEIGHT,
-        player_texture1, 2, 100); // Layer 2 (above other entities)
-
-    // Initialize player data
-    PlayerData* player_data = (PlayerData*)engine_get_entity_type_data(state->engine, state->player_entity);
-    if (player_data) {
-        player_data->speed = 200.0f;
-        player_data->current_frame = 0;
-        player_data->animation_timer = SDL_GetTicks();
-        player_data->texture_ids[0] = player_texture1;
-        player_data->texture_ids[1] = player_texture2;
-        player_data->texture_ids[2] = player_texture3;
-
-        // Clear key tracking
-        for (int i = 0; i < 4; i++) {
-            player_data->keys_pressed[i] = SDL_SCANCODE_UNKNOWN;
-        }
-    }
-
-    // Create textures and register entity types for each test entity type
-    for (int i = 0; i < state->num_entity_types; i++) {
-        // Register this entity type with the engine
-        state->entity_type_ids[i] = engine_register_entity_type(state->engine, generic_entity_update, sizeof(GenericEntityData));
-        SDL_Log("Registered entity type %d with ID: %d", i, state->entity_type_ids[i]);
-
-        // Generate unique color for this entity type - ensure enough contrast
-        Uint8 r = 50 + (i * 25) % 205;  // Adjusted to avoid too dark colors
-        Uint8 g = 50 + (i * 40) % 205;
-        Uint8 b = 50 + (i * 60) % 205;
-
-        // Create surface with this color
-        SDL_Surface* entity_surface = create_colored_surface(ENTITY_WIDTH, ENTITY_HEIGHT, r, g, b);
-
-        int atlas_columns = 16;  // Adjust based on your atlas size
-        int x_pos = (i % atlas_columns) * ENTITY_WIDTH;
-        int y_pos = (i / atlas_columns) * ENTITY_HEIGHT;
-
-        // Add the texture to the engine with unique position
-        int texture_id = engine_add_texture(state->engine, entity_surface, x_pos, y_pos);
-        state->entity_texture_ids[i] = texture_id;
-        SDL_Log("Created texture ID %d for entity type %d", texture_id, i);
-
-        // Clean up surface
-        SDL_DestroySurface(entity_surface);
-
-        int count = MIN_ENTITIES_PER_TYPE;
-        if (MAX_ENTITIES_PER_TYPE > MIN_ENTITIES_PER_TYPE) {
-            count += rand() % (MAX_ENTITIES_PER_TYPE - MIN_ENTITIES_PER_TYPE);
-        }
-        state->entity_counts[i] = count;
-
-        // Initialize update time tracking
-        state->entity_update_times[i] = 0;
-    }
-
-    // Initialize login UI
-    state->loginUI->initialize();
-
-    // Init game state - don't initialize entities yet
-    state->score = 0;
-    state->game_over = false;
-    state->last_spawn_time = SDL_GetTicks();
-
-    // Set camera to follow player
-    engine_set_camera_position(state->engine, WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2);
-
-    // Initialize last_frame_time to current time
-    state->engine->last_frame_time = SDL_GetTicks();
-
-    *appstate = state;
-
-    return SDL_APP_CONTINUE;
-}
-
-SDL_AppResult SDL_AppIterate(void* appstate) {
-    GameState* state = (GameState*)appstate;
-    Engine* engine = state->engine;
-
-    // Get time delta
-    Uint64 current_time = SDL_GetTicks();
-    Uint64 delta_time_ms = current_time - engine->last_frame_time;
-    float delta_time = delta_time_ms / 1000.0f;
-
-    // Calculate FPS (using a rolling average for stability)
-    static Uint64 fps_last_time = 0;
-    static int fps_frames = 0;
-    static Uint64 performance_report_timer = 0;
-
-    fps_frames++;
-
-    if (current_time - fps_last_time >= 1000) {
-        state->fps = fps_frames * 1000.0f / (current_time - fps_last_time);
-
-        // Update FPS history for plotting
-        state->fps_history[state->fps_history_index] = state->fps;
-        state->fps_history_index = (state->fps_history_index + 1) % 100;
-
-        SDL_Log("FPS: %.2f, Active entities: %d", state->fps, engine->entities.total_count);
-        fps_last_time = current_time;
-        fps_frames = 0;
-    }
-
-    // Start the Dear ImGui frame
-    ImGui_ImplSDLRenderer3_NewFrame();
-    ImGui_ImplSDL3_NewFrame();
-    ImGui::NewFrame();
-
-    // Handle login and network system - ALWAYS process this first
-    // Initialize network on first frame if needed
-    if (!state->isNetworkInitialized) {
-        state->networkManager->setServerInfo(state->serverIpBuffer, state->serverPort);
-        state->isNetworkInitialized = true;
-    }
-
-    // Update network state regardless of login status
-    state->networkManager->update();
-
-    // If showLoginUI is true, we're not logged in, so render login UI
-    if (state->showLoginUI) {
-        // Render login UI
-        state->loginUI->renderLoginUI();
-
-        // Check for successful login
-        if (state->loginUI->isLoggedIn()) {
-            state->showLoginUI = false;
-
-            // Go to menu after login
-            state->current_state = GAME_STATE_MENU;
-
-            // Show welcome message
-            std::string welcomeMsg = "Welcome, " + state->networkManager->getUsername() + "!";
-            SDL_Log("%s", welcomeMsg.c_str());
-        }
-    }
-    // Process game states only if not showing login UI (i.e., logged in)
-    else {
-        switch (state->current_state) {
-        case GAME_STATE_MENU:
-            // Render main menu after login
-            renderMainMenu(state);
-            break;
-
-        case GAME_STATE_PLAYING:
-            // Get player position for camera update
-            int chunk_idx, local_idx;
-            engine->entities.getChunkIndices(state->player_entity, &chunk_idx, &local_idx);
-
-            if (chunk_idx < engine->entities.chunk_count) {
-                EntityChunk* chunk = engine->entities.chunks[chunk_idx];
-
-                if (local_idx < chunk->count) {
-                    float player_x = chunk->x[local_idx];
-                    float player_y = chunk->y[local_idx];
-
-                    // Update camera to follow player
-                    engine_set_camera_position(engine, player_x + PLAYER_WIDTH / 2, player_y + PLAYER_HEIGHT / 2);
-                }
-            }
-
-            // Update all entities
-            engine_update(engine);
-
-            // Increment score while playing
-            state->score += 1;
-
-            // Randomly reduce health occasionally for testing health bar
-            if (rand() % 300 == 0) {
-                state->player_health -= 5;
-                state->damage_flash = 1.0f; // Set damage flash effect
-
-                if (state->player_health <= 0) {
-                    state->player_health = 0;
-                    state->current_state = GAME_STATE_GAME_OVER;
-                }
-            }
-
-            // Render in-game UI
-            renderInGameMenuUI(state);
-            renderUserInfoUI(state);
-            break;
-
-        case GAME_STATE_PAUSED:
-            // Render pause menu
-            renderPauseMenu(state);
-            break;
-
-        case GAME_STATE_GAME_OVER:
-            // Render game over screen
-            renderGameOverScreen(state);
-            break;
-
-        case GAME_STATE_TITLE:
-            // When in title state and logged in, go to menu
-            state->current_state = GAME_STATE_MENU;
-            break;
-        }
-    }
-
-    // Render updated scene
-    engine_render(engine);
-
-    // Render ImGui
-    ImGui::Render();
-    ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), engine->renderer);
-
-    // Present the rendered frame
-    SDL_RenderPresent(engine->renderer);
-
-    // Update last frame time for proper delta time calculation
-    engine->last_frame_time = current_time;
-
-    return SDL_APP_CONTINUE;
-}
-
-SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
-    GameState* state = (GameState*)appstate;
-
-    // Process ImGui events
-    ImGui_ImplSDL3_ProcessEvent(event);
-
-    // If ImGui is capturing mouse/keyboard, don't process game events
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse || io.WantCaptureKeyboard)
-        return SDL_APP_CONTINUE;
-
-    switch (event->type) {
-    case SDL_EVENT_KEY_DOWN:
-    {
-        // Toggle debug info with F1
-        if (event->key.scancode == SDL_SCANCODE_F1) {
-            state->show_debug_info = !state->show_debug_info;
-        }
-
-        // Handle ESC key for pausing/returning to title
-        if (event->key.scancode == SDL_SCANCODE_ESCAPE) {
-            if (state->current_state == GAME_STATE_PLAYING) {
-                state->current_state = GAME_STATE_PAUSED;
-            }
-            else if (state->current_state == GAME_STATE_PAUSED) {
-                state->current_state = GAME_STATE_PLAYING;
-            }
-        }
-
-        // L key for logout/login screen
-        if (event->key.scancode == SDL_SCANCODE_L && (SDL_GetModState() & SDL_KMOD_CTRL)) {
-            if (!state->showLoginUI) {
-                // Logout
-                state->networkManager->disconnect();
-                state->showLoginUI = true;
-                state->current_state = GAME_STATE_TITLE;
-            }
-        }
-
-        // Restart on 'R' press when game over
-        if (state->current_state == GAME_STATE_GAME_OVER && event->key.scancode == SDL_SCANCODE_R) {
-            state->current_state = GAME_STATE_PLAYING;
-            state->game_over = false;
-            state->score = 0;
-            state->player_health = state->max_health;
-
-            // Reinitialize entities
-            init_entities(state);
-        }
-
-        // Update key state in player data (only when playing)
-        if (!state->showLoginUI && state->current_state == GAME_STATE_PLAYING) {
-            PlayerData* player_data = (PlayerData*)engine_get_entity_type_data(state->engine, state->player_entity);
-            if (player_data) {
-                if (event->key.scancode == SDL_SCANCODE_W) player_data->keys_pressed[0] = SDL_SCANCODE_W;
-                if (event->key.scancode == SDL_SCANCODE_A) player_data->keys_pressed[1] = SDL_SCANCODE_A;
-                if (event->key.scancode == SDL_SCANCODE_S) player_data->keys_pressed[2] = SDL_SCANCODE_S;
-                if (event->key.scancode == SDL_SCANCODE_D) player_data->keys_pressed[3] = SDL_SCANCODE_D;
-            }
-        }
-        break;
-    }
-    case SDL_EVENT_KEY_UP:
-    {
-        // Update key state in player data
-        if (!state->showLoginUI) {
-            PlayerData* player_data = (PlayerData*)engine_get_entity_type_data(state->engine, state->player_entity);
-            if (player_data) {
-                if (event->key.scancode == SDL_SCANCODE_W) player_data->keys_pressed[0] = SDL_SCANCODE_UNKNOWN;
-                if (event->key.scancode == SDL_SCANCODE_A) player_data->keys_pressed[1] = SDL_SCANCODE_UNKNOWN;
-                if (event->key.scancode == SDL_SCANCODE_S) player_data->keys_pressed[2] = SDL_SCANCODE_UNKNOWN;
-                if (event->key.scancode == SDL_SCANCODE_D) player_data->keys_pressed[3] = SDL_SCANCODE_UNKNOWN;
-            }
-        }
-        break;
-    }
-    case SDL_EVENT_QUIT:
-        return SDL_APP_FAILURE;
-    }
-
-    return SDL_APP_CONTINUE;
-}
-
-void SDL_AppQuit(void* appstate, SDL_AppResult result) {
-    GameState* state = (GameState*)appstate;
-
-    if (state) {
-        // Clean up network resources first
-        if (state->loginUI) {
-            delete state->loginUI;
-            state->loginUI = nullptr;
-        }
-
-        if (state->networkManager) {
-            state->networkManager->shutdown();
-            delete state->networkManager;
-            state->networkManager = nullptr;
-        }
-
-        // Clean up ImGui before engine destroys renderer and window
-        ImGui_ImplSDLRenderer3_Shutdown();
-        ImGui_ImplSDL3_Shutdown();
-        ImGui::DestroyContext();
-
-        // Destroy engine (this will also destroy window and renderer)
-        if (state->engine) {
-            engine_destroy(state->engine);
-        }
-
-        // Free memory for entity tracking arrays
-        if (state->entity_type_ids) SDL_free(state->entity_type_ids);
-        if (state->entity_counts) SDL_free(state->entity_counts);
-        if (state->entity_texture_ids) SDL_free(state->entity_texture_ids);
-        if (state->entity_update_times) SDL_free(state->entity_update_times);
-
-        SDL_free(state);
-    }
-
+    std::fill(newTypes + count, newTypes + newCapacity, 0);
+
+    delete[] types;
+    types = newTypes;
+
+    RenderableEntityContainer::resizeArrays(newCapacity);
+  }
+};
+
+// --- Game State ---
+struct GameState {
+  // Snake data
+  std::deque<SnakeSegment> snake_body;
+  uint32_t head_entity_index;
+  Direction current_direction;
+  Direction queued_direction;
+  float move_timer;
+  float speed_boost_timer;
+  float invincibility_timer;
+  bool is_alive;
+
+  // Score
+  int score;
+  int score_multiplier;
+  float multiplier_timer;
+
+  // Textures
+  int head_texture_id;
+  int body_texture_id;
+  int food_texture_ids[NUM_FOOD_TYPES]; // 10 different colors for food types
+  int enemy_texture_id;
+  int powerup_texture_id;
+
+  // Containers
+  SnakeHeadContainer *head_container;
+  SnakeBodyContainer *body_container;
+  FoodContainer *food_container;
+  EnemyContainer *enemy_container;
+  PowerUpContainer *powerup_container;
+
+  // FPS tracking
+  Uint64 last_fps_time;
+  int frame_count;
+  float current_fps;
+
+  // Visual interpolation for smooth movement
+  float head_visual_x, head_visual_y;
+  float head_logic_x, head_logic_y; // Grid-aligned logic position
+};
+
+// --- Function Declarations ---
+void setup_game(Engine *engine, GameState *game_state);
+void handle_input(const bool *keyboard_state, GameState *game_state);
+void update_snake(Engine *engine, GameState *game_state, float delta_time);
+void check_collisions(Engine *engine, GameState *game_state);
+void spawn_food(Engine *engine, GameState *game_state);
+SDL_Surface *create_colored_surface(int width, int height, Uint8 r, Uint8 g,
+                                    Uint8 b);
+
+// --- Main Function ---
+int main(int argc, char *argv[]) {
+  if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+    std::cerr << "SDL_Init Error: " << SDL_GetError() << std::endl;
+    return 1;
+  }
+  srand(static_cast<unsigned int>(time(nullptr)));
+
+  SDL_Window *window = SDL_CreateWindow("Snake Game - Big World", WINDOW_WIDTH,
+                                        WINDOW_HEIGHT, 0);
+  if (!window) {
+    std::cerr << "Failed to create window: " << SDL_GetError() << std::endl;
     SDL_Quit();
-}   
+    return 1;
+  }
+
+  SDL_Renderer *renderer = SDL_CreateRenderer(window, NULL);
+  if (!renderer) {
+    std::cerr << "Failed to create renderer: " << SDL_GetError() << std::endl;
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+    return 1;
+  }
+
+  SDL_DestroyRenderer(renderer);
+  SDL_DestroyWindow(window);
+
+  Engine *engine = engine_create(WINDOW_WIDTH, WINDOW_HEIGHT, WORLD_WIDTH,
+                                 WORLD_HEIGHT, GRID_CELL_SIZE);
+  if (!engine) {
+    std::cerr << "Failed to create engine" << std::endl;
+    SDL_Quit();
+    return 1;
+  }
+
+  // Register entity containers
+  SnakeHeadContainer *head_container =
+      new SnakeHeadContainer(ENTITY_TYPE_SNAKE_HEAD, 0, 10);
+  SnakeBodyContainer *body_container =
+      new SnakeBodyContainer(ENTITY_TYPE_SNAKE_BODY, 0, 10000);
+  FoodContainer *food_container =
+      new FoodContainer(ENTITY_TYPE_FOOD, 0, NUM_FOODS + 100);
+  EnemyContainer *enemy_container =
+      new EnemyContainer(engine, ENTITY_TYPE_ENEMY, 0, NUM_ENEMIES + 100);
+  PowerUpContainer *powerup_container =
+      new PowerUpContainer(ENTITY_TYPE_POWER_UP, 0, NUM_POWER_UPS + 100);
+
+  engine->entityManager.registerEntityType(head_container);
+  engine->entityManager.registerEntityType(body_container);
+  engine->entityManager.registerEntityType(food_container);
+  engine->entityManager.registerEntityType(enemy_container);
+  engine->entityManager.registerEntityType(powerup_container);
+
+  // Initialize game state
+  GameState game_state = {};
+  game_state.head_container = head_container;
+  game_state.body_container = body_container;
+  game_state.food_container = food_container;
+  game_state.enemy_container = enemy_container;
+  game_state.powerup_container = powerup_container;
+  game_state.head_entity_index = INVALID_ID;
+  game_state.is_alive = true;
+  game_state.score_multiplier = 1;
+  game_state.last_fps_time = SDL_GetTicks();
+
+  setup_game(engine, &game_state);
+
+  // Initial grid population
+  engine->grid.rebuild_grid(engine);
+
+  // Initialize cell tracking
+  for (uint32_t cIdx = 0; cIdx < engine->entityManager.containers.size();
+       ++cIdx) {
+    auto &container = engine->entityManager.containers[cIdx];
+    for (int i = 0; i < container->count; ++i) {
+      container->cell_x[i] =
+          static_cast<uint16_t>(container->x_positions[i] * INV_GRID_CELL_SIZE);
+      container->cell_y[i] =
+          static_cast<uint16_t>(container->y_positions[i] * INV_GRID_CELL_SIZE);
+    }
+  }
+
+  // Set camera to snake head
+  if (game_state.head_entity_index != INVALID_ID) {
+    float head_x = head_container->x_positions[game_state.head_entity_index];
+    float head_y = head_container->y_positions[game_state.head_entity_index];
+    engine->camera.x = head_x + GRID_SIZE / 2.0f;
+    engine->camera.y = head_y + GRID_SIZE / 2.0f;
+  }
+
+  // Game loop
+  bool quit = false;
+  SDL_Event event;
+  Uint64 last_time = SDL_GetTicks();
+
+  while (!quit) {
+    Uint64 current_time = SDL_GetTicks();
+    float delta_time = std::min((current_time - last_time) / 1000.0f, 0.1f);
+    last_time = current_time;
+
+    // FPS calculation
+    game_state.frame_count++;
+    Uint64 time_since_last_fps = current_time - game_state.last_fps_time;
+    if (time_since_last_fps >= 1000) {
+      game_state.current_fps =
+          static_cast<float>(game_state.frame_count * 1000.0f) /
+          static_cast<float>(time_since_last_fps);
+      game_state.last_fps_time = current_time;
+      game_state.frame_count = 0;
+      std::cout << "FPS: " << game_state.current_fps
+                << " | Score: " << game_state.score
+                << " | Length: " << game_state.snake_body.size() + 1
+                << std::endl;
+    }
+
+    // Process events - this internally calls SDL_PumpEvents
+    while (SDL_PollEvent(&event)) {
+      if (event.type == SDL_EVENT_QUIT)
+        quit = true;
+      else if (event.type == SDL_EVENT_KEY_DOWN) {
+        if (event.key.scancode == SDL_SCANCODE_ESCAPE)
+          quit = true;
+        else if (event.key.scancode == SDL_SCANCODE_R && !game_state.is_alive) {
+          // Reset game
+          game_state.snake_body.clear();
+          game_state.score = 0;
+          game_state.is_alive = true;
+          setup_game(engine, &game_state);
+          engine->grid.rebuild_grid(engine);
+        }
+      }
+    }
+
+    // Get keyboard state AFTER events are pumped (so it's fresh)
+    // SDL3 returns bool* instead of Uint8*
+    const bool *keyboard_state = SDL_GetKeyboardState(NULL);
+
+    if (game_state.is_alive) {
+      handle_input(keyboard_state, &game_state);
+      update_snake(engine, &game_state, delta_time);
+      check_collisions(engine, &game_state);
+
+      // Update power-up timers
+      if (game_state.speed_boost_timer > 0)
+        game_state.speed_boost_timer -= delta_time;
+      if (game_state.invincibility_timer > 0)
+        game_state.invincibility_timer -= delta_time;
+      if (game_state.multiplier_timer > 0) {
+        game_state.multiplier_timer -= delta_time;
+        if (game_state.multiplier_timer <= 0)
+          game_state.score_multiplier = 1;
+      }
+    }
+
+    // Camera zoom controls
+    if (keyboard_state[SDL_SCANCODE_EQUALS] ||
+        keyboard_state[SDL_SCANCODE_KP_PLUS]) {
+      engine->camera.width *= 0.98f;
+      engine->camera.height *= 0.98f;
+    }
+    if (keyboard_state[SDL_SCANCODE_MINUS] ||
+        keyboard_state[SDL_SCANCODE_KP_MINUS]) {
+      engine->camera.width *= 1.02f;
+      engine->camera.height *= 1.02f;
+    }
+
+    engine_update(engine);
+
+    SDL_SetRenderDrawColor(engine->renderer, 20, 20, 30, 255);
+    SDL_RenderClear(engine->renderer);
+    engine_render_scene(engine);
+    engine_present(engine);
+  }
+
+  engine_destroy(engine);
+  SDL_Quit();
+  return 0;
+}
+
+SDL_Surface *create_colored_surface(int width, int height, Uint8 r, Uint8 g,
+                                    Uint8 b) {
+  SDL_Surface *surface =
+      SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
+  if (!surface)
+    return nullptr;
+  SDL_FillSurfaceRect(
+      surface, NULL,
+      SDL_MapRGBA(SDL_GetPixelFormatDetails(surface->format), 0, r, g, b, 255));
+  return surface;
+}
+
+void setup_game(Engine *engine, GameState *game_state) {
+  game_state->current_direction = RIGHT;
+  game_state->queued_direction = RIGHT;
+  game_state->move_timer = 0.0f;
+  game_state->speed_boost_timer = 0.0f;
+  game_state->invincibility_timer = 0.0f;
+
+  // Create textures
+  // Create textures - IMPORTANT: place at different atlas positions to avoid
+  // overlap! Each texture goes at a different Y offset: 0, 32, 64, 96, 128
+  SDL_Surface *head_surface =
+      create_colored_surface(GRID_SIZE, GRID_SIZE, 0, 200, 0); // Green head
+  game_state->head_texture_id =
+      engine_register_texture(engine, head_surface, 0, 0, GRID_SIZE, GRID_SIZE);
+  SDL_DestroySurface(head_surface);
+
+  SDL_Surface *body_surface = create_colored_surface(
+      GRID_SIZE, GRID_SIZE, 0, 150, 0); // Darker green body
+  game_state->body_texture_id = engine_register_texture(
+      engine, body_surface, 0, GRID_SIZE, GRID_SIZE, GRID_SIZE);
+  SDL_DestroySurface(body_surface);
+
+  // Create 10 food textures with different colors (gradient from red to violet)
+  // Colors progress: red -> orange -> yellow -> lime -> green -> cyan -> blue
+  // -> purple -> magenta -> white
+  struct {
+    uint8_t r, g, b;
+  } food_colors[NUM_FOOD_TYPES] = {
+      {255, 50, 50},   // Type 0: Red (small, +1)
+      {255, 128, 0},   // Type 1: Orange (+2)
+      {255, 200, 0},   // Type 2: Yellow (+3)
+      {180, 255, 0},   // Type 3: Lime (+4)
+      {0, 200, 80},    // Type 4: Green (+5)
+      {0, 220, 220},   // Type 5: Cyan (+6)
+      {50, 100, 255},  // Type 6: Blue (+7)
+      {150, 50, 255},  // Type 7: Purple (+8)
+      {255, 100, 200}, // Type 8: Pink (+9)
+      {255, 255, 255}  // Type 9: White (legendary, +10)
+  };
+
+  for (int t = 0; t < NUM_FOOD_TYPES; ++t) {
+    SDL_Surface *food_surface =
+        create_colored_surface(GRID_SIZE, GRID_SIZE, food_colors[t].r,
+                               food_colors[t].g, food_colors[t].b);
+    // Place each food texture at a different Y position: starting at y=64, each
+    // 32 apart
+    game_state->food_texture_ids[t] = engine_register_texture(
+        engine, food_surface, 0, GRID_SIZE * (2 + t), GRID_SIZE, GRID_SIZE);
+    SDL_DestroySurface(food_surface);
+  }
+
+  // Enemy at y = GRID_SIZE * 12 (after 10 food textures)
+  SDL_Surface *enemy_surface = create_colored_surface(
+      GRID_SIZE, GRID_SIZE, 200, 50, 200); // Purple enemies
+  game_state->enemy_texture_id = engine_register_texture(
+      engine, enemy_surface, 0, GRID_SIZE * 12, GRID_SIZE, GRID_SIZE);
+  SDL_DestroySurface(enemy_surface);
+
+  // Power-up at y = GRID_SIZE * 13
+  SDL_Surface *powerup_surface = create_colored_surface(
+      GRID_SIZE, GRID_SIZE, 255, 255, 0); // Yellow power-ups
+  game_state->powerup_texture_id = engine_register_texture(
+      engine, powerup_surface, 0, GRID_SIZE * 13, GRID_SIZE, GRID_SIZE);
+  SDL_DestroySurface(powerup_surface);
+
+  // Create snake head at center
+  float start_x = WORLD_WIDTH / 2.0f;
+  float start_y = WORLD_HEIGHT / 2.0f;
+  game_state->head_entity_index = game_state->head_container->createEntity(
+      start_x, start_y, game_state->head_texture_id);
+
+  // Initialize logic and visual positions
+  game_state->head_logic_x = start_x;
+  game_state->head_logic_y = start_y;
+  game_state->head_visual_x = start_x;
+  game_state->head_visual_y = start_y;
+
+  std::cout << "SNAKE HEAD CREATED: index=" << game_state->head_entity_index
+            << " at (" << start_x << ", " << start_y << ")"
+            << " head_container count=" << game_state->head_container->count
+            << std::endl;
+
+  // Create initial body segments
+  for (int i = 1; i <= INITIAL_SNAKE_LENGTH; ++i) {
+    float seg_x = start_x - i * GRID_SIZE;
+    float seg_y = start_y;
+    uint32_t seg_idx = game_state->body_container->createEntity(
+        seg_x, seg_y, game_state->body_texture_id);
+    // Initialize with visual_x/y same as logic position
+    game_state->snake_body.push_back({seg_x, seg_y, seg_x, seg_y, seg_idx});
+    std::cout << "BODY SEG " << i << ": index=" << seg_idx << " at (" << seg_x
+              << ", " << seg_y << ")" << std::endl;
+  }
+  std::cout << "Total body segments: " << game_state->snake_body.size()
+            << " body_container count=" << game_state->body_container->count
+            << std::endl;
+
+  // Create foods distributed across the world - 10 different types
+  // Type 0-9: growth = type+1 (1-10 segments), points = (type+1)*10 (10-100
+  // points)
+  for (int i = 0; i < NUM_FOODS; ++i) {
+    float x = static_cast<float>(rand() % (WORLD_WIDTH - GRID_SIZE));
+    float y = static_cast<float>(rand() % (WORLD_HEIGHT - GRID_SIZE));
+    int food_type = rand() % NUM_FOOD_TYPES; // 0-9
+    int growth = food_type + 1;              // 1-10 segments
+    int value = growth * 10;                 // 10-100 points
+    game_state->food_container->createEntity(
+        x, y, game_state->food_texture_ids[food_type], value, growth,
+        food_type);
+  }
+
+  // Create enemies distributed across the world
+  for (int i = 0; i < NUM_ENEMIES; ++i) {
+    float x = static_cast<float>(rand() % (WORLD_WIDTH - GRID_SIZE));
+    float y = static_cast<float>(rand() % (WORLD_HEIGHT - GRID_SIZE));
+    float speed = 30.0f + static_cast<float>(rand() % 70); // 30-100 speed
+    game_state->enemy_container->createEntity(
+        x, y, game_state->enemy_texture_id, speed);
+  }
+
+  // Create power-ups
+  for (int i = 0; i < NUM_POWER_UPS; ++i) {
+    float x = static_cast<float>(rand() % (WORLD_WIDTH - GRID_SIZE));
+    float y = static_cast<float>(rand() % (WORLD_HEIGHT - GRID_SIZE));
+    int type = rand() % 3; // 0=speed, 1=invincibility, 2=multiplier
+    game_state->powerup_container->createEntity(
+        x, y, game_state->powerup_texture_id, type);
+  }
+
+  // Log entity counts
+  std::cout << "=== Game Setup Complete ===" << std::endl;
+  std::cout << "  Food:     " << game_state->food_container->count << std::endl;
+  std::cout << "  Enemies:  " << game_state->enemy_container->count
+            << std::endl;
+  std::cout << "  Power-ups:" << game_state->powerup_container->count
+            << std::endl;
+  std::cout << "  Snake:    " << (game_state->snake_body.size() + 1)
+            << " segments" << std::endl;
+  std::cout << "  World:    " << WORLD_WIDTH << "x" << WORLD_HEIGHT
+            << std::endl;
+}
+
+void handle_input(const bool *keyboard_state, GameState *game_state) {
+  Direction new_dir = game_state->current_direction;
+
+  if (keyboard_state[SDL_SCANCODE_W] || keyboard_state[SDL_SCANCODE_UP]) {
+    if (game_state->current_direction != DOWN) {
+      new_dir = UP;
+      std::cout << "INPUT: UP" << std::endl;
+    }
+  }
+  if (keyboard_state[SDL_SCANCODE_S] || keyboard_state[SDL_SCANCODE_DOWN]) {
+    if (game_state->current_direction != UP) {
+      new_dir = DOWN;
+      std::cout << "INPUT: DOWN" << std::endl;
+    }
+  }
+  if (keyboard_state[SDL_SCANCODE_A] || keyboard_state[SDL_SCANCODE_LEFT]) {
+    if (game_state->current_direction != RIGHT) {
+      new_dir = LEFT;
+      std::cout << "INPUT: LEFT" << std::endl;
+    }
+  }
+  if (keyboard_state[SDL_SCANCODE_D] || keyboard_state[SDL_SCANCODE_RIGHT]) {
+    if (game_state->current_direction != LEFT) {
+      new_dir = RIGHT;
+      std::cout << "INPUT: RIGHT" << std::endl;
+    }
+  }
+
+  game_state->queued_direction = new_dir;
+}
+
+void update_snake(Engine *engine, GameState *game_state, float delta_time) {
+  if (game_state->head_entity_index == INVALID_ID)
+    return;
+
+  SnakeHeadContainer *hCont = game_state->head_container;
+  SnakeBodyContainer *bCont = game_state->body_container;
+  uint32_t head_idx = game_state->head_entity_index;
+
+  // Speed calculation - discrete steps per second
+  float base_speed = SNAKE_SPEED;
+  if (game_state->speed_boost_timer > 0)
+    base_speed *= 1.5f;
+
+  game_state->move_timer += delta_time * base_speed;
+
+  // Only move when timer reaches 1.0 (one step)
+  if (game_state->move_timer >= 1.0f) {
+    game_state->move_timer -= 1.0f;
+
+    // Apply queued direction
+    game_state->current_direction = game_state->queued_direction;
+
+    // Get current head LOGIC position (from GameState, not container)
+    float head_x = game_state->head_logic_x;
+    float head_y = game_state->head_logic_y;
+
+    // Store old position for body
+    float old_head_x = head_x;
+    float old_head_y = head_y;
+
+    // Move head one grid step
+    switch (game_state->current_direction) {
+    case UP:
+      head_y -= GRID_SIZE;
+      break;
+    case DOWN:
+      head_y += GRID_SIZE;
+      break;
+    case LEFT:
+      head_x -= GRID_SIZE;
+      break;
+    case RIGHT:
+      head_x += GRID_SIZE;
+      break;
+    }
+
+    // Wrap around world boundaries
+    if (head_x < 0)
+      head_x += WORLD_WIDTH;
+    else if (head_x >= WORLD_WIDTH)
+      head_x -= WORLD_WIDTH;
+    if (head_y < 0)
+      head_y += WORLD_HEIGHT;
+    else if (head_y >= WORLD_HEIGHT)
+      head_y -= WORLD_HEIGHT;
+
+    // Update head LOGIC position in GameState
+    game_state->head_logic_x = head_x;
+    game_state->head_logic_y = head_y;
+
+    // Update head grid position for collision detection
+    uint16_t newCellX = static_cast<uint16_t>(head_x * INV_GRID_CELL_SIZE);
+    uint16_t newCellY = static_cast<uint16_t>(head_y * INV_GRID_CELL_SIZE);
+    if (hCont->cell_x[head_idx] != newCellX ||
+        hCont->cell_y[head_idx] != newCellY) {
+      engine->grid.move(hCont->grid_node_indices[head_idx], head_x, head_y);
+      hCont->cell_x[head_idx] = newCellX;
+      hCont->cell_y[head_idx] = newCellY;
+    }
+
+    // Move body segments - each follows where the previous one WAS
+    if (!game_state->snake_body.empty()) {
+      float prev_x = old_head_x;
+      float prev_y = old_head_y;
+
+      for (auto &seg : game_state->snake_body) {
+        float old_seg_x = seg.x;
+        float old_seg_y = seg.y;
+        seg.x = prev_x;
+        seg.y = prev_y;
+
+        if (seg.entity_index < bCont->count) {
+          bCont->x_positions[seg.entity_index] = seg.x;
+          bCont->y_positions[seg.entity_index] = seg.y;
+
+          uint16_t segCellX = static_cast<uint16_t>(seg.x * INV_GRID_CELL_SIZE);
+          uint16_t segCellY = static_cast<uint16_t>(seg.y * INV_GRID_CELL_SIZE);
+          if (bCont->cell_x[seg.entity_index] != segCellX ||
+              bCont->cell_y[seg.entity_index] != segCellY) {
+            engine->grid.move(bCont->grid_node_indices[seg.entity_index], seg.x,
+                              seg.y);
+            bCont->cell_x[seg.entity_index] = segCellX;
+            bCont->cell_y[seg.entity_index] = segCellY;
+          }
+        }
+
+        prev_x = old_seg_x;
+        prev_y = old_seg_y;
+      }
+    }
+  }
+
+  // Visual interpolation - smooth lerp toward logic positions every frame
+  float lerp_speed = 20.0f; // How fast visuals catch up (higher = faster)
+  float lerp_factor = std::min(1.0f, lerp_speed * delta_time);
+
+  // Lerp head visual toward logic position (from GameState)
+  game_state->head_visual_x +=
+      (game_state->head_logic_x - game_state->head_visual_x) * lerp_factor;
+  game_state->head_visual_y +=
+      (game_state->head_logic_y - game_state->head_visual_y) * lerp_factor;
+
+  // Update head render position (using visual pos)
+  hCont->x_positions[head_idx] = game_state->head_visual_x;
+  hCont->y_positions[head_idx] = game_state->head_visual_y;
+
+  // Lerp body segment visuals toward their logic positions
+  for (auto &seg : game_state->snake_body) {
+    seg.visual_x += (seg.x - seg.visual_x) * lerp_factor;
+    seg.visual_y += (seg.y - seg.visual_y) * lerp_factor;
+
+    if (seg.entity_index < bCont->count) {
+      bCont->x_positions[seg.entity_index] = seg.visual_x;
+      bCont->y_positions[seg.entity_index] = seg.visual_y;
+    }
+  }
+
+  // Update camera to follow visual head position (smooth)
+  engine->camera.x = game_state->head_visual_x + GRID_SIZE / 2.0f;
+  engine->camera.y = game_state->head_visual_y + GRID_SIZE / 2.0f;
+}
+
+void check_collisions(Engine *engine, GameState *game_state) {
+  if (game_state->head_entity_index == INVALID_ID)
+    return;
+
+  SnakeHeadContainer *hCont = game_state->head_container;
+  FoodContainer *fCont = game_state->food_container;
+  EnemyContainer *eCont = game_state->enemy_container;
+  PowerUpContainer *pCont = game_state->powerup_container;
+  SnakeBodyContainer *bCont = game_state->body_container;
+
+  uint32_t head_idx = game_state->head_entity_index;
+  float head_x = hCont->x_positions[head_idx];
+  float head_y = hCont->y_positions[head_idx];
+
+  // Query nearby entities - use GRID_CELL_SIZE to ensure we cover adjacent
+  // cells The queryCircle checks distance to cell corners, so we need radius >=
+  // cell size
+  float query_range = static_cast<float>(GRID_CELL_SIZE) * 1.5f;
+  const auto &nearby = engine->grid.queryCircle(
+      head_x + GRID_SIZE / 2, head_y + GRID_SIZE / 2, query_range);
+
+  std::vector<EntityRef> to_remove;
+
+  for (const auto &entity : nearby) {
+    if (entity.type == ENTITY_TYPE_FOOD) {
+      if (entity.index >= fCont->count)
+        continue;
+
+      float fx = fCont->x_positions[entity.index];
+      float fy = fCont->y_positions[entity.index];
+
+      // Simple collision (same grid cell)
+      if (fabsf(head_x - fx) < GRID_SIZE && fabsf(head_y - fy) < GRID_SIZE) {
+        // Eat food - add score
+        game_state->score +=
+            fCont->values[entity.index] * game_state->score_multiplier;
+
+        // Grow snake by food's growth value (1-10 segments based on type)
+        int segments_to_add = fCont->growth[entity.index];
+        for (int seg = 0; seg < segments_to_add; ++seg) {
+          float tail_x, tail_y;
+          if (game_state->snake_body.empty()) {
+            tail_x = head_x;
+            tail_y = head_y;
+          } else {
+            tail_x = game_state->snake_body.back().x;
+            tail_y = game_state->snake_body.back().y;
+          }
+          uint32_t new_seg =
+              bCont->createEntity(tail_x, tail_y, game_state->body_texture_id);
+          // Register new body segment with grid
+          EntityRef seg_ref = {ENTITY_TYPE_SNAKE_BODY, new_seg};
+          bCont->grid_node_indices[new_seg] =
+              engine->grid.add(seg_ref, tail_x, tail_y);
+          bCont->cell_x[new_seg] =
+              static_cast<uint16_t>(tail_x * INV_GRID_CELL_SIZE);
+          bCont->cell_y[new_seg] =
+              static_cast<uint16_t>(tail_y * INV_GRID_CELL_SIZE);
+          game_state->snake_body.push_back(
+              {tail_x, tail_y, tail_x, tail_y, new_seg});
+        }
+
+        // RELOCATE food with new random type (engine constraint: no removal)
+        float new_x = static_cast<float>(rand() % (WORLD_WIDTH - GRID_SIZE));
+        float new_y = static_cast<float>(rand() % (WORLD_HEIGHT - GRID_SIZE));
+        int new_food_type = rand() % NUM_FOOD_TYPES;
+        int new_growth = new_food_type + 1;
+        int new_value = new_growth * 10;
+
+        fCont->x_positions[entity.index] = new_x;
+        fCont->y_positions[entity.index] = new_y;
+        fCont->values[entity.index] = new_value;
+        fCont->growth[entity.index] = new_growth;
+        fCont->food_types[entity.index] = new_food_type;
+        fCont->texture_ids[entity.index] =
+            game_state->food_texture_ids[new_food_type];
+
+        // Update grid position
+        int32_t nodeIdx = fCont->grid_node_indices[entity.index];
+        engine->grid.move(nodeIdx, new_x, new_y);
+        fCont->cell_x[entity.index] =
+            static_cast<uint16_t>(new_x * INV_GRID_CELL_SIZE);
+        fCont->cell_y[entity.index] =
+            static_cast<uint16_t>(new_y * INV_GRID_CELL_SIZE);
+      }
+    } else if (entity.type == ENTITY_TYPE_ENEMY) {
+      if (game_state->invincibility_timer > 0)
+        continue; // Invincible
+      if (entity.index >= eCont->count)
+        continue;
+
+      float ex = eCont->x_positions[entity.index];
+      float ey = eCont->y_positions[entity.index];
+
+      if (fabsf(head_x - ex) < GRID_SIZE * 0.8f &&
+          fabsf(head_y - ey) < GRID_SIZE * 0.8f) {
+        game_state->is_alive = false;
+        std::cout << "Game Over! Final Score: " << game_state->score
+                  << std::endl;
+      }
+    } else if (entity.type == ENTITY_TYPE_POWER_UP) {
+      if (entity.index >= pCont->count)
+        continue;
+
+      float px = pCont->x_positions[entity.index];
+      float py = pCont->y_positions[entity.index];
+
+      if (fabsf(head_x - px) < GRID_SIZE && fabsf(head_y - py) < GRID_SIZE) {
+        int type = pCont->types[entity.index];
+        switch (type) {
+        case 0: // Speed boost
+          game_state->speed_boost_timer = 5.0f;
+          break;
+        case 1: // Invincibility
+          game_state->invincibility_timer = 5.0f;
+          break;
+        case 2: // Score multiplier
+          game_state->score_multiplier = 3;
+          game_state->multiplier_timer = 10.0f;
+          break;
+        }
+
+        // RELOCATE power-up instead of removing
+        float new_x = static_cast<float>(rand() % (WORLD_WIDTH - GRID_SIZE));
+        float new_y = static_cast<float>(rand() % (WORLD_HEIGHT - GRID_SIZE));
+        pCont->x_positions[entity.index] = new_x;
+        pCont->y_positions[entity.index] = new_y;
+        pCont->types[entity.index] = rand() % 3; // New random type
+
+        // Update grid position
+        int32_t nodeIdx = pCont->grid_node_indices[entity.index];
+        engine->grid.move(nodeIdx, new_x, new_y);
+        pCont->cell_x[entity.index] =
+            static_cast<uint16_t>(new_x * INV_GRID_CELL_SIZE);
+        pCont->cell_y[entity.index] =
+            static_cast<uint16_t>(new_y * INV_GRID_CELL_SIZE);
+      }
+    } else if (entity.type == ENTITY_TYPE_SNAKE_BODY) {
+      // Self-collision (skip first few segments)
+      if (entity.index >= bCont->count)
+        continue;
+
+      // Find segment in deque
+      bool is_near_head = false;
+      int seg_count = 0;
+      for (const auto &seg : game_state->snake_body) {
+        if (seg.entity_index == entity.index) {
+          is_near_head = (seg_count < 3); // Skip first 3 segments
+          break;
+        }
+        seg_count++;
+      }
+
+      if (!is_near_head && game_state->invincibility_timer <= 0) {
+        float bx = bCont->x_positions[entity.index];
+        float by = bCont->y_positions[entity.index];
+
+        if (fabsf(head_x - bx) < GRID_SIZE * 0.5f &&
+            fabsf(head_y - by) < GRID_SIZE * 0.5f) {
+          game_state->is_alive = false;
+          std::cout << "Game Over! You hit yourself! Final Score: "
+                    << game_state->score << std::endl;
+        }
+      }
+    }
+  }
+
+  // No removals needed - food and power-ups are relocated
+}
+    
+void spawn_food(Engine *engine, GameState *game_state) {
+  float x = static_cast<float>(rand() % (WORLD_WIDTH - GRID_SIZE));
+  float y = static_cast<float>(rand() % (WORLD_HEIGHT - GRID_SIZE));
+  int food_type = rand() % NUM_FOOD_TYPES;
+  int growth = food_type + 1;
+  int value = growth * 10;
+  uint32_t food_idx = game_state->food_container->createEntity(
+      x, y, game_state->food_texture_ids[food_type], value, growth, food_type);
+
+  // Register new food with grid
+  FoodContainer *fCont = game_state->food_container;
+  EntityRef food_ref = {ENTITY_TYPE_FOOD, food_idx};
+  fCont->grid_node_indices[food_idx] = engine->grid.add(food_ref, x, y);
+  fCont->cell_x[food_idx] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
+  fCont->cell_y[food_idx] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
+}

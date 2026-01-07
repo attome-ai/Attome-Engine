@@ -12,8 +12,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 
 # Project include directories
-include_directories("game")
 include_directories("include")
+include_directories("vendor")
 
 
 
