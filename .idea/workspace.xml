@@ -4,35 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7d32de70-0328-47fe-9877-f2408de0c8af" name="Changes" comment="de">
+    <list default="true" id="7d32de70-0328-47fe-9877-f2408de0c8af" name="Changes" comment="REMOVED VULKAN SUPPORT">
       <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/game/ATMEngine.h" beforeDir="false" afterPath="$PROJECT_DIR$/game/ATMEngine.h" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gameSrc/ATMEngine.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/gameSrc/ATMEngine.cpp" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gameSrc/VulkanLoader.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/gameSrc/VulkanRenderer.cpp" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/basic.frag" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/basic.vert" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/basic_frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/basic_vert.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/phong.frag" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/phong.vert" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/phong_frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/phong_vert.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/script.bat" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/simple.frag" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/simple.vert" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/simple_frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/simple_vert.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/test.frag" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/test.vert" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/test_frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/test_vert.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/textured.vert" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/textured_vert.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/textures.frag" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/shaders/textures_frag.spv" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/vcpkg.json" beforeDir="false" afterPath="$PROJECT_DIR$/vcpkg.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/windows/CMakeLists.txt" beforeDir="false" afterPath="$PROJECT_DIR$/windows/CMakeLists.txt" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -102,7 +75,7 @@
       <updated>1767805453127</updated>
       <workItem from="1767805454214" duration="154000" />
       <workItem from="1767805615617" duration="145000" />
-      <workItem from="1767806342232" duration="641000" />
+      <workItem from="1767806342232" duration="710000" />
     </task>
     <task id="LOCAL-00001" summary="de">
       <option name="closed" value="true" />
@@ -112,7 +85,15 @@
       <option name="project" value="LOCAL" />
       <updated>1767805556818</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="REMOVED VULKAN SUPPORT">
+      <option name="closed" value="true" />
+      <created>1767807158294</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1767807158294</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -143,6 +124,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="de" />
-    <option name="LAST_COMMIT_MESSAGE" value="de" />
+    <MESSAGE value="REMOVED VULKAN SUPPORT" />
+    <option name="LAST_COMMIT_MESSAGE" value="REMOVED VULKAN SUPPORT" />
   </component>
 </project>

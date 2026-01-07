@@ -69,13 +69,13 @@ This repository contains **two complete versions** of the game engine to demonst
 - **Optimization Features**:
   - **Spatial Partitioning**: O(1) grid-based collision.
   - **Multithreading**: Parallel entity updates using `std::execution`.
-  - **Batch Rendering**: 1 draw call per texture/layer via Texture Atlas.
+  - **Batch Rendering**: 1 draw call per Texture Atlas.
   - **Zero-Allocation**: No dynamic memory during gameplay.
-- **Performance**: Handles **1,000,000+ entities** @ 30-60 FPS.
+- **Performance**: Handles **1,000,000+ entities** @ 200+ FPS.
 
 ## 📦 Dependency Management
 
 This project uses **vcpkg Manifest Mode**. All libraries listed in `vcpkg.json` are automatically fetched and built during the CMake configuration step. This ensures that every developer uses the exact same versions of the libraries without manual installation.
 
 ---
-*Created with ❤️ by the Attome AI team.*
+*Created with ❤️ by the Attome AI.*
