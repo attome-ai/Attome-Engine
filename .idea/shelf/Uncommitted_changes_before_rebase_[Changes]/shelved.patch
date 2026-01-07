@@ -1,0 +1,352 @@
+Index: README.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Attome Engine Template\r\n\r\nA high-performance, modern 2D game engine template built with C++20, targeting Windows and HTML5 (via Emscripten). This project is designed for portability and ease of use, utilizing `vcpkg` for dependency management and `CMake` as the build system.\r\n\r\n## \uD83D\uDE80 Core Technologies\r\n\r\n- **Graphics Backend**: [Vulkan](https://www.vulkan.org/) (High-performance rendering)\r\n- **Multimedia Layer**: [SDL3](https://www.libsdl.org/) (Windowing, input, audio)\r\n- **UI System**: [ImGui](https://github.com/ocornut/imgui) (Docking branch with SDL3/Vulkan backends)\r\n- **Math Library**: [GLM](https://github.com/g-truc/glm) (OpenGL Mathematics)\r\n- **Data Serialization**: [nlohmann-json](https://github.com/nlohmann/json)\r\n- **Dependency Management**: [vcpkg](https://vcpkg.io/) (Manifest Mode)\r\n- **Build System**: [CMake](https://cmake.org/) (version 3.21+)\r\n\r\n## \uD83D\uDEE0\uFE0F Prerequisites\r\n\r\n- **Compiler**: A C++20 compatible compiler (MSVC 2022, Clang 16+, or GCC 13+)\r\n- **vcpkg**: Should be installed and the `VCPKG_ROOT` environment variable set.\r\n- **CMake**: Version 3.21 or higher.\r\n\r\n## \uD83C\uDFD7\uFE0F Getting Started\r\n\r\n### 1. Clone the repository\r\n```bash\r\ngit clone https://github.com/attome-ai/Attome-Engine.git\r\ncd Attome-Engine\r\n```\r\n\r\n### 2. Build via Visual Studio (Recommended)\r\nSimply open the project folder in Visual Studio 2022. It will automatically detect the `vcpkg.json` manifest and `CMakeSettings.json`, then download and build all dependencies.\r\n\r\n### 3. Build via Command Line\r\n```powershell\r\n# Create build directory\r\nmkdir build\r\ncd build\r\n\r\n# Configure with vcpkg toolchain\r\ncmake .. -DCMAKE_TOOLCHAIN_FILE=[PATH_TO_VCPKG]/scripts/buildsystems/vcpkg.cmake\r\n\r\n# Build the project\r\ncmake --build . --config Release\r\n```\r\n\r\n## \uD83D\uDCC1 Project Structure\r\n\r\n- `gameSrc/`: Core engine and game logic implementation (`.cpp` files).\r\n- `game/`: Header files and engine interfaces (`.h` files).\r\n- `windows/`: Windows-specific CMake configuration and entry points.\r\n- `html/`: Emscripten/Web-specific configuration.\r\n- `shaders/`: Vulkan GLSL shaders.\r\n- `textures/`: Asset directory for textures and images.\r\n- `vcpkg.json`: Project dependency manifest.\r\n\r\n## \uD83C\uDFCE\uFE0F Dual-Engine Architecture\r\n\r\nThis repository contains **two complete versions** of the game engine to demonstrate the power of Data-Oriented Design (DOD):\r\n\r\n### 1. Basic Engine (Unoptimized)\r\n*Located in `gameBasic/`*\r\n- **Architecture**: Classic OOP with Array of Structures (AOS).\r\n- **Collision**: Naive O(N^2) checks.\r\n- **Rendering**: Individual draw calls per entity.\r\n- **Performance**: Caps at ~10,000 entities @ 15 FPS.\r\n- **Purpose**: Represents \"clean\" but slow textbook code.\r\n\r\n### 2. ATM Engine (Optimized)\r\n*Located in `gameSrc/`*\r\n- **Architecture**: Data-Oriented with Structure of Arrays (SOA).\r\n- **Optimization Features**:\r\n  - **Spatial Partitioning**: O(1) grid-based collision.\r\n  - **Multithreading**: Parallel entity updates using `std::execution`.\r\n  - **Batch Rendering**: 1 draw call per texture/layer via Texture Atlas.\r\n  - **Zero-Allocation**: No dynamic memory during gameplay.\r\n- **Performance**: Handles **1,000,000+ entities** @ 30-60 FPS.\r\n\r\n## \uD83D\uDCE6 Dependency Management\r\n\r\nThis project uses **vcpkg Manifest Mode**. All libraries listed in `vcpkg.json` are automatically fetched and built during the CMake configuration step. This ensures that every developer uses the exact same versions of the libraries without manual installation.\r\n\r\n---\r\n*Created with ❤\uFE0F by the Attome AI team.*\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/README.md b/README.md
+--- a/README.md	(revision e1dc57cb8962b8d85a7fe0921d511d96b8a1b593)
++++ b/README.md	(date 1767805178990)
+@@ -1,82 +1,75 @@
+-# Attome Engine Template
++# ATM Engine
+ 
+-A high-performance, modern 2D game engine template built with C++20, targeting Windows and HTML5 (via Emscripten). This project is designed for portability and ease of use, utilizing `vcpkg` for dependency management and `CMake` as the build system.
++A high-performance 2D game engine built with C++20 and SDL3, designed for maximum performance with Data-Oriented Design principles.
+ 
+ ## 🚀 Core Technologies
+ 
+-- **Graphics Backend**: [Vulkan](https://www.vulkan.org/) (High-performance rendering)
+-- **Multimedia Layer**: [SDL3](https://www.libsdl.org/) (Windowing, input, audio)
+-- **UI System**: [ImGui](https://github.com/ocornut/imgui) (Docking branch with SDL3/Vulkan backends)
+-- **Math Library**: [GLM](https://github.com/g-truc/glm) (OpenGL Mathematics)
+-- **Data Serialization**: [nlohmann-json](https://github.com/nlohmann/json)
++- **Graphics**: SDL3 Software Renderer (batched rendering)
++- **Multimedia**: [SDL3](https://www.libsdl.org/) (Windowing, input, audio)
++- **UI System**: [ImGui](https://github.com/ocornut/imgui) (SDL3 backend)
++- **Math Library**: [GLM](https://github.com/g-truc/glm)
+ - **Dependency Management**: [vcpkg](https://vcpkg.io/) (Manifest Mode)
+ - **Build System**: [CMake](https://cmake.org/) (version 3.21+)
+ 
+-## 🛠️ Prerequisites
+-
+-- **Compiler**: A C++20 compatible compiler (MSVC 2022, Clang 16+, or GCC 13+)
+-- **vcpkg**: Should be installed and the `VCPKG_ROOT` environment variable set.
+-- **CMake**: Version 3.21 or higher.
+-
+-## 🏗️ Getting Started
+-
+-### 1. Clone the repository
+-```bash
+-git clone https://github.com/attome-ai/Attome-Engine.git
+-cd Attome-Engine
+-```
+-
+-### 2. Build via Visual Studio (Recommended)
+-Simply open the project folder in Visual Studio 2022. It will automatically detect the `vcpkg.json` manifest and `CMakeSettings.json`, then download and build all dependencies.
+-
+-### 3. Build via Command Line
+-```powershell
+-# Create build directory
+-mkdir build
+-cd build
+-
+-# Configure with vcpkg toolchain
+-cmake .. -DCMAKE_TOOLCHAIN_FILE=[PATH_TO_VCPKG]/scripts/buildsystems/vcpkg.cmake
+-
+-# Build the project
+-cmake --build . --config Release
+-```
+-
+ ## 📁 Project Structure
+ 
+-- `gameSrc/`: Core engine and game logic implementation (`.cpp` files).
+-- `game/`: Header files and engine interfaces (`.h` files).
+-- `windows/`: Windows-specific CMake configuration and entry points.
+-- `html/`: Emscripten/Web-specific configuration.
+-- `shaders/`: Vulkan GLSL shaders.
+-- `textures/`: Asset directory for textures and images.
+-- `vcpkg.json`: Project dependency manifest.
++```
++Template3/
++├── CMakeLists.txt          # Root build configuration
++├── engine/
++│   ├── CMakeLists.txt      # Engine static library
++│   ├── src/                # Headers + Sources (mixed)
++│   │   ├── ATMEngine.h     # Main engine header
++│   │   ├── ATMEngine.cpp   # Engine implementation
++│   │   └── ...
++│   └── vendor/             # Third-party headers (stb, ankerl)
++├── games/
++│   ├── SnakeGame/          # Snake game example
++│   │   └── src/main.cpp
++│   └── PlantGame/          # Plant defense game
++│       └── src/main.cpp
++├── textures/               # Game textures
++├── fonts/                  # Font assets
++└── resource/               # Additional resources
++```
++
++## 🏗️ Building
++
++### Prerequisites
++- C++20 compiler (MSVC 2022, Clang 16+, GCC 13+)
++- vcpkg installed with `VCPKG_ROOT` set
++- CMake 3.21+
++
++### Build Commands
++```powershell
++# Configure
++cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+ 
+-## 🏎️ Dual-Engine Architecture
++# Build
++cmake --build build --config Release
+ 
+-This repository contains **two complete versions** of the game engine to demonstrate the power of Data-Oriented Design (DOD):
++# Run games
++./build/games/SnakeGame/Release/SnakeGame.exe
++./build/games/PlantGame/Release/PlantGame.exe
++```
+ 
+-### 1. Basic Engine (Unoptimized)
+-*Located in `gameBasic/`*
+-- **Architecture**: Classic OOP with Array of Structures (AOS).
+-- **Collision**: Naive O(N^2) checks.
+-- **Rendering**: Individual draw calls per entity.
+-- **Performance**: Caps at ~10,000 entities @ 15 FPS.
+-- **Purpose**: Represents "clean" but slow textbook code.
++## ⚡ Performance Features
+ 
+-### 2. ATM Engine (Optimized)
+-*Located in `gameSrc/`*
+-- **Architecture**: Data-Oriented with Structure of Arrays (SOA).
+-- **Optimization Features**:
+-  - **Spatial Partitioning**: O(1) grid-based collision.
+-  - **Multithreading**: Parallel entity updates using `std::execution`.
+-  - **Batch Rendering**: 1 draw call per texture/layer via Texture Atlas.
+-  - **Zero-Allocation**: No dynamic memory during gameplay.
+-- **Performance**: Handles **1,000,000+ entities** @ 30-60 FPS.
++- **Spatial Partitioning**: O(1) grid-based collision queries
++- **Batch Rendering**: Single draw call per Texture Atlas
++- **Multithreading**: Parallel entity updates with `std::execution`
++- **Structure of Arrays (SOA)**: Cache-friendly memory layout
++- **Zero Runtime Allocation**: Memory defined at load time
+ 
+-## 📦 Dependency Management
++**Performance**: Handles **1,000,000+ entities** @ ~200 FPS
+ 
+-This project uses **vcpkg Manifest Mode**. All libraries listed in `vcpkg.json` are automatically fetched and built during the CMake configuration step. This ensures that every developer uses the exact same versions of the libraries without manual installation.
++## 📦 Dependencies (via vcpkg)
++
++- `sdl3`
++- `sdl3-image`
++- `sdl3-ttf`
++- `glm`
++- `imgui[sdl3-binding,sdl3-renderer-binding]`
+ 
+ ---
+-*Created with ❤️ by the Attome AI team.*
++*Created with ❤️ by Attome AI*
+Index: windows/CMakeLists.txt
+===================================================================
+diff --git a/windows/CMakeLists.txt b/windows/CMakeLists.txt
+deleted file mode 100644
+--- a/windows/CMakeLists.txt	(revision e1dc57cb8962b8d85a7fe0921d511d96b8a1b593)
++++ /dev/null	(revision e1dc57cb8962b8d85a7fe0921d511d96b8a1b593)
+@@ -1,130 +0,0 @@
+-cmake_minimum_required(VERSION 3.21)
+-
+-set(CMAKE_CXX_STANDARD 20)
+-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+-
+-# Find dependencies via vcpkg
+-find_package(SDL3 CONFIG REQUIRED)
+-find_package(SDL3_image CONFIG REQUIRED)
+-find_package(SDL3_ttf CONFIG REQUIRED)
+-find_package(glm CONFIG REQUIRED)
+-find_package(Vulkan REQUIRED)
+-find_package(imgui CONFIG REQUIRED)
+-
+-# The project sources (Optimized Engine)
+-set(SOURCE
+-  ${CMAKE_SOURCE_DIR}/gameSrc/zombie_game.cpp
+-  ${CMAKE_SOURCE_DIR}/gameSrc/ATMEngine.cpp
+-  ${CMAKE_SOURCE_DIR}/gameSrc/UI.cpp
+-  ${CMAKE_SOURCE_DIR}/gameSrc/Renderer.cpp
+-  ${CMAKE_SOURCE_DIR}/gameSrc/Networking.cpp
+-  ${CMAKE_SOURCE_DIR}/gameSrc/Entity.cpp
+-  ${CMAKE_SOURCE_DIR}/gameSrc/ATMByteBuffer.cpp
+-  ${CMAKE_SOURCE_DIR}/gameSrc/ATMBufferPool.cpp
+-  ${CMAKE_SOURCE_DIR}/gameSrc/VulkanRenderer.cpp
+-  ${CMAKE_SOURCE_DIR}/gameSrc/VulkanLoader.cpp
+-)
+-
+-# Basic Engine sources (UNOPTIMIZED - for comparison)
+-set(SOURCE_BASIC
+-  ${CMAKE_SOURCE_DIR}/gameBasic/zombie_game_basic.cpp
+-  ${CMAKE_SOURCE_DIR}/gameBasic/BasicEngine.cpp
+-  ${CMAKE_SOURCE_DIR}/gameBasic/stb_impl.cpp
+-)
+-
+-# Add executable target (Optimized)
+-add_executable(Template ${SOURCE})
+-
+-# Add executable target (Basic/Unoptimized)
+-add_executable(TemplateBasic ${SOURCE_BASIC})
+-
+-# Link dependencies
+-target_link_libraries(Template PRIVATE 
+-    SDL3::SDL3
+-    SDL3_image::SDL3_image
+-    SDL3_ttf::SDL3_ttf
+-    glm::glm
+-    Vulkan::Vulkan
+-    imgui::imgui
+-)
+-
+-# Link dependencies for Basic Engine (no Vulkan needed)
+-target_link_libraries(TemplateBasic PRIVATE 
+-    SDL3::SDL3
+-    SDL3_image::SDL3_image
+-    imgui::imgui
+-)
+-
+-# Add ImGui backends (if they are not included in the imgui::imgui target provided by vcpkg)
+-# With vcpkg manifest mode, we can use the targets for backends if we enabled them as features.
+-if(TARGET imgui::sdl3)
+-    target_link_libraries(Template PRIVATE imgui::sdl3)
+-    target_link_libraries(TemplateBasic PRIVATE imgui::sdl3)
+-endif()
+-if(TARGET imgui::vulkan)
+-    target_link_libraries(Template PRIVATE imgui::vulkan)
+-endif()
+-if(TARGET imgui::sdlrenderer3)
+-    target_link_libraries(Template PRIVATE imgui::sdlrenderer3)
+-    target_link_libraries(TemplateBasic PRIVATE imgui::sdlrenderer3)
+-endif()
+-
+-# Increase stack size (16MB = 16777216 bytes)
+-if(MSVC)
+-  target_link_options(Template PRIVATE "/STACK:456777216")
+-  target_link_options(TemplateBasic PRIVATE "/STACK:16777216")
+-endif()
+-
+-# Additional Windows libraries for Template
+-target_link_libraries(Template PRIVATE 
+-    version.lib
+-    winmm.lib
+-    setupapi.lib
+-    cfgmgr32.lib
+-    imm32.lib
+-)
+-
+-# Additional Windows libraries for TemplateBasic
+-target_link_libraries(TemplateBasic PRIVATE 
+-    version.lib
+-    winmm.lib
+-    setupapi.lib
+-    cfgmgr32.lib
+-    imm32.lib
+-)
+-
+-# Include directories for BasicEngine
+-target_include_directories(TemplateBasic PRIVATE 
+-    ${CMAKE_SOURCE_DIR}/game
+-    ${CMAKE_SOURCE_DIR}/include
+-)
+-
+-# Copy assets to build directory
+-file(COPY "${CMAKE_SOURCE_DIR}/shaders" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+-file(COPY "${CMAKE_SOURCE_DIR}/textures" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+-file(COPY "${CMAKE_SOURCE_DIR}/fonts" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+-file(COPY "${CMAKE_SOURCE_DIR}/resource" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
+-
+-# Optional: Add post-build command to ensure assets are always up to date
+-add_custom_command(TARGET Template POST_BUILD
+-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+-        "${CMAKE_SOURCE_DIR}/shaders"
+-        "$<TARGET_FILE_DIR:Template>/shaders"
+-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+-        "${CMAKE_SOURCE_DIR}/textures"
+-        "$<TARGET_FILE_DIR:Template>/textures"
+-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+-        "${CMAKE_SOURCE_DIR}/fonts"
+-        "$<TARGET_FILE_DIR:Template>/fonts"
+-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+-        "${CMAKE_SOURCE_DIR}/resource"
+-        "$<TARGET_FILE_DIR:Template>/resource"
+-)
+-
+-# Post-build for TemplateBasic
+-add_custom_command(TARGET TemplateBasic POST_BUILD
+-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+-        "${CMAKE_SOURCE_DIR}/resource"
+-        "$<TARGET_FILE_DIR:TemplateBasic>/resource"
+-)
+-
+Index: CMakeLists.txt
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+>cmake_minimum_required(VERSION 3.21)\r\nproject(Template)\r\n\r\n# Enable Hot Reload for MSVC compilers if supported.\r\nif (POLICY CMP0141)\r\n  cmake_policy(SET CMP0141 NEW)\r\n  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT \"$<IFs:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,$<$CONFIG:Debug,RelWithDebInfo:EditAndContinue>,$<$CONFIG:Debug,RelWithDebInfo:ProgramDatabase>>\")\r\nendif()\r\n\r\nset(CMAKE_CXX_STANDARD 20)\r\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\r\n\r\n\r\n# Project include directories\r\ninclude_directories(\"game\")\r\ninclude_directories(\"include\")\r\n\r\n\r\n\r\n# Build the appropriate target based on platform\r\nif(EMSCRIPTEN)\r\n  add_subdirectory(\"html\")\r\nelse()\r\n  add_subdirectory(\"windows\")\r\nendif()
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt	(revision e1dc57cb8962b8d85a7fe0921d511d96b8a1b593)
++++ b/CMakeLists.txt	(date 1767805249972)
+@@ -1,5 +1,5 @@
+ cmake_minimum_required(VERSION 3.21)
+-project(Template)
++project(ATMEngineProject)
+ 
+ # Enable Hot Reload for MSVC compilers if supported.
+ if (POLICY CMP0141)
+@@ -10,16 +10,14 @@
+ set(CMAKE_CXX_STANDARD 20)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ 
+-
+-# Project include directories
+-include_directories("game")
+-include_directories("include")
++# Find dependencies via vcpkg (Global)
++find_package(SDL3 CONFIG REQUIRED)
++find_package(SDL3_image CONFIG REQUIRED)
++find_package(SDL3_ttf CONFIG REQUIRED)
++find_package(glm CONFIG REQUIRED)
++find_package(imgui CONFIG REQUIRED)
+ 
+-
+-
+-# Build the appropriate target based on platform
+-if(EMSCRIPTEN)
+-  add_subdirectory("html")
+-else()
+-  add_subdirectory("windows")
+-endif()
+\ No newline at end of file
++# Subdirectories
++add_subdirectory(engine)
++add_subdirectory(games/SnakeGame)
++add_subdirectory(games/PlantGame)
+\ No newline at end of file
+Index: OPTIMIZATION_LOG.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+># Engine Optimization Log\r\n\r\n## \uD83C\uDFC6 Successful Optimizations\r\n\r\n| Optimization | FPS Impact | Why it Worked |\r\n|--------------|------------|---------------|\r\n| **Incremental Grid Updates** | **240 → 658 FPS** (+174%) | Eliminated the massive per-frame cost of `rebuild_grid()` by only updating entities that actually moved cells. |\r\n| **O(1) Slot-Based Removal** | **658 → 671 FPS** (+2%) | Replaced linear O(N) searching for entity removal with constant time O(1) by tracking `cell_slot[i]`. |\r\n| **Parallel Scalar Updates** | **Baseline** | Full utilization of 32 hardware threads via `std::execution::par` proved superior to single-threaded SIMD. |\r\n| **Serial Sort Optimization** | **671 → 720 FPS** (+7%) | Removed `std::execution::par` from `std::sort`. The overhead of parallel execution policy (thread pool management) was higher than the cost of a simple serial sort for this N (50,000 entities). |\r\n| **Zero-Allocation Spatial Grid** | **720 → 963 FPS** (+34%) | Eliminated `std::vector` reallocations and dynamic memory from the hot loop by using an Intrusive Linked List and pre-allocated node pools. |\r\n\r\n---\r\n\r\n## ❌ Failed Optimizations\r\n\r\n| Optimization | FPS Impact | Why it Failed |\r\n|--------------|------------|---------------|\r\n| **Batch Grid Updates** | **671 → 530 FPS** (-21%) | Collecting cell changes in thread-local buffers and merging them caused mutex contention that outweighed the cost of simple atomic operations. |\r\n| **SIMD (AVX2)** | **671 → 188 FPS** (-72%) | **Reason 1**: Ran on a single thread, losing 32x parallelism.<br>**Reason 2**: Separating movement (SIMD) from grid logic (Scalar) doubled the iteration overhead and cache pressure. |\r\n| **Parallel Render Batching** | **671 → 605 FPS** (-10%) | The cost of merging thread-local instruction buffers (`memcpy` + offset math) was higher than the extremely fast serial pointer increments. |\r\n| **Memory Prefetching** | **671 → 586 FPS** (-13%) | **Reason**: `_mm_prefetch` instructions added instruction overhead without hiding enough latency. The CPU's hardware prefetcher was likely already doing a good job on the sequential streams, and the \"gather\" prefetch was too late or interfered with the pipeline. |\r\n| **Vulkan Renderer** | **Engine failed to initialize** | SDL3 library was built without Vulkan support or runtime drivers are missing. |\r\n| **Parallel Render Batching** | **671 → 443 FPS** (-34%) | Thread creation overhead and `memcpy` costs in `merge` outweighed the benefit of parallelizing the O(N) loop. |\r\n\r\n---\r\n\r\n## \uD83E\uDDE0 Key Takeaways\r\n\r\n1.  **Parallelism > SIMD**: On a high-core-count system (32 threads), saturation via `std::execution::par` beats single-threaded vectorization.\r\n2.  **Atomics are Cheap**: For dispersed updates, atomic operations are often faster than the locking or merging overhead of batching.\r\n3.  **Contiguous Memory is King**: The serial rendering loop is effectively O(N) and memory-bandwidth bound; complex parallel chunking schemes just add CPU overhead.\r\n4.  **Zero-Allocation is Critical**: In high-frequency update loops (e.g., 50k entities @ 60hz), even \"amortized constant\" operations like `vector::push_back` incur significant overhead. Pre-allocated intrusive lists are superior.\r\n
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/OPTIMIZATION_LOG.md b/OPTIMIZATION_LOG.md
+--- a/OPTIMIZATION_LOG.md	(revision e1dc57cb8962b8d85a7fe0921d511d96b8a1b593)
++++ b/OPTIMIZATION_LOG.md	(date 1767805179319)
+@@ -20,7 +20,6 @@
+ | **SIMD (AVX2)** | **671 → 188 FPS** (-72%) | **Reason 1**: Ran on a single thread, losing 32x parallelism.<br>**Reason 2**: Separating movement (SIMD) from grid logic (Scalar) doubled the iteration overhead and cache pressure. |
+ | **Parallel Render Batching** | **671 → 605 FPS** (-10%) | The cost of merging thread-local instruction buffers (`memcpy` + offset math) was higher than the extremely fast serial pointer increments. |
+ | **Memory Prefetching** | **671 → 586 FPS** (-13%) | **Reason**: `_mm_prefetch` instructions added instruction overhead without hiding enough latency. The CPU's hardware prefetcher was likely already doing a good job on the sequential streams, and the "gather" prefetch was too late or interfered with the pipeline. |
+-| **Vulkan Renderer** | **Engine failed to initialize** | SDL3 library was built without Vulkan support or runtime drivers are missing. |
+ | **Parallel Render Batching** | **671 → 443 FPS** (-34%) | Thread creation overhead and `memcpy` costs in `merge` outweighed the benefit of parallelizing the O(N) loop. |
+ 
+ ---
