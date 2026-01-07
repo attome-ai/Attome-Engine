@@ -4,6 +4,9 @@
 #include <future>
 #include <numeric>
 #include <thread>
+#define STB_IMAGE_IMPLEMENTATION
+#include "../game/stb_image.h"
+#include "SDL3_image/SDL_image.h"
 
 // EntityContainer implementation
 EntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,

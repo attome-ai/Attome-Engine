@@ -13,23 +13,23 @@ find_package(imgui CONFIG REQUIRED)
 
 # The project sources (Optimized Engine)
 set(SOURCE
-  ${CMAKE_SOURCE_DIR}/gameSrc/zombie_game.cpp
-  ${CMAKE_SOURCE_DIR}/gameSrc/ATMEngine.cpp
-  ${CMAKE_SOURCE_DIR}/gameSrc/stb_impl.cpp
-  
-  ${CMAKE_SOURCE_DIR}/gameSrc/Renderer.cpp
+  ${CMAKE_SOURCE_DIR}/gameSrc/planet_game.cpp
+  "../engine/ATMEngine.cpp"
   
   
-  ${CMAKE_SOURCE_DIR}/gameSrc/ATMByteBuffer.cpp
-  ${CMAKE_SOURCE_DIR}/gameSrc/ATMBufferPool.cpp
+  
+  
+  
+  "../lib/ATMByteBuffer.cpp"
+  "../lib/ATMBufferPool.cpp"
   
 )
 
 # Basic Engine sources (UNOPTIMIZED - for comparison)
 set(SOURCE_BASIC
-  ${CMAKE_SOURCE_DIR}/gameBasic/zombie_game_basic.cpp
-  ${CMAKE_SOURCE_DIR}/gameBasic/BasicEngine.cpp
-  ${CMAKE_SOURCE_DIR}/gameBasic/stb_impl.cpp
+  ${CMAKE_SOURCE_DIR}/gameBasic/planet_game_basic.cpp
+  "../engineBasic/BasicEngine.cpp"
+  
   
 )
 
