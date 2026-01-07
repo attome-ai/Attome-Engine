@@ -560,14 +560,8 @@ void engine_set_entity_z_index(Engine *engine, uint32_t entity_idx, int type_id,
 // Present the renderer
 void engine_present(Engine *engine) {
   PROFILE_FUNCTION();
-
-  if (engine->useVulkan) {
-    // Present with Vulkan
-    engine->vulkanRenderer->renderScene();
-  } else {
-    // Present with SDL
-    SDL_RenderPresent(engine->renderer);
-  }
+  // Present with SDL
+  SDL_RenderPresent(engine->renderer);
 }
 
 // TextureAtlas implementation
@@ -767,15 +761,8 @@ Engine *engine_create(int window_width, int window_height, int world_width,
   new (&engine->pending_removals) std::vector<EntityRef>();
   new (&engine->renderBatchManager) RenderBatchManager(8);
 
-  // Set Vulkan flag
-  engine->useVulkan = useVulkan;
-  engine->vulkanRenderer = nullptr; // Initialize to null
-
-  // Create window with appropriate flags
-  Uint32 windowFlags = 0;
-  if (useVulkan) {
-    windowFlags |= SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-  }
+  // Create window
+  Uint32 windowFlags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
   engine->window = SDL_CreateWindow("2D Game Engine", window_width,
                                     window_height, windowFlags);
@@ -788,51 +775,31 @@ Engine *engine_create(int window_width, int window_height, int world_width,
   }
   SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
-  // Initialize appropriate renderer
-  if (useVulkan) {
-    // Create Vulkan renderer
-    engine->renderer = nullptr; // No SDL renderer when using Vulkan
-    engine->vulkanRenderer = new VulkanRenderer(engine);
-
-    if (!engine->vulkanRenderer->initialize()) {
-      delete engine->vulkanRenderer;
-      SDL_DestroyWindow(engine->window);
-      engine->renderBatchManager.~RenderBatchManager();
-      engine->entityManager.~EntityManager();
-      engine->pending_removals.~vector();
-      free(engine);
-      return NULL;
-    }
-
-    // No TextureAtlas needed for Vulkan - textures are managed by the
-    // VulkanRenderer
-  } else {
-    // Create SDL renderer
-    engine->renderer = SDL_CreateRenderer(engine->window, NULL);
-    if (!engine->renderer) {
-      SDL_DestroyWindow(engine->window);
-      engine->renderBatchManager.~RenderBatchManager();
-      engine->entityManager.~EntityManager();
-      engine->pending_removals.~vector();
-      free(engine);
-      return NULL;
-    }
-
-    // Initialize the TextureAtlas with placement new
-    new (&engine->atlas) TextureAtlas(engine->renderer, 2048, 2048);
+  // Initialize SDL renderer
+  engine->renderer = SDL_CreateRenderer(engine->window, NULL);
+  if (!engine->renderer) {
+    SDL_DestroyWindow(engine->window);
+    engine->renderBatchManager.~RenderBatchManager();
+    engine->entityManager.~EntityManager();
+    engine->pending_removals.~vector();
+    free(engine);
+    return NULL;
   }
+
+  // Initialize the TextureAtlas with placement new
+  new (&engine->atlas) TextureAtlas(engine->renderer, 2048, 2048);
 
   // Init world bounds
   engine->world_bounds.x = 0;
   engine->world_bounds.y = 0;
-  engine->world_bounds.w = world_width;
-  engine->world_bounds.h = world_height;
+  engine->world_bounds.w = (float)world_width;
+  engine->world_bounds.h = (float)world_height;
 
   // Init camera
   engine->camera.x = 0;
   engine->camera.y = 0;
-  engine->camera.width = window_width;
-  engine->camera.height = window_height;
+  engine->camera.width = (float)window_width;
+  engine->camera.height = (float)window_height;
   engine->camera.zoom = 1.0f;
 
   // Init timing
@@ -848,19 +815,8 @@ void engine_destroy(Engine *engine) {
     return;
 
   // Call destructors for C++ members in reverse order of construction
-  if (!engine->useVulkan) {
-    engine->atlas.~TextureAtlas();
-  }
-
+  engine->atlas.~TextureAtlas();
   engine->renderBatchManager.~RenderBatchManager();
-  engine->pending_removals.~vector();
-  engine->entityManager.~EntityManager();
-  engine->grid.~SpatialGrid();
-
-  // Clean up Vulkan renderer if used
-  if (engine->useVulkan && engine->vulkanRenderer) {
-    delete engine->vulkanRenderer;
-  }
 
   // Destroy SDL resources
   if (engine->renderer) {
@@ -872,28 +828,15 @@ void engine_destroy(Engine *engine) {
   // Free the engine struct
   free(engine);
 }
-// Register a texture with the engine - now using TextureAtlas class
 int engine_register_texture(Engine *engine, SDL_Surface *surface, int x, int y,
                             int width, int height) {
   PROFILE_FUNCTION();
-
-  if (engine->useVulkan) {
-    // Use Vulkan texture management
-    return engine->vulkanRenderer->registerTexture(surface, x, y, width,
-                                                   height);
-  } else {
-    // Use SDL texture management
-    return engine->atlas.registerTexture(surface, x, y, width, height);
-  }
+  // Use SDL texture management
+  return engine->atlas.registerTexture(surface, x, y, width, height);
 }
 
 void engine_render_scene(Engine *engine) {
   PROFILE_FUNCTION();
-
-  if (engine->useVulkan) {
-    engine->vulkanRenderer->renderScene();
-    return;
-  }
 
   // Modern 2D Aesthetic: Clear to dark gray
   SDL_SetRenderDrawColor(engine->renderer, 15, 15, 20, 255);

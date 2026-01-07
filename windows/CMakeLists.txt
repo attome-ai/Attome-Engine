@@ -8,7 +8,7 @@ find_package(SDL3 CONFIG REQUIRED)
 find_package(SDL3_image CONFIG REQUIRED)
 find_package(SDL3_ttf CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
-find_package(Vulkan REQUIRED)
+# find_package(Vulkan REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
 # The project sources (Optimized Engine)
@@ -21,8 +21,7 @@ set(SOURCE
   ${CMAKE_SOURCE_DIR}/gameSrc/Entity.cpp
   ${CMAKE_SOURCE_DIR}/gameSrc/ATMByteBuffer.cpp
   ${CMAKE_SOURCE_DIR}/gameSrc/ATMBufferPool.cpp
-  ${CMAKE_SOURCE_DIR}/gameSrc/VulkanRenderer.cpp
-  ${CMAKE_SOURCE_DIR}/gameSrc/VulkanLoader.cpp
+  ${CMAKE_SOURCE_DIR}/gameSrc/stb_impl.cpp
 )
 
 # Basic Engine sources (UNOPTIMIZED - for comparison)
@@ -44,7 +43,6 @@ target_link_libraries(Template PRIVATE
     SDL3_image::SDL3_image
     SDL3_ttf::SDL3_ttf
     glm::glm
-    Vulkan::Vulkan
     imgui::imgui
 )
 
@@ -60,9 +58,6 @@ target_link_libraries(TemplateBasic PRIVATE
 if(TARGET imgui::sdl3)
     target_link_libraries(Template PRIVATE imgui::sdl3)
     target_link_libraries(TemplateBasic PRIVATE imgui::sdl3)
-endif()
-if(TARGET imgui::vulkan)
-    target_link_libraries(Template PRIVATE imgui::vulkan)
 endif()
 if(TARGET imgui::sdlrenderer3)
     target_link_libraries(Template PRIVATE imgui::sdlrenderer3)
@@ -100,16 +95,12 @@ target_include_directories(TemplateBasic PRIVATE
 )
 
 # Copy assets to build directory
-file(COPY "${CMAKE_SOURCE_DIR}/shaders" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 file(COPY "${CMAKE_SOURCE_DIR}/textures" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 file(COPY "${CMAKE_SOURCE_DIR}/fonts" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 file(COPY "${CMAKE_SOURCE_DIR}/resource" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 
 # Optional: Add post-build command to ensure assets are always up to date
 add_custom_command(TARGET Template POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/shaders"
-        "$<TARGET_FILE_DIR:Template>/shaders"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/textures"
         "$<TARGET_FILE_DIR:Template>/textures"

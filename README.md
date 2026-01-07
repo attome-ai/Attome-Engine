@@ -4,9 +4,9 @@ A high-performance, modern 2D game engine template built with C++20, targeting W
 
 ## 🚀 Core Technologies
 
-- **Graphics Backend**: [Vulkan](https://www.vulkan.org/) (High-performance rendering)
+- **Graphics Backend**: [SDL3 Renderer](https://wiki.libsdl.org/SDL3/SDL_Renderer) (Cross-platform hardware acceleration)
 - **Multimedia Layer**: [SDL3](https://www.libsdl.org/) (Windowing, input, audio)
-- **UI System**: [ImGui](https://github.com/ocornut/imgui) (Docking branch with SDL3/Vulkan backends)
+- **UI System**: [ImGui](https://github.com/ocornut/imgui) (Docking branch with SDL3/SDL_Renderer backends)
 - **Math Library**: [GLM](https://github.com/g-truc/glm) (OpenGL Mathematics)
 - **Data Serialization**: [nlohmann-json](https://github.com/nlohmann/json)
 - **Dependency Management**: [vcpkg](https://vcpkg.io/) (Manifest Mode)
@@ -48,7 +48,6 @@ cmake --build . --config Release
 - `game/`: Header files and engine interfaces (`.h` files).
 - `windows/`: Windows-specific CMake configuration and entry points.
 - `html/`: Emscripten/Web-specific configuration.
-- `shaders/`: Vulkan GLSL shaders.
 - `textures/`: Asset directory for textures and images.
 - `vcpkg.json`: Project dependency manifest.
 

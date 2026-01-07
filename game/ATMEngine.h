@@ -13,9 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "VulkanRenderer.h"
-
-static constexpr bool useVulkan = 0; // Maximum number of textures
+// static constexpr bool useVulkan = 0; // Removed Vulkan path
 // Spatial grid implementation
 static constexpr uint32_t WORLD_WIDTH = 50000;
 static constexpr uint32_t WORLD_HEIGHT = 50000;
@@ -507,9 +505,7 @@ public:
 // Main engine struct
 typedef struct Engine {
   SDL_Window *window;
-  SDL_Renderer *renderer;         // SDL renderer (can be null if using Vulkan)
-  VulkanRenderer *vulkanRenderer; // Vulkan renderer (can be null if using SDL)
-  bool useVulkan;                 // Flag to indicate whether to use Vulkan
+  SDL_Renderer *renderer; // SDL renderer
   RenderBatchManager renderBatchManager;
   SpatialGrid grid;
   TextureAtlas atlas;
