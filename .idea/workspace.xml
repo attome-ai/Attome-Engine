@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7d32de70-0328-47fe-9877-f2408de0c8af" name="Changes" comment="USING RAII wrappers for dynamic arrays, replaced raw pointers and manual memory management." />
+    <list default="true" id="7d32de70-0328-47fe-9877-f2408de0c8af" name="Changes" comment="REMOVED old main file and deprecated game logic" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -99,7 +99,15 @@
       <option name="project" value="LOCAL" />
       <updated>1767817523058</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="REMOVED old main file and deprecated game logic">
+      <option name="closed" value="true" />
+      <created>1767817840521</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1767817840521</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -132,6 +140,7 @@
     <MESSAGE value="de" />
     <MESSAGE value="REMOVED VULKAN SUPPORT" />
     <MESSAGE value="USING RAII wrappers for dynamic arrays, replaced raw pointers and manual memory management." />
-    <option name="LAST_COMMIT_MESSAGE" value="USING RAII wrappers for dynamic arrays, replaced raw pointers and manual memory management." />
+    <MESSAGE value="REMOVED old main file and deprecated game logic" />
+    <option name="LAST_COMMIT_MESSAGE" value="REMOVED old main file and deprecated game logic" />
   </component>
 </project>
