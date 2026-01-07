@@ -56,7 +56,7 @@ cmake --build build --config Release
 ## ⚡ Performance Features
 
 - **Spatial Partitioning**: O(1) grid-based collision queries
-- **Batch Rendering**: Single draw call per texture/z-layer via Texture Atlas
+- **Batch Rendering**: Single draw call per Texture Atlas
 - **Multithreading**: Parallel entity updates with `std::execution`
 - **Structure of Arrays (SOA)**: Cache-friendly memory layout
 - **Zero Runtime Allocation**: Memory defined at load time
