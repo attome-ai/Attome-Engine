@@ -15,13 +15,14 @@ find_package(imgui CONFIG REQUIRED)
 set(SOURCE
   ${CMAKE_SOURCE_DIR}/gameSrc/zombie_game.cpp
   ${CMAKE_SOURCE_DIR}/gameSrc/ATMEngine.cpp
-  ${CMAKE_SOURCE_DIR}/gameSrc/UI.cpp
+  ${CMAKE_SOURCE_DIR}/gameSrc/stb_impl.cpp
+  
   ${CMAKE_SOURCE_DIR}/gameSrc/Renderer.cpp
-  ${CMAKE_SOURCE_DIR}/gameSrc/Networking.cpp
-  ${CMAKE_SOURCE_DIR}/gameSrc/Entity.cpp
+  
+  
   ${CMAKE_SOURCE_DIR}/gameSrc/ATMByteBuffer.cpp
   ${CMAKE_SOURCE_DIR}/gameSrc/ATMBufferPool.cpp
-  ${CMAKE_SOURCE_DIR}/gameSrc/stb_impl.cpp
+  
 )
 
 # Basic Engine sources (UNOPTIMIZED - for comparison)
@@ -29,6 +30,7 @@ set(SOURCE_BASIC
   ${CMAKE_SOURCE_DIR}/gameBasic/zombie_game_basic.cpp
   ${CMAKE_SOURCE_DIR}/gameBasic/BasicEngine.cpp
   ${CMAKE_SOURCE_DIR}/gameBasic/stb_impl.cpp
+  
 )
 
 # Add executable target (Optimized)
