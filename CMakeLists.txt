@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Template)
+project(ATMEngineProject)
 
 # Enable Hot Reload for MSVC compilers if supported.
 if (POLICY CMP0141)
@@ -10,16 +10,14 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Find dependencies via vcpkg (Global)
+find_package(SDL3 CONFIG REQUIRED)
+find_package(SDL3_image CONFIG REQUIRED)
+find_package(SDL3_ttf CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
 
-# Project include directories
-include_directories("include")
-include_directories("vendor")
-
-
-
-# Build the appropriate target based on platform
-if(EMSCRIPTEN)
-  add_subdirectory("html")
-else()
-  add_subdirectory("windows")
-endif()
+# Subdirectories
+add_subdirectory(engine)
+add_subdirectory(games/SnakeGame)
+add_subdirectory(games/PlantGame)
