@@ -21,22 +21,21 @@
 template <typename T> class DynamicArray {
 private:
   T *data_;
-  int capacity_;
 
 public:
   // Construct with initial capacity
   explicit DynamicArray(int capacity)
-      : data_(capacity > 0 ? new T[capacity] : nullptr), capacity_(capacity) {
+      : data_(capacity > 0 ? new T[capacity] : nullptr) {
     if (data_) {
-      std::fill(data_, data_ + capacity_, T{});
+      std::fill(data_, data_ + capacity, T{});
     }
   }
 
   // Construct with initial capacity and default value
   DynamicArray(int capacity, const T &defaultValue)
-      : data_(capacity > 0 ? new T[capacity] : nullptr), capacity_(capacity) {
+      : data_(capacity > 0 ? new T[capacity] : nullptr) {
     if (data_) {
-      std::fill(data_, data_ + capacity_, defaultValue);
+      std::fill(data_, data_ + capacity, defaultValue);
     }
   }
 
@@ -44,10 +43,8 @@ public:
   ~DynamicArray() { delete[] data_; }
 
   // Move constructor
-  DynamicArray(DynamicArray &&other) noexcept
-      : data_(other.data_), capacity_(other.capacity_) {
+  DynamicArray(DynamicArray &&other) noexcept : data_(other.data_) {
     other.data_ = nullptr;
-    other.capacity_ = 0;
   }
 
   // Move assignment
@@ -55,9 +52,7 @@ public:
     if (this != &other) {
       delete[] data_;
       data_ = other.data_;
-      capacity_ = other.capacity_;
       other.data_ = nullptr;
-      other.capacity_ = 0;
     }
     return *this;
   }
@@ -78,14 +73,13 @@ public:
   operator T *() noexcept { return data_; }
   operator const T *() const noexcept { return data_; }
 
-  // Get capacity
-  int capacity() const noexcept { return capacity_; }
+  // Get capacity - REMOVED (managed by container)
+  // int capacity() const noexcept { return capacity_; }
 
   // Resize array, preserving `count` elements and filling new elements with
   // default
   void resize(int newCapacity, int count) {
-    if (newCapacity <= capacity_)
-      return;
+    // Caller checks if newCapacity <= current_capacity
 
     T *newData = new T[newCapacity];
 
@@ -99,13 +93,11 @@ public:
 
     delete[] data_;
     data_ = newData;
-    capacity_ = newCapacity;
   }
 
   // Resize with a specific default value for new elements
   void resize(int newCapacity, int count, const T &defaultValue) {
-    if (newCapacity <= capacity_)
-      return;
+    // Caller checks if newCapacity <= current_capacity
 
     T *newData = new T[newCapacity];
 
@@ -119,19 +111,18 @@ public:
 
     delete[] data_;
     data_ = newData;
-    capacity_ = newCapacity;
   }
 
   // Fill all elements with a value
-  void fill(const T &value) {
+  void fill(int size, const T &value) {
     if (data_) {
-      std::fill(data_, data_ + capacity_, value);
+      std::fill(data_, data_ + size, value);
     }
   }
 
   // Fill a range with a value
   void fillRange(int start, int end, const T &value) {
-    if (data_ && start >= 0 && end <= capacity_) {
+    if (data_ && start >= 0) {
       std::fill(data_ + start, data_ + end, value);
     }
   }
@@ -146,7 +137,6 @@ public:
 template <typename T, size_t Alignment = 64> class AlignedDynamicArray {
 private:
   T *data_;
-  int capacity_;
 
   // Aligned allocation helper
   static T *allocateAligned(int count) {
@@ -177,17 +167,17 @@ private:
 public:
   // Construct with initial capacity
   explicit AlignedDynamicArray(int capacity)
-      : data_(allocateAligned(capacity)), capacity_(capacity) {
+      : data_(allocateAligned(capacity)) {
     if (data_) {
-      std::fill(data_, data_ + capacity_, T{});
+      std::fill(data_, data_ + capacity, T{});
     }
   }
 
   // Construct with initial capacity and default value
   AlignedDynamicArray(int capacity, const T &defaultValue)
-      : data_(allocateAligned(capacity)), capacity_(capacity) {
+      : data_(allocateAligned(capacity)) {
     if (data_) {
-      std::fill(data_, data_ + capacity_, defaultValue);
+      std::fill(data_, data_ + capacity, defaultValue);
     }
   }
 
@@ -196,9 +186,8 @@ public:
 
   // Move constructor
   AlignedDynamicArray(AlignedDynamicArray &&other) noexcept
-      : data_(other.data_), capacity_(other.capacity_) {
+      : data_(other.data_) {
     other.data_ = nullptr;
-    other.capacity_ = 0;
   }
 
   // Move assignment
@@ -206,9 +195,7 @@ public:
     if (this != &other) {
       deallocateAligned(data_);
       data_ = other.data_;
-      capacity_ = other.capacity_;
       other.data_ = nullptr;
-      other.capacity_ = 0;
     }
     return *this;
   }
@@ -229,13 +216,12 @@ public:
   operator T *() noexcept { return data_; }
   operator const T *() const noexcept { return data_; }
 
-  // Get capacity
-  int capacity() const noexcept { return capacity_; }
+  // Get capacity - REMOVED
+  // int capacity() const noexcept { return capacity_; }
 
   // Resize array, preserving `count` elements
   void resize(int newCapacity, int count) {
-    if (newCapacity <= capacity_)
-      return;
+    // Caller checks capacity
 
     T *newData = allocateAligned(newCapacity);
 
@@ -249,13 +235,11 @@ public:
 
     deallocateAligned(data_);
     data_ = newData;
-    capacity_ = newCapacity;
   }
 
   // Resize with a specific default value for new elements
   void resize(int newCapacity, int count, const T &defaultValue) {
-    if (newCapacity <= capacity_)
-      return;
+    // Caller checks capacity
 
     T *newData = allocateAligned(newCapacity);
 
@@ -269,19 +253,18 @@ public:
 
     deallocateAligned(data_);
     data_ = newData;
-    capacity_ = newCapacity;
   }
 
   // Fill all elements with a value
-  void fill(const T &value) {
+  void fill(int size, const T &value) {
     if (data_) {
-      std::fill(data_, data_ + capacity_, value);
+      std::fill(data_, data_ + size, value);
     }
   }
 
   // Fill a range with a value
   void fillRange(int start, int end, const T &value) {
-    if (data_ && start >= 0 && end <= capacity_) {
+    if (data_ && start >= 0) {
       std::fill(data_ + start, data_ + end, value);
     }
   }
