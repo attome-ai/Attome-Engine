@@ -22,18 +22,18 @@
 #define WINDOW_HEIGHT 1020
 #define PLAYER_SIZE 64 // Slightly larger for ship sprite
 #define PLANET_SIZE 32 // Slightly larger for ship sprite
-#define PLAYER_SPEED 600.0f
+#define PLAYER_SPEED 800.0f
 #define NUM_PLANETS 100000
 #define BULLET_SIZE 26
-#define BULLET_SPEED 800.0f
+#define BULLET_SPEED 600.0f
 #define MAX_BULLETS 200000
-// #define FIRE_RATE 0.05f       // 20 shots per second
-// #define BULLETS_PER_SHOT 300  // Shoot 3 bullets at once
-// #define BULLET_SPREAD 0.25f   // Spread angle in radians
-// #define BULLET_DAMAGE 1000.0f // Damage per bullet
-//  Shooting Constants
+//#define FIRE_RATE 0.05f       // 20 shots per second
+//#define BULLETS_PER_SHOT 300  // Shoot 3 bullets at once
+//#define BULLET_SPREAD 0.25f   // Spread angle in radians
+//#define BULLET_DAMAGE 1000.0f // Damage per bullet
+// Shooting Constants
 #define FIRE_RATE 0.05f
-#define BULLETS_PER_SHOT 25
+#define BULLETS_PER_SHOT 300
 #define BULLET_SPREAD 0.05f
 #define BULLET_LIFETIME 11600.0f
 #define BULLET_DAMAGE 1000.0f

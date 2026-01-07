@@ -5,52 +5,26 @@
 #include <numeric>
 #include <thread>
 
-// EntityContainer implementation
+// EntityContainer implementation (RAII-enabled)
 EntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,
                                  int initialCapacity)
     : type_id(typeId), default_layer(defaultLayer), capacity(initialCapacity),
-      count(0), containerFlag((uint8_t)ContainerFlag::UPDATEABLE) {
-  // Allocate base arrays
-  flags = new uint8_t[capacity];
-  entity_ids = new uint32_t[capacity];
-  parent_ids = new uint32_t[capacity];
-  first_child_ids = new uint32_t[capacity];
-  next_sibling_ids = new uint32_t[capacity];
-  x_positions = new float[capacity];
-  y_positions = new float[capacity];
+      count(0), containerFlag((uint8_t)ContainerFlag::UPDATEABLE),
+      // RAII arrays - allocated in initializer list!
+      flags(initialCapacity, static_cast<uint8_t>(EntityFlag::NONE)),
+      entity_ids(initialCapacity, 0), parent_ids(initialCapacity, INVALID_ID),
+      first_child_ids(initialCapacity, INVALID_ID),
+      next_sibling_ids(initialCapacity, INVALID_ID),
+      x_positions(initialCapacity, 0.0f), y_positions(initialCapacity, 0.0f),
+      // Aligned arrays
+      cell_x(initialCapacity), cell_y(initialCapacity),
+      grid_node_indices(initialCapacity, 0xFF) // -1 fill
+{}
 
-  // Allocate cell tracking arrays
-  cell_x = (uint16_t *)_aligned_malloc(initialCapacity * sizeof(uint16_t),
-                                       CACHE_LINE_SIZE);
-  cell_y = (uint16_t *)_aligned_malloc(initialCapacity * sizeof(uint16_t),
-                                       CACHE_LINE_SIZE);
-  grid_node_indices = (int32_t *)_aligned_malloc(
-      initialCapacity * sizeof(int32_t), CACHE_LINE_SIZE);
-
-  memset(cell_x, 0, initialCapacity * sizeof(uint16_t));
-  memset(cell_y, 0, initialCapacity * sizeof(uint16_t));
-  memset(grid_node_indices, 0xFF,
-         initialCapacity * sizeof(int32_t)); // Init to -1
-}
-
-EntityContainer::~EntityContainer() {
-  PROFILE_FUNCTION();
-  delete[] x_positions;
-  delete[] y_positions;
-  delete[] flags;
-  delete[] entity_ids;
-  delete[] parent_ids;
-  delete[] first_child_ids;
-  delete[] next_sibling_ids;
-
-  _aligned_free(cell_x);
-  _aligned_free(cell_y);
-  _aligned_free(grid_node_indices);
-}
+// Destructor removed - RAII handles cleanup automatically!
 
 uint32_t EntityContainer::createEntity() {
   if (count >= capacity) {
-    // Resize arrays to accommodate more entities
     int newCapacity = capacity * 2;
     resizeArrays(newCapacity);
   }
@@ -75,13 +49,12 @@ void EntityContainer::removeEntity(size_t index) {
   if (index >= count)
     return;
 
-  // Move last entity to removed position
   size_t last = count - 1;
   if (index < last) {
     x_positions[index] = x_positions[last];
     y_positions[index] = y_positions[last];
     flags[index] = flags[last];
-    entity_ids[index] = index; // Update to new position
+    entity_ids[index] = index;
     parent_ids[index] = parent_ids[last];
     first_child_ids[index] = first_child_ids[last];
     next_sibling_ids[index] = next_sibling_ids[last];
@@ -98,99 +71,37 @@ void EntityContainer::resizeArrays(int newCapacity) {
   if (newCapacity <= capacity)
     return;
 
-  // Create new arrays
-  uint8_t *newFlags = new uint8_t[newCapacity];
-  uint32_t *newEntityIds = new uint32_t[newCapacity];
-  uint32_t *newParentIds = new uint32_t[newCapacity];
-  uint32_t *newFirstChildIds = new uint32_t[newCapacity];
-  uint32_t *newNextSiblingIds = new uint32_t[newCapacity];
-  float *newXPositions =
-      new float[newCapacity]; // Changed from int32_t to float
-  float *newYPositions =
-      new float[newCapacity]; // Changed from int32_t to float
-  // Copy existing data
-  for (int i = 0; i < count; i++) {
-    newXPositions[i] = x_positions[i];
-    newYPositions[i] = y_positions[i];
-    newFlags[i] = flags[i];
-    newEntityIds[i] = entity_ids[i];
-    newParentIds[i] = parent_ids[i];
-    newFirstChildIds[i] = first_child_ids[i];
-    newNextSiblingIds[i] = next_sibling_ids[i];
-  }
+  // DynamicArray and AlignedArray handle all allocation/copy/fill!
+  flags.resize(newCapacity, count, static_cast<uint8_t>(EntityFlag::NONE));
+  entity_ids.resize(newCapacity, count, 0u);
+  parent_ids.resize(newCapacity, count, INVALID_ID);
+  first_child_ids.resize(newCapacity, count, INVALID_ID);
+  next_sibling_ids.resize(newCapacity, count, INVALID_ID);
+  x_positions.resize(newCapacity, count, 0.0f);
+  y_positions.resize(newCapacity, count, 0.0f);
 
-  // Delete old arrays
-  delete[] flags;
-  delete[] entity_ids;
-  delete[] parent_ids;
-  delete[] first_child_ids;
-  delete[] next_sibling_ids;
+  cell_x.resize(newCapacity, count);
+  cell_y.resize(newCapacity, count);
+  grid_node_indices.resize(newCapacity, count, 0xFF); // -1 fill for new space
 
-  // Assign new arrays
-  x_positions = newXPositions;
-  y_positions = newYPositions;
-  flags = newFlags;
-  entity_ids = newEntityIds;
-  parent_ids = newParentIds;
-  first_child_ids = newFirstChildIds;
-  next_sibling_ids = newNextSiblingIds;
-
-  // Resize aligned arrays
-  uint16_t *new_cx = (uint16_t *)_aligned_malloc(newCapacity * sizeof(uint16_t),
-                                                 CACHE_LINE_SIZE);
-  uint16_t *new_cy = (uint16_t *)_aligned_malloc(newCapacity * sizeof(uint16_t),
-                                                 CACHE_LINE_SIZE);
-  int32_t *new_gni = (int32_t *)_aligned_malloc(newCapacity * sizeof(int32_t),
-                                                CACHE_LINE_SIZE);
-
-  if (count > 0) {
-    memcpy(new_cx, cell_x, count * sizeof(uint16_t));
-    memcpy(new_cy, cell_y, count * sizeof(uint16_t));
-    memcpy(new_gni, grid_node_indices, count * sizeof(int32_t));
-  }
-
-  _aligned_free(cell_x);
-  _aligned_free(cell_y);
-  _aligned_free(grid_node_indices);
-
-  cell_x = new_cx;
-  cell_y = new_cy;
-  grid_node_indices = new_gni;
-
-  // Init new space
-  if (newCapacity > capacity) {
-    memset(grid_node_indices + capacity, 0xFF,
-           (newCapacity - capacity) * sizeof(int32_t));
-  }
-
-  // Update capacity
   capacity = newCapacity;
 }
 
-// RenderableEntityContainer implementation
+// RenderableEntityContainer implementation (RAII-enabled)
 RenderableEntityContainer::RenderableEntityContainer(int typeId,
                                                      uint8_t defaultLayer,
                                                      int initialCapacity)
-    : EntityContainer(typeId, defaultLayer, initialCapacity) {
-  // Allocate renderable arrays
-
-  widths = new int16_t[capacity];
-  heights = new int16_t[capacity];
-  texture_ids = new int16_t[capacity];
-  z_indices = new uint8_t[capacity];
-  rotations = new float[capacity];
+    : EntityContainer(typeId, defaultLayer, initialCapacity),
+      // RAII arrays - allocated in initializer list!
+      widths(initialCapacity, static_cast<int16_t>(0)),
+      heights(initialCapacity, static_cast<int16_t>(0)),
+      texture_ids(initialCapacity, static_cast<int16_t>(0)),
+      z_indices(initialCapacity, static_cast<uint8_t>(0)),
+      rotations(initialCapacity, 0.0f) {
   this->containerFlag |= (uint8_t)ContainerFlag::RENDERABLE;
 }
 
-RenderableEntityContainer::~RenderableEntityContainer() {
-  PROFILE_FUNCTION();
-
-  delete[] widths;
-  delete[] heights;
-  delete[] texture_ids;
-  delete[] z_indices;
-  delete[] rotations;
-}
+// Destructor removed - RAII handles cleanup automatically!
 
 uint32_t RenderableEntityContainer::createEntity() {
   uint32_t index = EntityContainer::createEntity();
@@ -227,38 +138,15 @@ void RenderableEntityContainer::resizeArrays(int newCapacity) {
   if (newCapacity <= capacity)
     return;
 
-  // IMPORTANT: EntityContainer::resizeArrays handles resizing and deleting
-  // the base arrays (x_positions, y_positions, flags, etc.)
+  // Base class handles its own arrays
   EntityContainer::resizeArrays(newCapacity);
 
-  // Allocate new renderable-specific arrays
-  int16_t *newWidths = new int16_t[newCapacity];
-  int16_t *newHeights = new int16_t[newCapacity];
-  int16_t *newTextureIds = new int16_t[newCapacity];
-  uint8_t *newZIndices = new uint8_t[newCapacity];
-  float *newRotations = new float[newCapacity];
-
-  // Copy existing data
-  if (count > 0) {
-    std::copy(widths, widths + count, newWidths);
-    std::copy(heights, heights + count, newHeights);
-    std::copy(texture_ids, texture_ids + count, newTextureIds);
-    std::copy(z_indices, z_indices + count, newZIndices);
-    std::copy(rotations, rotations + count, newRotations);
-  }
-
-  // Delete old renderable-specific arrays ONLY
-  delete[] widths;
-  delete[] heights;
-  delete[] texture_ids;
-  delete[] z_indices;
-
-  // Assign new arrays
-  widths = newWidths;
-  heights = newHeights;
-  texture_ids = newTextureIds;
-  z_indices = newZIndices;
-  rotations = newRotations;
+  // DynamicArray handles all allocation/copy/fill!
+  widths.resize(newCapacity, count, static_cast<int16_t>(0));
+  heights.resize(newCapacity, count, static_cast<int16_t>(0));
+  texture_ids.resize(newCapacity, count, static_cast<int16_t>(0));
+  z_indices.resize(newCapacity, count, static_cast<uint8_t>(0));
+  rotations.resize(newCapacity, count, 0.0f);
 }
 
 // Layer implementation

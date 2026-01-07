@@ -87,6 +87,91 @@ class EntityContainer;
 #define CACHE_LINE_SIZE 64
 #define INVALID_ID 0xFFFFFFFF
 
+// =============================================================================
+// AlignedArray<T> - RAII wrapper for cache-aligned arrays
+// =============================================================================
+// Uses _aligned_malloc/_aligned_free for cache-line aligned memory.
+// Ideal for arrays accessed in tight loops (better cache performance).
+// =============================================================================
+template <typename T, size_t Alignment = CACHE_LINE_SIZE> class AlignedArray {
+private:
+  T *ptr_;
+
+public:
+  // Constructor: allocate aligned memory and zero-fill
+  explicit AlignedArray(int size)
+      : ptr_(static_cast<T *>(_aligned_malloc(size * sizeof(T), Alignment))) {
+    memset(ptr_, 0, size * sizeof(T));
+  }
+
+  // Constructor with custom fill byte (for -1 initialization etc)
+  AlignedArray(int size, int fillByte)
+      : ptr_(static_cast<T *>(_aligned_malloc(size * sizeof(T), Alignment))) {
+    memset(ptr_, fillByte, size * sizeof(T));
+  }
+
+  // Default constructor
+  AlignedArray() : ptr_(nullptr) {}
+
+  // Destructor: automatic cleanup
+  ~AlignedArray() { _aligned_free(ptr_); }
+
+  // Move constructor
+  AlignedArray(AlignedArray &&other) noexcept : ptr_(other.ptr_) {
+    other.ptr_ = nullptr;
+  }
+
+  // Move assignment
+  AlignedArray &operator=(AlignedArray &&other) noexcept {
+    if (this != &other) {
+      _aligned_free(ptr_);
+      ptr_ = other.ptr_;
+      other.ptr_ = nullptr;
+    }
+    return *this;
+  }
+
+  // Delete copy
+  AlignedArray(const AlignedArray &) = delete;
+  AlignedArray &operator=(const AlignedArray &) = delete;
+
+  // Resize: allocate new, copy existing, zero new space
+  void resize(int newSize, int copyCount) {
+    T *newPtr =
+        static_cast<T *>(_aligned_malloc(newSize * sizeof(T), Alignment));
+    if (ptr_ && copyCount > 0) {
+      memcpy(newPtr, ptr_, copyCount * sizeof(T));
+    }
+    memset(newPtr + copyCount, 0, (newSize - copyCount) * sizeof(T));
+    _aligned_free(ptr_);
+    ptr_ = newPtr;
+  }
+
+  // Resize with custom fill byte for new elements
+  void resize(int newSize, int copyCount, int fillByte) {
+    T *newPtr =
+        static_cast<T *>(_aligned_malloc(newSize * sizeof(T), Alignment));
+    if (ptr_ && copyCount > 0) {
+      memcpy(newPtr, ptr_, copyCount * sizeof(T));
+    }
+    memset(newPtr + copyCount, fillByte, (newSize - copyCount) * sizeof(T));
+    _aligned_free(ptr_);
+    ptr_ = newPtr;
+  }
+
+  // Pointer-like access
+  T &operator[](int index) { return ptr_[index]; }
+  const T &operator[](int index) const { return ptr_[index]; }
+
+  // Implicit conversion to raw pointer
+  operator T *() { return ptr_; }
+  operator const T *() const { return ptr_; }
+
+  // Explicit raw pointer access
+  T *data() { return ptr_; }
+  const T *data() const { return ptr_; }
+};
+
 #define WORLD_WIDTH 50000
 #define WORLD_HEIGHT 50000
 #define GRID_CELL_SIZE 64
@@ -194,7 +279,7 @@ public:
   }
 };
 
-// Entity Container Base
+// Entity Container Base (RAII-enabled)
 class EntityContainer {
 public:
   int type_id;
@@ -203,22 +288,22 @@ public:
   int count;
   uint8_t containerFlag;
 
-  // Arrays
-  uint8_t *flags;
-  uint32_t *entity_ids;
-  uint32_t *parent_ids;
-  uint32_t *first_child_ids;
-  uint32_t *next_sibling_ids;
-  float *x_positions;
-  float *y_positions;
+  // RAII arrays - automatically managed!
+  DynamicArray<uint8_t> flags;
+  DynamicArray<uint32_t> entity_ids;
+  DynamicArray<uint32_t> parent_ids;
+  DynamicArray<uint32_t> first_child_ids;
+  DynamicArray<uint32_t> next_sibling_ids;
+  DynamicArray<float> x_positions;
+  DynamicArray<float> y_positions;
 
-  // Cell tracking (aligned)
-  uint16_t *cell_x;
-  uint16_t *cell_y;
-  int32_t *grid_node_indices;
+  // Cell tracking (cache-aligned for performance)
+  AlignedArray<uint16_t> cell_x;
+  AlignedArray<uint16_t> cell_y;
+  AlignedArray<int32_t> grid_node_indices;
 
   EntityContainer(int typeId, uint8_t defaultLayer, int initialCapacity);
-  virtual ~EntityContainer();
+  virtual ~EntityContainer() = default; // RAII handles cleanup!
 
   virtual uint32_t createEntity();
   virtual void removeEntity(size_t index);
@@ -229,18 +314,19 @@ public:
   int getCount() const { return count; }
 };
 
-// Renderable Container
+// Renderable Container (RAII-enabled)
 class RenderableEntityContainer : public EntityContainer {
 public:
-  int16_t *widths;
-  int16_t *heights;
-  int16_t *texture_ids;
-  uint8_t *z_indices;
-  float *rotations;
+  // RAII arrays - automatically managed!
+  DynamicArray<int16_t> widths;
+  DynamicArray<int16_t> heights;
+  DynamicArray<int16_t> texture_ids;
+  DynamicArray<uint8_t> z_indices;
+  DynamicArray<float> rotations;
 
   RenderableEntityContainer(int typeId, uint8_t defaultLayer,
                             int initialCapacity);
-  virtual ~RenderableEntityContainer();
+  virtual ~RenderableEntityContainer() = default; // RAII handles cleanup!
 
   uint32_t createEntity() override;
   void removeEntity(size_t index) override;
