@@ -2,6 +2,7 @@
 #define ENGINE_H
 
 #include "ATMBufferPool.h"
+#include "ATMDynamicArray.h"
 #include "ATMProfiler.h"
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -105,25 +106,24 @@ public:
   float zoom;
 };
 
-// Base Entity Container using SOA with raw pointers
+// Base Entity Container using SOA with RAII wrappers
 class EntityContainer {
 protected:
   // Base entity data
 public:
-  uint8_t *flags;
-  uint32_t *entity_ids;
-  uint32_t *parent_ids;
-  uint32_t *first_child_ids;
-  uint32_t *next_sibling_ids;
+  DynamicArray<uint8_t> flags;
+  DynamicArray<uint32_t> entity_ids;
+  DynamicArray<uint32_t> parent_ids;
+  DynamicArray<uint32_t> first_child_ids;
+  DynamicArray<uint32_t> next_sibling_ids;
 
-  float *x_positions;
-  float *y_positions;
+  DynamicArray<float> x_positions;
+  DynamicArray<float> y_positions;
 
-  // Cell tracking for incremental grid updates
-  uint16_t *cell_x;
-  uint16_t *cell_y;
-  int32_t
-      *grid_node_indices; // Handle for O(1) grid manipulation (was cell_slot)
+  // Cell tracking for incremental grid updates (cache-aligned)
+  AlignedDynamicArray<uint16_t, CACHE_LINE_SIZE> cell_x;
+  AlignedDynamicArray<uint16_t, CACHE_LINE_SIZE> cell_y;
+  AlignedDynamicArray<int32_t, CACHE_LINE_SIZE> grid_node_indices;
 
   uint8_t containerFlag;
   int type_id;
@@ -150,13 +150,12 @@ protected:
 // Renderable Entity Container
 class RenderableEntityContainer : public EntityContainer {
 public:
-  // Renderable entity data
-
-  int16_t *widths;
-  int16_t *heights;
-  int16_t *texture_ids;
-  uint8_t *z_indices;
-  float *rotations; // Rotation in radians
+  // Renderable entity data (RAII managed)
+  DynamicArray<int16_t> widths;
+  DynamicArray<int16_t> heights;
+  DynamicArray<int16_t> texture_ids;
+  DynamicArray<uint8_t> z_indices;
+  DynamicArray<float> rotations; // Rotation in radians
 
   RenderableEntityContainer(int typeId, uint8_t defaultLayer,
                             int initialCapacity);
@@ -365,11 +364,6 @@ public:
   // Clear all grid data (retains node memory/capacity)
   void clearAll() {
     // Fast clear: just reset all cell heads to -1.
-    // Nodes effectively become "leaked" if we don't track them,
-    // but if we are rebuilding frame-by-frame, we might reset 'nodes' vector
-    // too? Or we iterate and free? If we use this for *static* and *dynamic*
-    // entities, clearAll is dangerous unless we rebuild everything. Usually we
-    // only rebuild dynamic entities? "rebuild_grid" suggests full rebuild.
 
     // If full rebuild:
     std::fill(cell_heads.begin(), cell_heads.end(), -1);
