@@ -57,8 +57,3 @@ Thumbs.db
 /build_log.txt
 /build_log_ascii.txt
 /build_output.txt
-/engine/temphtml/CMakeFiles
-/engine/temphtml/CMakeCache.txt
-/engine/.idea/
-/out.txt
-/engine/temphtml/html/CMakeFiles/

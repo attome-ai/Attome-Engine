@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en-us">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C++ Emscripten Application</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .emscripten {
+            padding-right: 0;
+            margin-left: auto;
+            margin-right: auto;
+            display: block;
+        }
+
+        textarea.emscripten {
+            font-family: monospace;
+            width: 100%;
+            height: 200px;
+            border: 1px solid #ccc;
+            padding: 5px;
+        }
+
+        div.emscripten {
+            text-align: center;
+        }
+
+        div.emscripten_border {
+            border: 1px solid black;
+        }
+
+        canvas.emscripten {
+            border: 0px none;
+            background-color: white;
+            width: 100%;
+        }
+
+        #status {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        #progress {
+            height: 20px;
+            width: 300px;
+            margin: 10px auto;
+        }
+
+        #controls {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        button {
+            padding: 8px 15px;
+            margin: 0 5px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+            button:hover {
+                background-color: #45a049;
+            }
+    </style>
+</head>
+<body>
+    <div class="emscripten_border">
+        <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
+    </div>
+    <div class="emscripten">
+        <div id="status">Downloading...</div>
+        <progress id="progress" max="100" value="0"></progress>
+    </div>
+    <div id="controls">
+        <button id="pauseButton">Pause Computation</button>
+        <button id="resumeButton">Resume Computation</button>
+    </div>
+    <textarea class="emscripten" id="output" rows="8"></textarea>
+
+    <script type='text/javascript'>
+        var statusElement = document.getElementById('status');
+        var progressElement = document.getElementById('progress');
+        var outputElement = document.getElementById('output');
+        var pauseButton = document.getElementById('pauseButton');
+        var resumeButton = document.getElementById('resumeButton');
+
+        var isPaused = false;
+
+        // Configure output to textarea
+        var Module = {
+            preRun: [],
+            postRun: [],
+            print: (function () {
+                var element = outputElement;
+                if (element) element.value = ''; // clear browser cache
+                return function (text) {
+                    if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                    // These replacements are necessary if you render to raw HTML
+                    text = text.replace(/&/g, "&amp;");
+                    text = text.replace(/</g, "&lt;");
+                    text = text.replace(/>/g, "&gt;");
+                    text = text.replace('\n', '<br>', 'g');
+                    console.log(text);
+                    if (element) {
+                        element.value += text + "\n";
+                        element.scrollTop = element.scrollHeight; // focus on bottom
+                    }
+                };
+            })(),
+            printErr: function (text) {
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                console.error(text);
+                if (outputElement) {
+                    outputElement.value += "Error: " + text + "\n";
+                    outputElement.scrollTop = outputElement.scrollHeight; // focus on bottom
+                }
+            },
+            canvas: (function () {
+                var canvas = document.getElementById('canvas');
+                // As a default initial behavior, pop up an alert when webgl context is lost.
+                // To make your application robust, you may want to override this behavior before shipping!
+                canvas.addEventListener("webglcontextlost", function (e) { alert('WebGL context lost. You will need to reload the page.'); e.preventDefault(); }, false);
+                return canvas;
+            })(),
+            setStatus: function (text) {
+                if (!Module.setStatus.last) Module.setStatus.last = { time: Date.now(), text: '' };
+                if (text === Module.setStatus.last.text) return;
+                var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+                var now = Date.now();
+                if (m && now - Module.setStatus.last.time < 30) return; // if this is a progress update, skip it if too soon
+                Module.setStatus.last.time = now;
+                Module.setStatus.last.text = text;
+                if (m) {
+                    text = m[1];
+                    progressElement.value = parseInt(m[2]) * 100;
+                    progressElement.max = parseInt(m[4]) * 100;
+                    progressElement.hidden = false;
+                } else {
+                    progressElement.value = null;
+                    progressElement.max = null;
+                    progressElement.hidden = true;
+                }
+                statusElement.innerHTML = text;
+            },
+            totalDependencies: 0,
+            monitorRunDependencies: function (left) {
+                this.totalDependencies = Math.max(this.totalDependencies, left);
+                Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies - left) + '/' + this.totalDependencies + ')' : 'All downloads complete.');
+            },
+            mainScriptUrlOrBlob: "your_app.js",
+            mainWorkQueue: [],
+            _scheduledCall: null,
+
+            // Configure main loop to use requestAnimationFrame for smoother operation
+            setMainLoop: function (callback, fps, simulateInfiniteLoop) {
+                var thisModule = this;
+
+                function doOneIteration() {
+                    if (!isPaused) {
+                        callback();
+                    }
+
+                    // Schedule the next frame
+                    if (!thisModule._scheduledCall) {
+                        thisModule._scheduledCall = requestAnimationFrame(function () {
+                            thisModule._scheduledCall = null;
+                            doOneIteration();
+                        });
+                    }
+                }
+
+                // Start the loop
+                doOneIteration();
+            }
+        };
+
+        // Event handlers for pause/resume buttons
+        pauseButton.addEventListener('click', function () {
+            isPaused = true;
+            console.log("Computation paused");
+            outputElement.value += "Computation paused\n";
+            outputElement.scrollTop = outputElement.scrollHeight;
+        });
+
+        resumeButton.addEventListener('click', function () {
+            isPaused = false;
+            console.log("Computation resumed");
+            outputElement.value += "Computation resumed\n";
+            outputElement.scrollTop = outputElement.scrollHeight;
+        });
+
+        // Set initial status
+        Module.setStatus('Downloading...');
+        window.onerror = function (event) {
+            Module.setStatus('Exception thrown, see JavaScript console');
+            Module.setStatus = function (text) {
+                if (text) Module.printErr('[post-exception status] ' + text);
+            };
+        };
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>
