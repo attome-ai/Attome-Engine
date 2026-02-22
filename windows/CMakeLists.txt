@@ -17,10 +17,7 @@ set(ENGINE_SOURCES
   "../lib/ATMBufferPool.cpp"
 )
 
-# Basic Engine sources (UNOPTIMIZED - for comparison)
-set(ENGINE_BASIC_SOURCES
-  "../engineBasic/BasicEngine.cpp"
-)
+
 
 # =============================================================================
 # Game Executables
@@ -28,21 +25,17 @@ set(ENGINE_BASIC_SOURCES
 
 # 1. Planet Game (Optimized Engine)
 add_executable(PlanetGame
-  ${CMAKE_SOURCE_DIR}/gameOptimized/planet_game.cpp
+  ${CMAKE_SOURCE_DIR}/planet_optimized/planet_game.cpp
   ${ENGINE_SOURCES}
 )
 
 # 2. Snake Game (Optimized Engine)
 add_executable(SnakeGame
-  ${CMAKE_SOURCE_DIR}/gameOptimized/snake_game.cpp
+  ${CMAKE_SOURCE_DIR}/snake/snake_game.cpp
   ${ENGINE_SOURCES}
 )
 
-# 3. Planet Game Basic (Unoptimized Engine - for comparison)
-add_executable(PlanetGameBasic
-  ${CMAKE_SOURCE_DIR}/gameBasic/planet_game_basic.cpp
-  ${ENGINE_BASIC_SOURCES}
-)
+
 
 # =============================================================================
 # Common Dependencies - Helper Function
@@ -144,7 +137,6 @@ endfunction()
 
 link_optimized_engine_deps(PlanetGame)
 link_optimized_engine_deps(SnakeGame)
-link_basic_engine_deps(PlanetGameBasic)
 
 # =============================================================================
 # Initial Asset Copy
