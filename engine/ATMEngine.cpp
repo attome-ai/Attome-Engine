@@ -1,5 +1,6 @@
 ﻿#include "ATMEngine.h"
 #include <algorithm>
+#include <utility>
 #include <execution>
 #include <future>
 #include <numeric>
@@ -12,16 +13,19 @@
 // EntityContainer implementation
 EntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,
                                  int initialCapacity)
-    : flags(initialCapacity), entity_ids(initialCapacity),
+    : flags(initialCapacity), entity_ids(initialCapacity, INVALID_ID),
       parent_ids(initialCapacity, INVALID_ID),
       first_child_ids(initialCapacity, INVALID_ID),
       next_sibling_ids(initialCapacity, INVALID_ID),
       x_positions(initialCapacity, 0.0f), y_positions(initialCapacity, 0.0f),
       cell_x(initialCapacity), cell_y(initialCapacity),
       grid_node_indices(initialCapacity, -1),
+      slot_to_id(initialCapacity, INVALID_ID),
+      id_to_slot(initialCapacity, INVALID_ID), free_ids(), next_id(0),
       containerFlag((uint8_t)ContainerFlag::UPDATEABLE), type_id(typeId),
       default_layer(defaultLayer), capacity(initialCapacity), count(0) {
   // All arrays initialized via member initializer list - RAII handles cleanup
+  free_ids.reserve(initialCapacity);
 }
 
 EntityContainer::~EntityContainer() {
@@ -29,49 +33,95 @@ EntityContainer::~EntityContainer() {
   // RAII: DynamicArray destructors automatically free memory
 }
 
-uint32_t EntityContainer::createEntity() {
+EntityHandle EntityContainer::createEntity() {
   if (count >= capacity) {
     // Resize arrays to accommodate more entities
-    int newCapacity = capacity * 2;
+    int newCapacity = capacity > 0 ? (capacity * 2) : 1;
     resizeArrays(newCapacity);
   }
 
-  size_t index = count++;
-  x_positions[index] = 0.0f;
-  y_positions[index] = 0.0f;
-  flags[index] = static_cast<uint8_t>(EntityFlag::NONE);
-  entity_ids[index] = index;
-  parent_ids[index] = INVALID_ID;
-  first_child_ids[index] = INVALID_ID;
-  next_sibling_ids[index] = INVALID_ID;
-  cell_x[index] = 0;
-  cell_y[index] = 0;
-  grid_node_indices[index] = -1;
+  uint32_t slot = count++;
+  EntityHandle id = INVALID_ID;
+  if (!free_ids.empty()) {
+    id = free_ids.back();
+    free_ids.pop_back();
+  } else {
+    id = next_id++;
+  }
 
-  return index;
+  if (id >= id_to_slot.size()) {
+    id_to_slot.resize(id + 1, INVALID_ID);
+  }
+
+  id_to_slot[id] = slot;
+  slot_to_id[slot] = id;
+  entity_ids[slot] = id;
+  x_positions[slot] = 0.0f;
+  y_positions[slot] = 0.0f;
+  flags[slot] = static_cast<uint8_t>(EntityFlag::NONE);
+  parent_ids[slot] = INVALID_ID;
+  first_child_ids[slot] = INVALID_ID;
+  next_sibling_ids[slot] = INVALID_ID;
+  cell_x[slot] = 0;
+  cell_y[slot] = 0;
+  grid_node_indices[slot] = -1;
+
+  return id;
 }
 
-void EntityContainer::removeEntity(size_t index) {
+void EntityContainer::removeEntity(EntityHandle id) {
   PROFILE_FUNCTION();
-  if (index >= count)
+  if (!isAlive(id))
     return;
 
-  // Move last entity to removed position
-  size_t last = count - 1;
-  if (index < last) {
-    x_positions[index] = x_positions[last];
-    y_positions[index] = y_positions[last];
-    flags[index] = flags[last];
-    entity_ids[index] = index; // Update to new position
-    parent_ids[index] = parent_ids[last];
-    first_child_ids[index] = first_child_ids[last];
-    next_sibling_ids[index] = next_sibling_ids[last];
-    cell_x[index] = cell_x[last];
-    cell_y[index] = cell_y[last];
-    grid_node_indices[index] = grid_node_indices[last];
+  uint32_t slot = id_to_slot[id];
+  uint32_t last = count - 1;
+  if (slot != last) {
+    EntityHandle moved_id = slot_to_id[last];
+    swapSlots(slot, last);
+    id_to_slot[moved_id] = slot;
   }
 
   count--;
+  id_to_slot[id] = INVALID_ID;
+  free_ids.push_back(id);
+  if (count < capacity) {
+    slot_to_id[count] = INVALID_ID;
+    entity_ids[count] = INVALID_ID;
+  }
+}
+
+void EntityContainer::swapSlots(uint32_t a, uint32_t b) {
+  if (a == b)
+    return;
+
+  std::swap(flags[a], flags[b]);
+  std::swap(entity_ids[a], entity_ids[b]);
+  std::swap(parent_ids[a], parent_ids[b]);
+  std::swap(first_child_ids[a], first_child_ids[b]);
+  std::swap(next_sibling_ids[a], next_sibling_ids[b]);
+  std::swap(x_positions[a], x_positions[b]);
+  std::swap(y_positions[a], y_positions[b]);
+  std::swap(cell_x[a], cell_x[b]);
+  std::swap(cell_y[a], cell_y[b]);
+  std::swap(grid_node_indices[a], grid_node_indices[b]);
+  std::swap(slot_to_id[a], slot_to_id[b]);
+}
+
+EntityHandle EntityContainer::getStableId(uint32_t slot) const {
+  if (slot >= static_cast<uint32_t>(count))
+    return INVALID_ID;
+  return slot_to_id[slot];
+}
+
+uint32_t EntityContainer::getSlot(EntityHandle id) const {
+  if (id >= id_to_slot.size())
+    return INVALID_ID;
+  return id_to_slot[id];
+}
+
+bool EntityContainer::isAlive(EntityHandle id) const {
+  return id < id_to_slot.size() && id_to_slot[id] != INVALID_ID;
 }
 
 void EntityContainer::resizeArrays(int newCapacity) {
@@ -81,7 +131,7 @@ void EntityContainer::resizeArrays(int newCapacity) {
 
   // RAII: Use DynamicArray::resize() - handles allocation, copy, and cleanup
   flags.resize(newCapacity, count);
-  entity_ids.resize(newCapacity, count);
+  entity_ids.resize(newCapacity, count, INVALID_ID);
   parent_ids.resize(newCapacity, count, INVALID_ID);
   first_child_ids.resize(newCapacity, count, INVALID_ID);
   next_sibling_ids.resize(newCapacity, count, INVALID_ID);
@@ -90,6 +140,7 @@ void EntityContainer::resizeArrays(int newCapacity) {
   cell_x.resize(newCapacity, count);
   cell_y.resize(newCapacity, count);
   grid_node_indices.resize(newCapacity, count, -1);
+  slot_to_id.resize(newCapacity, count, INVALID_ID);
 
   // Update capacity
   capacity = newCapacity;
@@ -111,34 +162,30 @@ RenderableEntityContainer::~RenderableEntityContainer() {
   // RAII: DynamicArray destructors automatically free memory
 }
 
-uint32_t RenderableEntityContainer::createEntity() {
-  uint32_t index = EntityContainer::createEntity();
-  if (index == INVALID_ID)
+EntityHandle RenderableEntityContainer::createEntity() {
+  EntityHandle id = EntityContainer::createEntity();
+  if (id == INVALID_ID)
     return INVALID_ID;
 
-  widths[index] = 0;
-  heights[index] = 0;
-  texture_ids[index] = 0;
-  z_indices[index] = 0;
-  rotations[index] = 0.0f;
-  return index;
+  uint32_t slot = getSlot(id);
+  widths[slot] = 0;
+  heights[slot] = 0;
+  texture_ids[slot] = 0;
+  z_indices[slot] = 0;
+  rotations[slot] = 0.0f;
+  return id;
 }
 
-void RenderableEntityContainer::removeEntity(size_t index) {
-  PROFILE_FUNCTION();
-  if (index >= count)
+void RenderableEntityContainer::swapSlots(uint32_t a, uint32_t b) {
+  if (a == b)
     return;
 
-  size_t last = count - 1;
-  if (index < last) {
-    widths[index] = widths[last];
-    heights[index] = heights[last];
-    texture_ids[index] = texture_ids[last];
-    z_indices[index] = z_indices[last];
-    rotations[index] = rotations[last];
-  }
-
-  EntityContainer::removeEntity(index);
+  std::swap(widths[a], widths[b]);
+  std::swap(heights[a], heights[b]);
+  std::swap(texture_ids[a], texture_ids[b]);
+  std::swap(z_indices[a], z_indices[b]);
+  std::swap(rotations[a], rotations[b]);
+  EntityContainer::swapSlots(a, b);
 }
 
 void RenderableEntityContainer::resizeArrays(int newCapacity) {
@@ -198,23 +245,23 @@ int EntityManager::registerEntityType(EntityContainer *container) {
   return type_id;
 }
 
-uint32_t EntityManager::createEntity(int type_id) {
+EntityHandle EntityManager::createEntity(int type_id) {
   PROFILE_FUNCTION();
   if (type_id >= containers.size())
     return INVALID_ID;
-  uint32_t index = containers[type_id]->createEntity();
-  if (index != INVALID_ID) {
+  EntityHandle id = containers[type_id]->createEntity();
+  if (id != INVALID_ID) {
     // Could store a mapping from index to next_entity_id if needed
     next_entity_id++;
   }
-  return index;
+  return id;
 }
 
-void EntityManager::removeEntity(uint32_t index, int type_id) {
+void EntityManager::removeEntity(EntityHandle id, int type_id) {
   PROFILE_FUNCTION();
   if (type_id >= containers.size())
     return;
-  containers[type_id]->removeEntity(index);
+  containers[type_id]->removeEntity(id);
 }
 
 void EntityManager::update(float delta_time) {
@@ -398,7 +445,7 @@ void process_pending_removals(Engine *engine) {
     return;
 
   for (const auto &ref : engine->pending_removals) {
-    if (ref.type < 0 || ref.type >= engine->entityManager.containers.size())
+    if (ref.type >= engine->entityManager.containers.size())
       continue;
 
     auto container = engine->entityManager.containers[ref.type].get();
@@ -434,8 +481,8 @@ void engine_update(Engine *engine) {
 }
 
 // Set entity z_index
-void engine_set_entity_z_index(Engine *engine, uint32_t entity_idx, int type_id,
-                               uint8_t z_index) {
+void engine_set_entity_z_index(Engine *engine, EntityHandle entity_idx,
+                               int type_id, uint8_t z_index) {
   PROFILE_FUNCTION();
 
   if (type_id >= engine->entityManager.containers.size())
@@ -447,10 +494,11 @@ void engine_set_entity_z_index(Engine *engine, uint32_t entity_idx, int type_id,
 
   RenderableEntityContainer *renderable =
       dynamic_cast<RenderableEntityContainer *>(container);
-  if (!renderable || entity_idx >= renderable->getCount())
+  uint32_t slot = renderable ? renderable->getSlot(entity_idx) : INVALID_ID;
+  if (!renderable || slot == INVALID_ID)
     return;
 
-  renderable->z_indices[entity_idx] = z_index;
+  renderable->z_indices[slot] = z_index;
 }
 
 // Present the renderer
@@ -760,6 +808,7 @@ void engine_render_scene(Engine *engine) {
   struct SortableEntity {
     uint64_t sort_key;
     EntityRef ref;
+    uint32_t slot;
 
     bool operator<(const SortableEntity &other) const {
       return sort_key < other.sort_key;
@@ -773,15 +822,21 @@ void engine_render_scene(Engine *engine) {
 
   // Build sort keys - ONE pointer deref per entity (not per comparison)
   for (const auto &entity : visible_entities) {
-    auto rCont = static_cast<RenderableEntityContainer *>(
-        engine->entityManager.containers[entity.type].get());
+    auto container = engine->entityManager.containers[entity.type].get();
+    if (!container)
+      continue;
+    uint32_t slot = container->getSlot(entity.index);
+    if (slot == INVALID_ID)
+      continue;
+
+    auto rCont = static_cast<RenderableEntityContainer *>(container);
 
     uint64_t key =
-        (static_cast<uint64_t>(rCont->z_indices[entity.index]) << 56) |
+        (static_cast<uint64_t>(rCont->z_indices[slot]) << 56) |
         (static_cast<uint64_t>(entity.type) << 48) |
         static_cast<uint64_t>(entity.index);
 
-    sortable_entities.push_back({key, entity});
+    sortable_entities.push_back({key, entity, slot});
   }
 
   // Sort on pre-computed keys - ZERO pointer derefs during sort
@@ -798,19 +853,19 @@ void engine_render_scene(Engine *engine) {
 
   for (const auto &se : sortable_entities) {
     const auto &entity = se.ref;
+    const uint32_t slot = se.slot;
     auto rCont = static_cast<RenderableEntityContainer *>(
         engine->entityManager.containers[entity.type].get());
-    float x = rCont->x_positions[entity.index] - x1;
-    float y = rCont->y_positions[entity.index] - y1;
-    float w = rCont->widths[entity.index];
-    float h = rCont->heights[entity.index];
+    float x = rCont->x_positions[slot] - x1;
+    float y = rCont->y_positions[slot] - y1;
+    float w = rCont->widths[slot];
+    float h = rCont->heights[slot];
 
     if (x + w < 0 || x > engine->camera.width || y + h < 0 ||
         y > engine->camera.height)
       continue;
 
-    SDL_FRect texRegion =
-        engine->atlas.getRegion(rCont->texture_ids[entity.index]);
+    SDL_FRect texRegion = engine->atlas.getRegion(rCont->texture_ids[slot]);
 
     // Add quad directly to unified batch
     int base_vert = unified_vertices.size();
@@ -820,7 +875,7 @@ void engine_render_scene(Engine *engine) {
     SDL_Vertex v;
     v.color = {1, 1, 1, 1};
 
-    float angle = rCont->rotations[entity.index];
+    float angle = rCont->rotations[slot];
     float cx = x + w * 0.5f;
     float cy = y + h * 0.5f;
     float c = cosf(angle);
@@ -925,7 +980,10 @@ void SpatialGrid::rebuild_grid(Engine *engine) {
     for (int j = 0; j < count; ++j) {
       float x = container->x_positions[j];
       float y = container->y_positions[j];
-      EntityRef ref = {(uint32_t)i, (uint32_t)j};
+      EntityHandle id = container->getStableId(j);
+      if (id == INVALID_ID)
+        continue;
+      EntityRef ref = {(uint32_t)i, id};
 
       int32_t nodeIdx = engine->grid.add(ref, x, y);
       container->grid_node_indices[j] = nodeIdx;

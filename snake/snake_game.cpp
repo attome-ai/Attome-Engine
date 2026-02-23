@@ -2,6 +2,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <algorithm>
+#include <utility>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -37,7 +38,7 @@ enum GameEntityTypes {
 struct SnakeSegment {
   float x, y;               // Logic position (grid-aligned)
   float visual_x, visual_y; // Visual position (smooth)
-  uint32_t entity_index;
+  EntityHandle entity_handle;
 };
 
 // --- Direction enum ---
@@ -62,40 +63,35 @@ public:
     delete[] speeds;
   }
 
-  uint32_t createEntity() override {
-    uint32_t index = RenderableEntityContainer::createEntity();
-    if (index == INVALID_ID)
+  EntityHandle createEntity() override {
+    EntityHandle id = RenderableEntityContainer::createEntity();
+    if (id == INVALID_ID)
       return INVALID_ID;
 
-    directions[index] = RIGHT;
-    speeds[index] = SNAKE_SPEED;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 100; // High z-index to render above all food
-    return index;
+    uint32_t slot = getSlot(id);
+    directions[slot] = RIGHT;
+    speeds[slot] = SNAKE_SPEED;
+    flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[slot] = 100; // High z-index to render above all food
+    return id;
   }
 
-  uint32_t createEntity(float x, float y, int texture_id) {
-    uint32_t index = createEntity();
-    if (index == INVALID_ID)
+  EntityHandle createEntity(float x, float y, int texture_id) {
+    EntityHandle id = createEntity();
+    if (id == INVALID_ID)
       return INVALID_ID;
 
-    x_positions[index] = x;
-    y_positions[index] = y;
-    widths[index] = GRID_SIZE;
-    heights[index] = GRID_SIZE;
-    texture_ids[index] = texture_id;
-    return index;
+    uint32_t slot = getSlot(id);
+    x_positions[slot] = x;
+    y_positions[slot] = y;
+    widths[slot] = GRID_SIZE;
+    heights[slot] = GRID_SIZE;
+    texture_ids[slot] = texture_id;
+    return id;
   }
 
-  void removeEntity(size_t index) override {
-    if (index >= count)
-      return;
-    size_t last = count - 1;
-    if (index < last) {
-      directions[index] = directions[last];
-      speeds[index] = speeds[last];
-    }
-    RenderableEntityContainer::removeEntity(index);
+  void removeEntity(EntityHandle id) override {
+    RenderableEntityContainer::removeEntity(id);
   }
 
   void update(float delta_time) override {
@@ -105,6 +101,14 @@ public:
   }
 
 protected:
+  void swapSlots(uint32_t a, uint32_t b) override {
+    if (a == b)
+      return;
+    std::swap(directions[a], directions[b]);
+    std::swap(speeds[a], speeds[b]);
+    RenderableEntityContainer::swapSlots(a, b);
+  }
+
   void resizeArrays(int newCapacity) override {
     if (newCapacity <= capacity)
       return;
@@ -135,19 +139,20 @@ public:
   SnakeBodyContainer(int typeId, uint8_t defaultLayer, int initialCapacity)
       : RenderableEntityContainer(typeId, defaultLayer, initialCapacity) {}
 
-  uint32_t createEntity(float x, float y, int texture_id) {
-    uint32_t index = RenderableEntityContainer::createEntity();
-    if (index == INVALID_ID)
+  EntityHandle createEntity(float x, float y, int texture_id) {
+    EntityHandle id = RenderableEntityContainer::createEntity();
+    if (id == INVALID_ID)
       return INVALID_ID;
 
-    x_positions[index] = x;
-    y_positions[index] = y;
-    widths[index] = GRID_SIZE;
-    heights[index] = GRID_SIZE;
-    texture_ids[index] = texture_id;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 99; // High z-index to render above food
-    return index;
+    uint32_t slot = getSlot(id);
+    x_positions[slot] = x;
+    y_positions[slot] = y;
+    widths[slot] = GRID_SIZE;
+    heights[slot] = GRID_SIZE;
+    texture_ids[slot] = texture_id;
+    flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[slot] = 99; // High z-index to render above food
+    return id;
   }
 
   void update(float delta_time) override {
@@ -180,35 +185,28 @@ public:
     delete[] food_types;
   }
 
-  uint32_t createEntity(float x, float y, int texture_id, int value, int grow,
-                        int type) {
-    uint32_t index = RenderableEntityContainer::createEntity();
-    if (index == INVALID_ID)
+  EntityHandle createEntity(float x, float y, int texture_id, int value,
+                            int grow, int type) {
+    EntityHandle id = RenderableEntityContainer::createEntity();
+    if (id == INVALID_ID)
       return INVALID_ID;
 
-    x_positions[index] = x;
-    y_positions[index] = y;
-    widths[index] = GRID_SIZE;
-    heights[index] = GRID_SIZE;
-    texture_ids[index] = texture_id;
-    values[index] = value;
-    growth[index] = grow;
-    food_types[index] = type;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 5;
-    return index;
+    uint32_t slot = getSlot(id);
+    x_positions[slot] = x;
+    y_positions[slot] = y;
+    widths[slot] = GRID_SIZE;
+    heights[slot] = GRID_SIZE;
+    texture_ids[slot] = texture_id;
+    values[slot] = value;
+    growth[slot] = grow;
+    food_types[slot] = type;
+    flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[slot] = 5;
+    return id;
   }
 
-  void removeEntity(size_t index) override {
-    if (index >= count)
-      return;
-    size_t last = count - 1;
-    if (index < last) {
-      values[index] = values[last];
-      growth[index] = growth[last];
-      food_types[index] = food_types[last];
-    }
-    RenderableEntityContainer::removeEntity(index);
+  void removeEntity(EntityHandle id) override {
+    RenderableEntityContainer::removeEntity(id);
   }
 
   void update(float delta_time) override {
@@ -218,6 +216,15 @@ public:
   }
 
 protected:
+  void swapSlots(uint32_t a, uint32_t b) override {
+    if (a == b)
+      return;
+    std::swap(values[a], values[b]);
+    std::swap(growth[a], growth[b]);
+    std::swap(food_types[a], food_types[b]);
+    RenderableEntityContainer::swapSlots(a, b);
+  }
+
   void resizeArrays(int newCapacity) override {
     if (newCapacity <= capacity)
       return;
@@ -271,38 +278,32 @@ public:
     delete[] dir_y;
   }
 
-  uint32_t createEntity(float x, float y, int texture_id, float speed = 50.0f) {
-    uint32_t index = RenderableEntityContainer::createEntity();
-    if (index == INVALID_ID)
+  EntityHandle createEntity(float x, float y, int texture_id,
+                            float speed = 50.0f) {
+    EntityHandle id = RenderableEntityContainer::createEntity();
+    if (id == INVALID_ID)
       return INVALID_ID;
 
-    x_positions[index] = x;
-    y_positions[index] = y;
-    widths[index] = GRID_SIZE;
-    heights[index] = GRID_SIZE;
-    texture_ids[index] = texture_id;
-    speeds[index] = speed;
+    uint32_t slot = getSlot(id);
+    x_positions[slot] = x;
+    y_positions[slot] = y;
+    widths[slot] = GRID_SIZE;
+    heights[slot] = GRID_SIZE;
+    texture_ids[slot] = texture_id;
+    speeds[slot] = speed;
 
     // Random direction
     float angle = static_cast<float>(rand()) / RAND_MAX * 2.0f * 3.14159265f;
-    dir_x[index] = cosf(angle);
-    dir_y[index] = sinf(angle);
+    dir_x[slot] = cosf(angle);
+    dir_y[slot] = sinf(angle);
 
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 6;
-    return index;
+    flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[slot] = 6;
+    return id;
   }
 
-  void removeEntity(size_t index) override {
-    if (index >= count)
-      return;
-    size_t last = count - 1;
-    if (index < last) {
-      speeds[index] = speeds[last];
-      dir_x[index] = dir_x[last];
-      dir_y[index] = dir_y[last];
-    }
-    RenderableEntityContainer::removeEntity(index);
+  void removeEntity(EntityHandle id) override {
+    RenderableEntityContainer::removeEntity(id);
   }
 
   void update(float delta_time) override {
@@ -383,6 +384,15 @@ public:
   }
 
 protected:
+  void swapSlots(uint32_t a, uint32_t b) override {
+    if (a == b)
+      return;
+    std::swap(speeds[a], speeds[b]);
+    std::swap(dir_x[a], dir_x[b]);
+    std::swap(dir_y[a], dir_y[b]);
+    RenderableEntityContainer::swapSlots(a, b);
+  }
+
   void resizeArrays(int newCapacity) override {
     if (newCapacity <= capacity)
       return;
@@ -425,30 +435,25 @@ public:
 
   ~PowerUpContainer() override { delete[] types; }
 
-  uint32_t createEntity(float x, float y, int texture_id, int type = 0) {
-    uint32_t index = RenderableEntityContainer::createEntity();
-    if (index == INVALID_ID)
+  EntityHandle createEntity(float x, float y, int texture_id, int type = 0) {
+    EntityHandle id = RenderableEntityContainer::createEntity();
+    if (id == INVALID_ID)
       return INVALID_ID;
 
-    x_positions[index] = x;
-    y_positions[index] = y;
-    widths[index] = GRID_SIZE;
-    heights[index] = GRID_SIZE;
-    texture_ids[index] = texture_id;
-    types[index] = type;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 4;
-    return index;
+    uint32_t slot = getSlot(id);
+    x_positions[slot] = x;
+    y_positions[slot] = y;
+    widths[slot] = GRID_SIZE;
+    heights[slot] = GRID_SIZE;
+    texture_ids[slot] = texture_id;
+    types[slot] = type;
+    flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[slot] = 4;
+    return id;
   }
 
-  void removeEntity(size_t index) override {
-    if (index >= count)
-      return;
-    size_t last = count - 1;
-    if (index < last) {
-      types[index] = types[last];
-    }
-    RenderableEntityContainer::removeEntity(index);
+  void removeEntity(EntityHandle id) override {
+    RenderableEntityContainer::removeEntity(id);
   }
 
   void update(float delta_time) override {
@@ -458,6 +463,13 @@ public:
   }
 
 protected:
+  void swapSlots(uint32_t a, uint32_t b) override {
+    if (a == b)
+      return;
+    std::swap(types[a], types[b]);
+    RenderableEntityContainer::swapSlots(a, b);
+  }
+
   void resizeArrays(int newCapacity) override {
     if (newCapacity <= capacity)
       return;
@@ -479,7 +491,7 @@ protected:
 struct GameState {
   // Snake data
   std::deque<SnakeSegment> snake_body;
-  uint32_t head_entity_index;
+  EntityHandle head_handle;
   Direction current_direction;
   Direction queued_direction;
   float move_timer;
@@ -585,7 +597,7 @@ int main(int argc, char *argv[]) {
   game_state.food_container = food_container;
   game_state.enemy_container = enemy_container;
   game_state.powerup_container = powerup_container;
-  game_state.head_entity_index = INVALID_ID;
+  game_state.head_handle = INVALID_ID;
   game_state.is_alive = true;
   game_state.score_multiplier = 1;
   game_state.last_fps_time = SDL_GetTicks();
@@ -608,11 +620,14 @@ int main(int argc, char *argv[]) {
   }
 
   // Set camera to snake head
-  if (game_state.head_entity_index != INVALID_ID) {
-    float head_x = head_container->x_positions[game_state.head_entity_index];
-    float head_y = head_container->y_positions[game_state.head_entity_index];
-    engine->camera.x = head_x + GRID_SIZE / 2.0f;
-    engine->camera.y = head_y + GRID_SIZE / 2.0f;
+  if (game_state.head_handle != INVALID_ID) {
+    uint32_t head_slot = head_container->getSlot(game_state.head_handle);
+    if (head_slot != INVALID_ID) {
+      float head_x = head_container->x_positions[head_slot];
+      float head_y = head_container->y_positions[head_slot];
+      engine->camera.x = head_x + GRID_SIZE / 2.0f;
+      engine->camera.y = head_y + GRID_SIZE / 2.0f;
+    }
   }
 
   // Game loop
@@ -784,7 +799,7 @@ void setup_game(Engine *engine, GameState *game_state) {
   // Create snake head at center
   float start_x = WORLD_WIDTH / 2.0f;
   float start_y = WORLD_HEIGHT / 2.0f;
-  game_state->head_entity_index = game_state->head_container->createEntity(
+  game_state->head_handle = game_state->head_container->createEntity(
       start_x, start_y, game_state->head_texture_id);
 
   // Initialize logic and visual positions
@@ -793,7 +808,7 @@ void setup_game(Engine *engine, GameState *game_state) {
   game_state->head_visual_x = start_x;
   game_state->head_visual_y = start_y;
 
-  std::cout << "SNAKE HEAD CREATED: index=" << game_state->head_entity_index
+  std::cout << "SNAKE HEAD CREATED: handle=" << game_state->head_handle
             << " at (" << start_x << ", " << start_y << ")"
             << " head_container count=" << game_state->head_container->count
             << std::endl;
@@ -802,7 +817,7 @@ void setup_game(Engine *engine, GameState *game_state) {
   for (int i = 1; i <= INITIAL_SNAKE_LENGTH; ++i) {
     float seg_x = start_x - i * GRID_SIZE;
     float seg_y = start_y;
-    uint32_t seg_idx = game_state->body_container->createEntity(
+    EntityHandle seg_idx = game_state->body_container->createEntity(
         seg_x, seg_y, game_state->body_texture_id);
     // Initialize with visual_x/y same as logic position
     game_state->snake_body.push_back({seg_x, seg_y, seg_x, seg_y, seg_idx});
@@ -890,12 +905,14 @@ void handle_input(const bool *keyboard_state, GameState *game_state) {
 }
 
 void update_snake(Engine *engine, GameState *game_state, float delta_time) {
-  if (game_state->head_entity_index == INVALID_ID)
+  if (game_state->head_handle == INVALID_ID)
     return;
 
   SnakeHeadContainer *hCont = game_state->head_container;
   SnakeBodyContainer *bCont = game_state->body_container;
-  uint32_t head_idx = game_state->head_entity_index;
+  uint32_t head_slot = hCont->getSlot(game_state->head_handle);
+  if (head_slot == INVALID_ID)
+    return;
 
   // Speed calculation - discrete steps per second
   float base_speed = SNAKE_SPEED;
@@ -952,11 +969,11 @@ void update_snake(Engine *engine, GameState *game_state, float delta_time) {
     // Update head grid position for collision detection
     uint16_t newCellX = static_cast<uint16_t>(head_x * INV_GRID_CELL_SIZE);
     uint16_t newCellY = static_cast<uint16_t>(head_y * INV_GRID_CELL_SIZE);
-    if (hCont->cell_x[head_idx] != newCellX ||
-        hCont->cell_y[head_idx] != newCellY) {
-      engine->grid.move(hCont->grid_node_indices[head_idx], head_x, head_y);
-      hCont->cell_x[head_idx] = newCellX;
-      hCont->cell_y[head_idx] = newCellY;
+    if (hCont->cell_x[head_slot] != newCellX ||
+        hCont->cell_y[head_slot] != newCellY) {
+      engine->grid.move(hCont->grid_node_indices[head_slot], head_x, head_y);
+      hCont->cell_x[head_slot] = newCellX;
+      hCont->cell_y[head_slot] = newCellY;
     }
 
     // Move body segments - each follows where the previous one WAS
@@ -970,18 +987,19 @@ void update_snake(Engine *engine, GameState *game_state, float delta_time) {
         seg.x = prev_x;
         seg.y = prev_y;
 
-        if (seg.entity_index < bCont->count) {
-          bCont->x_positions[seg.entity_index] = seg.x;
-          bCont->y_positions[seg.entity_index] = seg.y;
+        uint32_t seg_slot = bCont->getSlot(seg.entity_handle);
+        if (seg_slot != INVALID_ID) {
+          bCont->x_positions[seg_slot] = seg.x;
+          bCont->y_positions[seg_slot] = seg.y;
 
           uint16_t segCellX = static_cast<uint16_t>(seg.x * INV_GRID_CELL_SIZE);
           uint16_t segCellY = static_cast<uint16_t>(seg.y * INV_GRID_CELL_SIZE);
-          if (bCont->cell_x[seg.entity_index] != segCellX ||
-              bCont->cell_y[seg.entity_index] != segCellY) {
-            engine->grid.move(bCont->grid_node_indices[seg.entity_index], seg.x,
+          if (bCont->cell_x[seg_slot] != segCellX ||
+              bCont->cell_y[seg_slot] != segCellY) {
+            engine->grid.move(bCont->grid_node_indices[seg_slot], seg.x,
                               seg.y);
-            bCont->cell_x[seg.entity_index] = segCellX;
-            bCont->cell_y[seg.entity_index] = segCellY;
+            bCont->cell_x[seg_slot] = segCellX;
+            bCont->cell_y[seg_slot] = segCellY;
           }
         }
 
@@ -1002,17 +1020,18 @@ void update_snake(Engine *engine, GameState *game_state, float delta_time) {
       (game_state->head_logic_y - game_state->head_visual_y) * lerp_factor;
 
   // Update head render position (using visual pos)
-  hCont->x_positions[head_idx] = game_state->head_visual_x;
-  hCont->y_positions[head_idx] = game_state->head_visual_y;
+  hCont->x_positions[head_slot] = game_state->head_visual_x;
+  hCont->y_positions[head_slot] = game_state->head_visual_y;
 
   // Lerp body segment visuals toward their logic positions
   for (auto &seg : game_state->snake_body) {
     seg.visual_x += (seg.x - seg.visual_x) * lerp_factor;
     seg.visual_y += (seg.y - seg.visual_y) * lerp_factor;
 
-    if (seg.entity_index < bCont->count) {
-      bCont->x_positions[seg.entity_index] = seg.visual_x;
-      bCont->y_positions[seg.entity_index] = seg.visual_y;
+    uint32_t seg_slot = bCont->getSlot(seg.entity_handle);
+    if (seg_slot != INVALID_ID) {
+      bCont->x_positions[seg_slot] = seg.visual_x;
+      bCont->y_positions[seg_slot] = seg.visual_y;
     }
   }
 
@@ -1022,7 +1041,7 @@ void update_snake(Engine *engine, GameState *game_state, float delta_time) {
 }
 
 void check_collisions(Engine *engine, GameState *game_state) {
-  if (game_state->head_entity_index == INVALID_ID)
+  if (game_state->head_handle == INVALID_ID)
     return;
 
   SnakeHeadContainer *hCont = game_state->head_container;
@@ -1031,9 +1050,11 @@ void check_collisions(Engine *engine, GameState *game_state) {
   PowerUpContainer *pCont = game_state->powerup_container;
   SnakeBodyContainer *bCont = game_state->body_container;
 
-  uint32_t head_idx = game_state->head_entity_index;
-  float head_x = hCont->x_positions[head_idx];
-  float head_y = hCont->y_positions[head_idx];
+  uint32_t head_slot = hCont->getSlot(game_state->head_handle);
+  if (head_slot == INVALID_ID)
+    return;
+  float head_x = hCont->x_positions[head_slot];
+  float head_y = hCont->y_positions[head_slot];
 
   // Query nearby entities - use GRID_CELL_SIZE to ensure we cover adjacent
   // cells The queryCircle checks distance to cell corners, so we need radius >=
@@ -1046,20 +1067,21 @@ void check_collisions(Engine *engine, GameState *game_state) {
 
   for (const auto &entity : nearby) {
     if (entity.type == ENTITY_TYPE_FOOD) {
-      if (entity.index >= fCont->count)
+      uint32_t food_slot = fCont->getSlot(entity.index);
+      if (food_slot == INVALID_ID)
         continue;
 
-      float fx = fCont->x_positions[entity.index];
-      float fy = fCont->y_positions[entity.index];
+      float fx = fCont->x_positions[food_slot];
+      float fy = fCont->y_positions[food_slot];
 
       // Simple collision (same grid cell)
       if (fabsf(head_x - fx) < GRID_SIZE && fabsf(head_y - fy) < GRID_SIZE) {
         // Eat food - add score
         game_state->score +=
-            fCont->values[entity.index] * game_state->score_multiplier;
+            fCont->values[food_slot] * game_state->score_multiplier;
 
         // Grow snake by food's growth value (1-10 segments based on type)
-        int segments_to_add = fCont->growth[entity.index];
+        int segments_to_add = fCont->growth[food_slot];
         for (int seg = 0; seg < segments_to_add; ++seg) {
           float tail_x, tail_y;
           if (game_state->snake_body.empty()) {
@@ -1069,16 +1091,19 @@ void check_collisions(Engine *engine, GameState *game_state) {
             tail_x = game_state->snake_body.back().x;
             tail_y = game_state->snake_body.back().y;
           }
-          uint32_t new_seg =
+          EntityHandle new_seg =
               bCont->createEntity(tail_x, tail_y, game_state->body_texture_id);
           // Register new body segment with grid
           EntityRef seg_ref = {ENTITY_TYPE_SNAKE_BODY, new_seg};
-          bCont->grid_node_indices[new_seg] =
-              engine->grid.add(seg_ref, tail_x, tail_y);
-          bCont->cell_x[new_seg] =
-              static_cast<uint16_t>(tail_x * INV_GRID_CELL_SIZE);
-          bCont->cell_y[new_seg] =
-              static_cast<uint16_t>(tail_y * INV_GRID_CELL_SIZE);
+          uint32_t seg_slot = bCont->getSlot(new_seg);
+          if (seg_slot != INVALID_ID) {
+            bCont->grid_node_indices[seg_slot] =
+                engine->grid.add(seg_ref, tail_x, tail_y);
+            bCont->cell_x[seg_slot] =
+                static_cast<uint16_t>(tail_x * INV_GRID_CELL_SIZE);
+            bCont->cell_y[seg_slot] =
+                static_cast<uint16_t>(tail_y * INV_GRID_CELL_SIZE);
+          }
           game_state->snake_body.push_back(
               {tail_x, tail_y, tail_x, tail_y, new_seg});
         }
@@ -1090,30 +1115,31 @@ void check_collisions(Engine *engine, GameState *game_state) {
         int new_growth = new_food_type + 1;
         int new_value = new_growth * 10;
 
-        fCont->x_positions[entity.index] = new_x;
-        fCont->y_positions[entity.index] = new_y;
-        fCont->values[entity.index] = new_value;
-        fCont->growth[entity.index] = new_growth;
-        fCont->food_types[entity.index] = new_food_type;
-        fCont->texture_ids[entity.index] =
+        fCont->x_positions[food_slot] = new_x;
+        fCont->y_positions[food_slot] = new_y;
+        fCont->values[food_slot] = new_value;
+        fCont->growth[food_slot] = new_growth;
+        fCont->food_types[food_slot] = new_food_type;
+        fCont->texture_ids[food_slot] =
             game_state->food_texture_ids[new_food_type];
 
         // Update grid position
-        int32_t nodeIdx = fCont->grid_node_indices[entity.index];
+        int32_t nodeIdx = fCont->grid_node_indices[food_slot];
         engine->grid.move(nodeIdx, new_x, new_y);
-        fCont->cell_x[entity.index] =
+        fCont->cell_x[food_slot] =
             static_cast<uint16_t>(new_x * INV_GRID_CELL_SIZE);
-        fCont->cell_y[entity.index] =
+        fCont->cell_y[food_slot] =
             static_cast<uint16_t>(new_y * INV_GRID_CELL_SIZE);
       }
     } else if (entity.type == ENTITY_TYPE_ENEMY) {
       if (game_state->invincibility_timer > 0)
         continue; // Invincible
-      if (entity.index >= eCont->count)
+      uint32_t enemy_slot = eCont->getSlot(entity.index);
+      if (enemy_slot == INVALID_ID)
         continue;
 
-      float ex = eCont->x_positions[entity.index];
-      float ey = eCont->y_positions[entity.index];
+      float ex = eCont->x_positions[enemy_slot];
+      float ey = eCont->y_positions[enemy_slot];
 
       if (fabsf(head_x - ex) < GRID_SIZE * 0.8f &&
           fabsf(head_y - ey) < GRID_SIZE * 0.8f) {
@@ -1122,14 +1148,15 @@ void check_collisions(Engine *engine, GameState *game_state) {
                   << std::endl;
       }
     } else if (entity.type == ENTITY_TYPE_POWER_UP) {
-      if (entity.index >= pCont->count)
+      uint32_t power_slot = pCont->getSlot(entity.index);
+      if (power_slot == INVALID_ID)
         continue;
 
-      float px = pCont->x_positions[entity.index];
-      float py = pCont->y_positions[entity.index];
+      float px = pCont->x_positions[power_slot];
+      float py = pCont->y_positions[power_slot];
 
       if (fabsf(head_x - px) < GRID_SIZE && fabsf(head_y - py) < GRID_SIZE) {
-        int type = pCont->types[entity.index];
+        int type = pCont->types[power_slot];
         switch (type) {
         case 0: // Speed boost
           game_state->speed_boost_timer = 5.0f;
@@ -1146,28 +1173,29 @@ void check_collisions(Engine *engine, GameState *game_state) {
         // RELOCATE power-up instead of removing
         float new_x = static_cast<float>(rand() % (WORLD_WIDTH - GRID_SIZE));
         float new_y = static_cast<float>(rand() % (WORLD_HEIGHT - GRID_SIZE));
-        pCont->x_positions[entity.index] = new_x;
-        pCont->y_positions[entity.index] = new_y;
-        pCont->types[entity.index] = rand() % 3; // New random type
+        pCont->x_positions[power_slot] = new_x;
+        pCont->y_positions[power_slot] = new_y;
+        pCont->types[power_slot] = rand() % 3; // New random type
 
         // Update grid position
-        int32_t nodeIdx = pCont->grid_node_indices[entity.index];
+        int32_t nodeIdx = pCont->grid_node_indices[power_slot];
         engine->grid.move(nodeIdx, new_x, new_y);
-        pCont->cell_x[entity.index] =
+        pCont->cell_x[power_slot] =
             static_cast<uint16_t>(new_x * INV_GRID_CELL_SIZE);
-        pCont->cell_y[entity.index] =
+        pCont->cell_y[power_slot] =
             static_cast<uint16_t>(new_y * INV_GRID_CELL_SIZE);
       }
     } else if (entity.type == ENTITY_TYPE_SNAKE_BODY) {
       // Self-collision (skip first few segments)
-      if (entity.index >= bCont->count)
+      uint32_t body_slot = bCont->getSlot(entity.index);
+      if (body_slot == INVALID_ID)
         continue;
 
       // Find segment in deque
       bool is_near_head = false;
       int seg_count = 0;
       for (const auto &seg : game_state->snake_body) {
-        if (seg.entity_index == entity.index) {
+        if (seg.entity_handle == entity.index) {
           is_near_head = (seg_count < 3); // Skip first 3 segments
           break;
         }
@@ -1175,8 +1203,8 @@ void check_collisions(Engine *engine, GameState *game_state) {
       }
 
       if (!is_near_head && game_state->invincibility_timer <= 0) {
-        float bx = bCont->x_positions[entity.index];
-        float by = bCont->y_positions[entity.index];
+        float bx = bCont->x_positions[body_slot];
+        float by = bCont->y_positions[body_slot];
 
         if (fabsf(head_x - bx) < GRID_SIZE * 0.5f &&
             fabsf(head_y - by) < GRID_SIZE * 0.5f) {
@@ -1197,13 +1225,16 @@ void spawn_food(Engine *engine, GameState *game_state) {
   int food_type = rand() % NUM_FOOD_TYPES;
   int growth = food_type + 1;
   int value = growth * 10;
-  uint32_t food_idx = game_state->food_container->createEntity(
+  EntityHandle food_idx = game_state->food_container->createEntity(
       x, y, game_state->food_texture_ids[food_type], value, growth, food_type);
 
   // Register new food with grid
   FoodContainer *fCont = game_state->food_container;
   EntityRef food_ref = {ENTITY_TYPE_FOOD, food_idx};
-  fCont->grid_node_indices[food_idx] = engine->grid.add(food_ref, x, y);
-  fCont->cell_x[food_idx] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
-  fCont->cell_y[food_idx] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
+  uint32_t food_slot = fCont->getSlot(food_idx);
+  if (food_slot != INVALID_ID) {
+    fCont->grid_node_indices[food_slot] = engine->grid.add(food_ref, x, y);
+    fCont->cell_x[food_slot] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
+    fCont->cell_y[food_slot] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
+  }
 }

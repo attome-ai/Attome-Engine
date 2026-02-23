@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <algorithm>
+#include <utility>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -22,10 +23,10 @@
 #define PLAYER_SIZE 64 // Slightly larger for ship sprite
 #define PLANET_SIZE 32 // Slightly larger for ship sprite
 #define PLAYER_SPEED 800.0f
-#define NUM_PLANETS 1
+#define NUM_PLANETS 1000000
 #define BULLET_SIZE 26
 #define BULLET_SPEED 600.0f
-#define MAX_BULLETS 1
+#define MAX_BULLETS 200000
 // #define FIRE_RATE 0.05f       // 20 shots per second
 // #define BULLETS_PER_SHOT 300  // Shoot 3 bullets at once
 // #define BULLET_SPREAD 0.25f   // Spread angle in radians
@@ -45,11 +46,11 @@ struct PlanetTypeStats {
 
 // Types corresponding to ship2.png through ship6.png
 static const PlanetTypeStats PLANET_STATS[5] = {
-    {200.0f, 200.0f, 0}, // Type 0
-    {200.0f, 175.0f, 1}, // Type 1
-    {200.0f, 150.0f, 2}, // Type 2
-    {200.0f, 250.0f, 3}, // Type 3
-    {200.0f, 300.0f, 4}, // Type 4
+    {1200.0f, 200.0f, 0}, // Type 0
+    {1200.0f, 175.0f, 1}, // Type 1
+    {1200.0f, 150.0f, 2}, // Type 2
+    {1200.0f, 250.0f, 3}, // Type 3
+    {1200.0f, 300.0f, 4}, // Type 4
 };
 
 // --- Game-specific entity types ---
@@ -68,20 +69,21 @@ public:
 
   ~PlayerContainer() override {}
 
-  uint32_t createEntity(float x, float y, int texture_id) {
-    uint32_t index = RenderableEntityContainer::createEntity();
-    if (index == INVALID_ID)
+  EntityHandle createEntity(float x, float y, int texture_id) {
+    EntityHandle id = RenderableEntityContainer::createEntity();
+    if (id == INVALID_ID)
       return INVALID_ID;
 
-    x_positions[index] = x;
-    y_positions[index] = y;
-    widths[index] = PLAYER_SIZE;
-    heights[index] = PLAYER_SIZE;
-    texture_ids[index] = texture_id;
-    rotations[index] = 0.0f;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 100;
-    return index;
+    uint32_t slot = getSlot(id);
+    x_positions[slot] = x;
+    y_positions[slot] = y;
+    widths[slot] = PLAYER_SIZE;
+    heights[slot] = PLAYER_SIZE;
+    texture_ids[slot] = texture_id;
+    rotations[slot] = 0.0f;
+    flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[slot] = 100;
+    return id;
   }
 
   void update(float delta_time) override {
@@ -105,107 +107,67 @@ public:
   DynamicArray<float> velocities_x;
   DynamicArray<float> velocities_y;
   DynamicArray<float> lifetimes;
-  DynamicArray<uint8_t> active;
   Engine *engine;
-
-  // FREE LIST for O(1) allocation
-  std::vector<int> free_list;
 
   BulletContainer(Engine *engine, int typeId, uint8_t defaultLayer,
                   int initialCapacity)
       : RenderableEntityContainer(typeId, defaultLayer, initialCapacity),
         velocities_x(initialCapacity, 0.0f),
         velocities_y(initialCapacity, 0.0f), lifetimes(initialCapacity, 0.0f),
-        active(initialCapacity, 0), engine(engine) {
-    free_list.reserve(initialCapacity);
-  }
+        engine(engine) {}
 
   ~BulletContainer() override {
     // RAII: DynamicArray destructors automatically free memory
   }
 
-  uint32_t createEntity(float x, float y, float vx, float vy, int texture_id) {
-    uint32_t index = RenderableEntityContainer::createEntity();
-    if (index == INVALID_ID)
+  EntityHandle createEntity(float x, float y, float vx, float vy,
+                            int texture_id) {
+    EntityHandle id = RenderableEntityContainer::createEntity();
+    if (id == INVALID_ID)
       return INVALID_ID;
 
-    x_positions[index] = x;
-    y_positions[index] = y;
-    velocities_x[index] = vx;
-    velocities_y[index] = vy;
-    widths[index] = BULLET_SIZE;
-    heights[index] = BULLET_SIZE;
-    texture_ids[index] = texture_id;
-    lifetimes[index] = BULLET_LIFETIME;
-    active[index] = 1;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 75; // Between planets and player
+    uint32_t slot = getSlot(id);
+    x_positions[slot] = x;
+    y_positions[slot] = y;
+    velocities_x[slot] = vx;
+    velocities_y[slot] = vy;
+    widths[slot] = BULLET_SIZE;
+    heights[slot] = BULLET_SIZE;
+    texture_ids[slot] = texture_id;
+    lifetimes[slot] = BULLET_LIFETIME;
+    flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[slot] = 75; // Between planets and player
 
     // CRITICAL: Add to spatial grid for rendering!
     EntityRef ref;
     ref.type = type_id;
-    ref.index = index;
-    grid_node_indices[index] = engine->grid.add(ref, x, y);
-    cell_x[index] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
-    cell_y[index] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
+    ref.index = id;
+    grid_node_indices[slot] = engine->grid.add(ref, x, y);
+    cell_x[slot] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
+    cell_y[slot] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
 
-    return index;
+    return id;
   }
 
-  // O(1) find inactive using free list
-  int findInactive() {
-    if (!free_list.empty()) {
-      int idx = free_list.back();
-      free_list.pop_back();
-      return idx;
-    }
-    return -1;
-  }
+  void removeEntity(EntityHandle id) override {
+    uint32_t slot = getSlot(id);
+    if (slot == INVALID_ID)
+      return;
 
-  void activateBullet(int index, float x, float y, float vx, float vy) {
-    x_positions[index] = x;
-    y_positions[index] = y;
-    velocities_x[index] = vx;
-    velocities_y[index] = vy;
-    lifetimes[index] = BULLET_LIFETIME;
-    active[index] = 1;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-
-    // Update grid
-    int32_t nodeIdx = grid_node_indices[index];
+    int32_t nodeIdx = grid_node_indices[slot];
     if (nodeIdx != -1) {
-      engine->grid.move(nodeIdx, x, y);
+      engine->grid.remove(nodeIdx);
     }
-    cell_x[index] = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
-    cell_y[index] = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
-  }
+    grid_node_indices[slot] = -1;
 
-  void deactivateBullet(int index) {
-    if (active[index] == 0)
-      return; // Already inactive
-    active[index] = 0;
-    flags[index] &= ~static_cast<uint8_t>(EntityFlag::VISIBLE);
-    x_positions[index] = -10000.0f;
-    y_positions[index] = -10000.0f;
-
-    // Update grid to move off-screen
-    int32_t nodeIdx = grid_node_indices[index];
-    if (nodeIdx != -1) {
-      engine->grid.move(nodeIdx, -10000.0f, -10000.0f);
-    }
-
-    // Add to free list for O(1) reuse
-    free_list.push_back(index);
+    RenderableEntityContainer::removeEntity(id);
   }
 
   void update(float delta_time) override {
     PROFILE_FUNCTION();
     delta_time = std::min(delta_time, 0.1f);
 
-    for (int i = 0; i < count; ++i) {
-      if (active[i] == 0)
-        continue;
-
+    for (uint32_t i = 0; i < static_cast<uint32_t>(count);) {
       // Move bullet
       x_positions[i] += velocities_x[i] * delta_time;
       y_positions[i] += velocities_y[i] * delta_time;
@@ -223,15 +185,26 @@ public:
       if (lifetimes[i] <= 0 || x_positions[i] < 0 ||
           x_positions[i] > WORLD_WIDTH || y_positions[i] < 0 ||
           y_positions[i] > WORLD_HEIGHT) {
-        deactivateBullet(i);
-        continue;
+        EntityHandle id = getStableId(i);
+        removeEntity(id);
+        continue; // Process the swapped-in entity at this slot
       }
 
       flags[i] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+      ++i;
     }
   }
 
 protected:
+  void swapSlots(uint32_t a, uint32_t b) override {
+    if (a == b)
+      return;
+    std::swap(velocities_x[a], velocities_x[b]);
+    std::swap(velocities_y[a], velocities_y[b]);
+    std::swap(lifetimes[a], lifetimes[b]);
+    RenderableEntityContainer::swapSlots(a, b);
+  }
+
   void resizeArrays(int newCapacity) override {
     if (newCapacity <= capacity)
       return;
@@ -240,7 +213,6 @@ protected:
     velocities_x.resize(newCapacity, count, 0.0f);
     velocities_y.resize(newCapacity, count, 0.0f);
     lifetimes.resize(newCapacity, count, 0.0f);
-    active.resize(newCapacity, count, 0);
 
     RenderableEntityContainer::resizeArrays(newCapacity);
   }
@@ -270,23 +242,38 @@ public:
     // RAII: DynamicArray destructors automatically free memory
   }
 
-  uint32_t createEntity(float x, float y, int texture_id, uint8_t type) {
-    uint32_t index = RenderableEntityContainer::createEntity();
-    if (index == INVALID_ID)
+  EntityHandle createEntity(float x, float y, int texture_id, uint8_t type) {
+    EntityHandle id = RenderableEntityContainer::createEntity();
+    if (id == INVALID_ID)
       return INVALID_ID;
 
-    x_positions[index] = x;
-    y_positions[index] = y;
-    widths[index] = PLANET_SIZE;
-    heights[index] = PLANET_SIZE;
-    texture_ids[index] = texture_id;
-    planet_types[index] = type;
-    speeds[index] = PLANET_STATS[type].speed;
-    health[index] = PLANET_STATS[type].health;
-    max_health[index] = PLANET_STATS[type].health;
-    flags[index] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
-    z_indices[index] = 50;
-    return index;
+    uint32_t slot = getSlot(id);
+    x_positions[slot] = x;
+    y_positions[slot] = y;
+    widths[slot] = PLANET_SIZE;
+    heights[slot] = PLANET_SIZE;
+    texture_ids[slot] = texture_id;
+    planet_types[slot] = type;
+    speeds[slot] = PLANET_STATS[type].speed;
+    health[slot] = PLANET_STATS[type].health;
+    max_health[slot] = PLANET_STATS[type].health;
+    flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+    z_indices[slot] = 50;
+    return id;
+  }
+
+  void removeEntity(EntityHandle id) override {
+    uint32_t slot = getSlot(id);
+    if (slot == INVALID_ID)
+      return;
+
+    int32_t nodeIdx = grid_node_indices[slot];
+    if (nodeIdx != -1) {
+      engine->grid.remove(nodeIdx);
+    }
+    grid_node_indices[slot] = -1;
+
+    RenderableEntityContainer::removeEntity(id);
   }
 
   // O(1) set target - just 2 assignments!
@@ -322,12 +309,6 @@ public:
     // Parallel position update - greedy pathfinding toward target
     std::for_each(std::execution::par, indices.begin(), indices.begin() + count,
                   [&, tx, ty](uint32_t i) {
-                    // Skip destroyed planets (health <= 0)
-                    if (health[i] <= 0) {
-
-                      return;
-                    }
-
                     float &px = x_positions[i];
                     float &py = y_positions[i];
                     const float speed = speeds[i] * delta_time;
@@ -387,6 +368,16 @@ public:
   }
 
 protected:
+  void swapSlots(uint32_t a, uint32_t b) override {
+    if (a == b)
+      return;
+    std::swap(speeds[a], speeds[b]);
+    std::swap(health[a], health[b]);
+    std::swap(max_health[a], max_health[b]);
+    std::swap(planet_types[a], planet_types[b]);
+    RenderableEntityContainer::swapSlots(a, b);
+  }
+
   void resizeArrays(int newCapacity) override {
     if (newCapacity <= capacity)
       return;
@@ -403,7 +394,7 @@ protected:
 
 // --- Game State ---
 struct GameState {
-  uint32_t player_index;
+  EntityHandle player_handle;
   // Player is invincible, always "alive"
 
   // Textures
@@ -507,7 +498,7 @@ int main(int argc, char *argv[]) {
   game_state.player_container = player_container;
   game_state.planet_container = planet_container;
   game_state.bullet_container = bullet_container;
-  game_state.player_index = INVALID_ID;
+  game_state.player_handle = INVALID_ID;
   game_state.last_fps_time = SDL_GetTicks();
   game_state.hit_count = 0;
   game_state.killed_count = 0;
@@ -532,11 +523,15 @@ int main(int argc, char *argv[]) {
   }
 
   // Set camera to player
-  if (game_state.player_index != INVALID_ID) {
-    float player_x = player_container->x_positions[game_state.player_index];
-    float player_y = player_container->y_positions[game_state.player_index];
-    engine->camera.x = player_x + PLAYER_SIZE / 2.0f;
-    engine->camera.y = player_y + PLAYER_SIZE / 2.0f;
+  if (game_state.player_handle != INVALID_ID) {
+    uint32_t player_slot =
+        player_container->getSlot(game_state.player_handle);
+    if (player_slot != INVALID_ID) {
+      float player_x = player_container->x_positions[player_slot];
+      float player_y = player_container->y_positions[player_slot];
+      engine->camera.x = player_x + PLAYER_SIZE / 2.0f;
+      engine->camera.y = player_y + PLAYER_SIZE / 2.0f;
+    }
   }
 
   // Game loop
@@ -621,18 +616,11 @@ int main(int argc, char *argv[]) {
       ImGui::TextColored(ImVec4(0, 1, 0, 1), "KILLS: %d",
                          game_state.killed_count);
 
-      // Count active bullets
-      int active_bullets = 0;
-      for (int i = 0; i < game_state.bullet_container->count; ++i) {
-        if (game_state.bullet_container->active[i]) {
-          active_bullets++;
-        }
-      }
-      ImGui::TextColored(ImVec4(1, 1, 0, 1), "Bullets: %d", active_bullets);
+      ImGui::TextColored(ImVec4(1, 1, 0, 1), "Bullets: %d",
+                         game_state.bullet_container->count);
 
       ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), "Planets: %d",
-                         game_state.planet_container->count -
-                             game_state.hit_count - game_state.killed_count);
+                         game_state.planet_container->count);
       ImGui::End();
 
       ImGui::Render();
@@ -758,7 +746,7 @@ void setup_game(Engine *engine, GameState *game_state) {
   std::cout << "------------------------------" << std::endl;
 
   // 2. Create Player
-  game_state->player_index = game_state->player_container->createEntity(
+  game_state->player_handle = game_state->player_container->createEntity(
       WORLD_WIDTH / 2.0f, WORLD_HEIGHT / 2.0f, game_state->player_texture_id);
 
   // 3. Create Planets
@@ -781,7 +769,12 @@ void setup_game(Engine *engine, GameState *game_state) {
 
 void handle_input(Engine *engine, const bool *keyboard_state,
                   GameState *game_state, float delta_time) {
-  if (game_state->player_index == INVALID_ID)
+  if (game_state->player_handle == INVALID_ID)
+    return;
+
+  PlayerContainer *player = game_state->player_container;
+  uint32_t player_slot = player->getSlot(game_state->player_handle);
+  if (player_slot == INVALID_ID)
     return;
 
   float dx = 0.0f;
@@ -808,11 +801,8 @@ void handle_input(Engine *engine, const bool *keyboard_state,
     if (keyboard_state[SDL_SCANCODE_LSHIFT])
       move_speed *= 2.0f;
 
-    PlayerContainer *player = game_state->player_container;
-    float new_x =
-        player->x_positions[game_state->player_index] + dx * move_speed;
-    float new_y =
-        player->y_positions[game_state->player_index] + dy * move_speed;
+    float new_x = player->x_positions[player_slot] + dx * move_speed;
+    float new_y = player->y_positions[player_slot] + dy * move_speed;
 
     // Clamp to world
     if (new_x < 0)
@@ -824,19 +814,19 @@ void handle_input(Engine *engine, const bool *keyboard_state,
     if (new_y > WORLD_HEIGHT - PLAYER_SIZE)
       new_y = WORLD_HEIGHT - PLAYER_SIZE;
 
-    player->x_positions[game_state->player_index] = new_x;
-    player->y_positions[game_state->player_index] = new_y;
+    player->x_positions[player_slot] = new_x;
+    player->y_positions[player_slot] = new_y;
 
     // Update camera
     engine->camera.x = new_x + PLAYER_SIZE / 2.0f;
     engine->camera.y = new_y + PLAYER_SIZE / 2.0f;
 
     // Update grid
-    int32_t nodeIdx = player->grid_node_indices[game_state->player_index];
+    int32_t nodeIdx = player->grid_node_indices[player_slot];
     engine->grid.move(nodeIdx, new_x, new_y);
-    player->cell_x[game_state->player_index] =
+    player->cell_x[player_slot] =
         static_cast<uint16_t>(new_x * INV_GRID_CELL_SIZE);
-    player->cell_y[game_state->player_index] =
+    player->cell_y[player_slot] =
         static_cast<uint16_t>(new_y * INV_GRID_CELL_SIZE);
   }
 
@@ -848,11 +838,8 @@ void handle_input(Engine *engine, const bool *keyboard_state,
   if (keyboard_state[SDL_SCANCODE_SPACE] || game_state->mouse_pressed) {
     if (game_state->shoot_cooldown <= 0) {
       // Shoot!
-      PlayerContainer *player = game_state->player_container;
-      float px =
-          player->x_positions[game_state->player_index] + PLAYER_SIZE / 2.0f;
-      float py =
-          player->y_positions[game_state->player_index] + PLAYER_SIZE / 2.0f;
+      float px = player->x_positions[player_slot] + PLAYER_SIZE / 2.0f;
+      float py = player->y_positions[player_slot] + PLAYER_SIZE / 2.0f;
 
       // Get mouse position in world coordinates
       float mouse_x, mouse_y;
@@ -893,22 +880,19 @@ void handle_input(Engine *engine, const bool *keyboard_state,
         float spread_vx = shoot_vx * cos_spread - shoot_vy * sin_spread;
         float spread_vy = shoot_vx * sin_spread + shoot_vy * cos_spread;
 
-        int bullet_idx = bullets->findInactive();
-        if (bullet_idx != -1) {
-          bullets->activateBullet(
-              bullet_idx, px - BULLET_SIZE / 2.0f, py - BULLET_SIZE / 2.0f,
-              spread_vx * BULLET_SPEED, spread_vy * BULLET_SPEED);
-        } else if (bullets->count < MAX_BULLETS) {
-          bullets->createEntity(
+        if (bullets->count < MAX_BULLETS) {
+          EntityHandle bullet_id = bullets->createEntity(
               px - BULLET_SIZE / 2.0f, py - BULLET_SIZE / 2.0f,
               spread_vx * BULLET_SPEED, spread_vy * BULLET_SPEED,
               game_state->bullet_texture_id);
+          if (bullet_id != INVALID_ID) {
+            uint32_t bullet_slot = bullets->getSlot(bullet_id);
+            if (bullet_slot != INVALID_ID) {
+              bullets->rotations[bullet_slot] =
+                  atan2f(spread_vy, spread_vx) + 3.14f / 2.0f;
+            }
+          }
         }
-
-        // Update rotation for the just activated/created bullet
-        int last_idx = (bullet_idx != -1) ? bullet_idx : (bullets->count - 1);
-        bullets->rotations[last_idx] =
-            atan2f(spread_vy, spread_vx) + 3.14 / 2.0f;
       }
 
       game_state->shoot_cooldown = FIRE_RATE;
@@ -918,24 +902,30 @@ void handle_input(Engine *engine, const bool *keyboard_state,
 
 void update_game(Engine *engine, GameState *game_state, float delta_time) {
   // Update Planets Target (Player)
-  if (game_state->player_index != INVALID_ID) {
-    float px =
-        game_state->player_container->x_positions[game_state->player_index];
-    float py =
-        game_state->player_container->y_positions[game_state->player_index];
-    game_state->planet_container->setTarget(px, py);
+  if (game_state->player_handle != INVALID_ID) {
+    uint32_t player_slot =
+        game_state->player_container->getSlot(game_state->player_handle);
+    if (player_slot != INVALID_ID) {
+      float px = game_state->player_container->x_positions[player_slot];
+      float py = game_state->player_container->y_positions[player_slot];
+      game_state->planet_container->setTarget(px, py);
+    }
   }
 }
 
 void check_collisions(Engine *engine, GameState *game_state) {
-  if (game_state->player_index == INVALID_ID)
+  if (game_state->player_handle == INVALID_ID)
     return;
 
   PlayerContainer *player = game_state->player_container;
   PlanetContainer *planets = game_state->planet_container;
 
-  float px = player->x_positions[game_state->player_index];
-  float py = player->y_positions[game_state->player_index];
+  uint32_t player_slot = player->getSlot(game_state->player_handle);
+  if (player_slot == INVALID_ID)
+    return;
+
+  float px = player->x_positions[player_slot];
+  float py = player->y_positions[player_slot];
   float p_radius = PLAYER_SIZE / 2.2f; // Increased collision radius
   float p_center_x = px + PLAYER_SIZE / 2.0f;
   float p_center_y = py + PLAYER_SIZE / 2.0f;
@@ -947,9 +937,12 @@ void check_collisions(Engine *engine, GameState *game_state) {
 
   for (const auto &ref : nearby) {
     if (ref.type == ENTITY_TYPE_PLANET) {
+      uint32_t planet_slot = planets->getSlot(ref.index);
+      if (planet_slot == INVALID_ID)
+        continue;
       // Precise check
-      float zx = planets->x_positions[ref.index];
-      float zy = planets->y_positions[ref.index];
+      float zx = planets->x_positions[planet_slot];
+      float zy = planets->y_positions[planet_slot];
       float z_radius = PLANET_SIZE / 2.2f; // Increased collision radius
       float z_center_x = zx + PLANET_SIZE / 2.0f;
       float z_center_y = zy + PLANET_SIZE / 2.0f;
@@ -965,21 +958,14 @@ void check_collisions(Engine *engine, GameState *game_state) {
         game_state->hit_count++;
 
         // 2. Destroy Planet
-        planets->health[ref.index] = -1.0f; // Mark as destroyed
-
-        // Move off-screen
-        engine->grid.move(planets->grid_node_indices[ref.index], -10000.0f,
-                          -10000.0f);
+        planets->removeEntity(ref.index);
       }
     }
   }
 
   // Bullet-Planet Collision Detection
   BulletContainer *bullets = game_state->bullet_container;
-  for (int b = 0; b < bullets->count; ++b) {
-    if (bullets->active[b] == 0)
-      continue; // Skip inactive bullets
-
+  for (uint32_t b = 0; b < static_cast<uint32_t>(bullets->count);) {
     float bx = bullets->x_positions[b];
     float by = bullets->y_positions[b];
     float b_radius = BULLET_SIZE / 2.0f;
@@ -988,42 +974,44 @@ void check_collisions(Engine *engine, GameState *game_state) {
     const std::vector<EntityRef> &nearby_planets =
         engine->grid.queryCircle(bx, by, b_radius);
 
-    bool bullet_hit = false;
+    bool bullet_removed = false;
 
     for (const auto &ref : nearby_planets) {
-      if (ref.type == ENTITY_TYPE_PLANET && !bullet_hit) {
-        // Check if planet is active
-        if (planets->health[ref.index] <= 0)
-          continue;
+      if (ref.type != ENTITY_TYPE_PLANET)
+        continue;
 
-        float zx = planets->x_positions[ref.index];
-        float zy = planets->y_positions[ref.index];
-        float z_radius = PLANET_SIZE / 2.2f;
-        float z_center_x = zx + PLANET_SIZE / 2.0f;
-        float z_center_y = zy + PLANET_SIZE / 2.0f;
+      uint32_t planet_slot = planets->getSlot(ref.index);
+      if (planet_slot == INVALID_ID)
+        continue;
 
-        float dx = bx - z_center_x;
-        float dy = by - z_center_y;
-        float distSq = dx * dx + dy * dy;
-        float combinedRadius = b_radius + z_radius;
+      float zx = planets->x_positions[planet_slot];
+      float zy = planets->y_positions[planet_slot];
+      float z_radius = PLANET_SIZE / 2.2f;
+      float z_center_x = zx + PLANET_SIZE / 2.0f;
+      float z_center_y = zy + PLANET_SIZE / 2.0f;
 
-        if (distSq < combinedRadius * combinedRadius) {
-          planets->health[ref.index] -= BULLET_DAMAGE;
+      float dx = bx - z_center_x;
+      float dy = by - z_center_y;
+      float distSq = dx * dx + dy * dy;
+      float combinedRadius = b_radius + z_radius;
 
-          if (planets->health[ref.index] <= 0) {
-            // Destroyed!
-            game_state->killed_count++;
-          }
-          // Move planet off-screen
-          engine->grid.move(planets->grid_node_indices[ref.index], -10000,
-                            -10000);
+      if (distSq < combinedRadius * combinedRadius) {
+        planets->health[planet_slot] -= BULLET_DAMAGE;
 
-          // Deactivate bullet
-          bullets->deactivateBullet(b);
-          bullet_hit = true;
-          break; // Bullet can only hit one planet
+        if (planets->health[planet_slot] <= 0) {
+          // Destroyed!
+          game_state->killed_count++;
+          planets->removeEntity(ref.index);
         }
+
+        EntityHandle bullet_id = bullets->getStableId(b);
+        bullets->removeEntity(bullet_id);
+        bullet_removed = true;
+        break; // Bullet can only hit one planet
       }
     }
+
+    if (!bullet_removed)
+      ++b;
   }
 }
