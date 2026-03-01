@@ -35,6 +35,13 @@ add_executable(SnakeGame
   ${ENGINE_SOURCES}
 )
 
+# 3. Ashlands Dominion Game (Optimized Engine)
+add_executable(AshlandsDominion
+  ${CMAKE_SOURCE_DIR}/ashlands-dominion/main.cpp
+  ${CMAKE_SOURCE_DIR}/ashlands-dominion/AshlandsGame.cpp
+  ${ENGINE_SOURCES}
+)
+
 
 
 # =============================================================================
@@ -137,6 +144,7 @@ endfunction()
 
 link_optimized_engine_deps(PlanetGame)
 link_optimized_engine_deps(SnakeGame)
+link_optimized_engine_deps(AshlandsDominion)
 
 # =============================================================================
 # Initial Asset Copy
