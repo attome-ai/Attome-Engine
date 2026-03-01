@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{{ WINDOW_TITLE }}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0a0a0f;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: sans-serif;
+            color: #fff;
+        }
+
+        #canvas-container {
+            position: relative;
+        }
+
+        canvas#canvas {
+            display: block;
+            border: 1px solid #333;
+        }
+
+        #loading {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0a0a0f;
+            font-size: 1.2rem;
+            letter-spacing: 2px;
+        }
+
+        #progress {
+            width: 60%;
+            height: 4px;
+            background: #222;
+            border-radius: 2px;
+            margin-top: 1rem;
+            overflow: hidden;
+        }
+
+        #progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #ec4899, #14b8a6);
+            transition: width 0.3s;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="canvas-container">
+        <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
+        <div id="loading">
+            <div style="text-align:center">
+                <div>Loading {{{ WINDOW_TITLE }}}...</div>
+                <div id="progress">
+                    <div id="progress-bar"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        var Module = {
+            canvas: (function () { return document.getElementById('canvas'); })(),
+            setStatus: function (text) {
+                var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+                if (m) {
+                    document.getElementById('progress-bar').style.width = (100 * parseInt(m[2]) / parseInt(m[4])) + '%';
+                } else if (text === '') {
+                    document.getElementById('loading').style.display = 'none';
+                }
+            },
+            monitorRunDependencies: function (left) { }
+        };
+    </script>
+    {{{ SCRIPT }}}
+</body>
+
+</html>
