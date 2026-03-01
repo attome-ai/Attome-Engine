@@ -35,6 +35,7 @@ static constexpr float INV_GRID_CELL_SIZE = (1.0f / GRID_CELL_SIZE);
 // Common constants
 static constexpr int MAX_LAYERS = 32;
 static constexpr uint32_t INVALID_ID = 0xFFFFFFFF;
+typedef uint32_t EntityHandle;
 
 // Forward declarations
 struct Engine;
@@ -111,6 +112,7 @@ protected:
   // Base entity data
 public:
   DynamicArray<uint8_t> flags;
+  // Legacy: mirrors slot_to_id (stable handle per slot)
   DynamicArray<uint32_t> entity_ids;
   DynamicArray<uint32_t> parent_ids;
   DynamicArray<uint32_t> first_child_ids;
@@ -123,6 +125,10 @@ public:
   AlignedDynamicArray<uint16_t, CACHE_LINE_SIZE> cell_x;
   AlignedDynamicArray<uint16_t, CACHE_LINE_SIZE> cell_y;
   AlignedDynamicArray<int32_t, CACHE_LINE_SIZE> grid_node_indices;
+  DynamicArray<EntityHandle> slot_to_id; // slot -> stable id
+  std::vector<uint32_t> id_to_slot;      // stable id -> slot
+  std::vector<EntityHandle> free_ids;    // reusable stable ids
+  EntityHandle next_id;
 
   uint8_t containerFlag;
   int type_id;
@@ -134,8 +140,13 @@ public:
   virtual ~EntityContainer();
 
   virtual void update(float delta_time) = 0;
-  virtual uint32_t createEntity();
-  virtual void removeEntity(size_t index);
+  virtual EntityHandle createEntity();
+  virtual void removeEntity(EntityHandle id);
+  virtual void swapSlots(uint32_t a, uint32_t b);
+
+  EntityHandle getStableId(uint32_t slot) const;
+  uint32_t getSlot(EntityHandle id) const;
+  bool isAlive(EntityHandle id) const;
 
   int getTypeId() const { return type_id; }
   int getCount() const { return count; }
@@ -160,10 +171,10 @@ public:
                             int initialCapacity);
   ~RenderableEntityContainer() override;
 
-  uint32_t createEntity() override;
-  void removeEntity(size_t index) override;
+  EntityHandle createEntity() override;
 
 protected:
+  void swapSlots(uint32_t a, uint32_t b) override;
   void resizeArrays(int newCapacity) override;
 };
 
@@ -193,14 +204,14 @@ public:
   EntityManager();
 
   int registerEntityType(EntityContainer *container);
-  uint32_t createEntity(int type_id);
-  void removeEntity(uint32_t index, int type_id);
+  EntityHandle createEntity(int type_id);
+  void removeEntity(EntityHandle id, int type_id);
   void update(float delta_time);
 };
 
 struct EntityRef {
-  uint32_t type : 8;
-  uint32_t index : 24;
+  uint32_t type;
+  EntityHandle index; // stable handle (sparse id)
 };
 
 // Node for intrusive linked list spatial grid
@@ -245,6 +256,7 @@ public:
     if (first_free_node != -1) {
       idx = first_free_node;
       first_free_node = nodes[idx].next; // Pop from free stack
+      nodes[idx].entity = entity;
     } else {
       idx = static_cast<int32_t>(nodes.size());
       nodes.push_back({entity, -1, -1, -1});
@@ -540,7 +552,8 @@ void process_pending_removals(Engine *engine);
 void engine_update(Engine *engine);
 
 // Set entity z-index
-void engine_set_entity_z_index(Engine *engine, uint32_t entity_idx, int type_id,
+void engine_set_entity_z_index(Engine *engine, EntityHandle entity_idx,
+                               int type_id,
                                uint8_t z_index);
 
 // Present renderer
