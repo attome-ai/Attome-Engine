@@ -1,10 +1,11 @@
 ﻿#include "ATMEngine.h"
 #include <algorithm>
-#include <utility>
 #include <execution>
 #include <future>
 #include <numeric>
 #include <thread>
+#include <utility>
+
 #define STB_IMAGE_IMPLEMENTATION
 #if defined(__has_include)
 #if __has_include("SDL3_image/SDL_image.h")
@@ -14,7 +15,6 @@
 #include "SDL3_image/SDL_image.h"
 #endif
 #include "stb_image.h"
-
 
 // EntityContainer implementation
 EntityContainer::EntityContainer(int typeId, uint8_t defaultLayer,
@@ -837,10 +837,9 @@ void engine_render_scene(Engine *engine) {
 
     auto rCont = static_cast<RenderableEntityContainer *>(container);
 
-    uint64_t key =
-        (static_cast<uint64_t>(rCont->z_indices[slot]) << 56) |
-        (static_cast<uint64_t>(entity.type) << 48) |
-        static_cast<uint64_t>(entity.index);
+    uint64_t key = (static_cast<uint64_t>(rCont->z_indices[slot]) << 56) |
+                   (static_cast<uint64_t>(entity.type) << 48) |
+                   static_cast<uint64_t>(entity.index);
 
     sortable_entities.push_back({key, entity, slot});
   }
@@ -862,6 +861,10 @@ void engine_render_scene(Engine *engine) {
     const uint32_t slot = se.slot;
     auto rCont = static_cast<RenderableEntityContainer *>(
         engine->entityManager.containers[entity.type].get());
+
+    if (!(rCont->flags[slot] & static_cast<uint8_t>(EntityFlag::VISIBLE)))
+      continue;
+
     float x = rCont->x_positions[slot] - x1;
     float y = rCont->y_positions[slot] - y1;
     float w = rCont->widths[slot];
