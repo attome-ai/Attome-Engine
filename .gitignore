@@ -1,3 +1,6 @@
 /out
 /.vs
 /out.txt
+# Windows NUL device — accidentally created by shell redirects, never commit
+nul
+/build-android

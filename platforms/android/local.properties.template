@@ -1,0 +1,11 @@
+# Copy this file to local.properties and fill in your paths.
+# local.properties is in .gitignore and should NOT be committed.
+
+# Path to your Android SDK installation
+sdk.dir=C\:\\Users\\YOUR_USER\\AppData\\Local\\Android\\Sdk
+
+# Path to your NDK installation (use the ndk.dir OR set ANDROID_NDK_HOME env var)
+# ndk.dir=C\:\\Users\\YOUR_USER\\AppData\\Local\\Android\\Sdk\\ndk\\26.x.x
+
+# Path to vcpkg root (used by build-android.ps1)
+# vcpkg.root=C\:\\path\\to\\vcpkg

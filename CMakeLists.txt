@@ -16,6 +16,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #   cmake .. -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 if(EMSCRIPTEN)
     message(STATUS "[AttomeGames] Building for Web (Emscripten / WASM)")
+elseif(ANDROID)
+    message(STATUS "[AttomeGames] Building for Android (ABI: ${ANDROID_ABI}, API: ${ANDROID_PLATFORM})")
 else()
     message(STATUS "[AttomeGames] Building for ${CMAKE_SYSTEM_NAME}")
 endif()
@@ -63,6 +65,11 @@ if(WIN32 AND NOT EMSCRIPTEN)
     )
 endif()
 
+if(ANDROID)
+    # Android system libs required by SDL3
+    target_link_libraries(AttomeEngine PUBLIC log android)
+endif()
+
 if(MSVC)
     target_link_options(AttomeEngine PUBLIC "/STACK:67108864")
 endif()
@@ -72,20 +79,36 @@ endif()
 function(attome_add_game TARGET_NAME)
     set(SOURCES ${ARGN})
 
-    if(EMSCRIPTEN)
+    if(ANDROID)
+        # Android: build as shared library — SDL3's Java glue loads libmain.so
+        add_library(${TARGET_NAME} SHARED ${SOURCES})
+        set_target_properties(${TARGET_NAME} PROPERTIES
+            OUTPUT_NAME "main"        # produces libmain.so as SDL expects
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/jniLibs/${ANDROID_ABI}"
+        )
+        # Copy assets to a known path so Gradle can pick them up
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+            set(ANDROID_ASSETS_DST "${CMAKE_SOURCE_DIR}/platforms/android/app/src/main/assets")
+            add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+                    "${ANDROID_ASSETS_DST}"
+                COMMENT "Copying assets to Android project: ${ANDROID_ASSETS_DST}"
+            )
+        endif()
+    elseif(EMSCRIPTEN)
         add_executable(${TARGET_NAME} ${SOURCES})
         set(WEB_LINK_FLAGS "-s USE_SDL=3 -s ALLOW_MEMORY_GROWTH=1")
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/platforms/web/shell.html")
             set(WEB_LINK_FLAGS "${WEB_LINK_FLAGS} --shell-file ${CMAKE_CURRENT_SOURCE_DIR}/platforms/web/shell.html")
         else()
-            # fallback to global shell.html if missing, but we better use what we have or omit
             set(WEB_LINK_FLAGS "${WEB_LINK_FLAGS} --shell-file ${CMAKE_SOURCE_DIR}/_template/platforms/web/shell.html")
         endif()
-        
+
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
             set(WEB_LINK_FLAGS "${WEB_LINK_FLAGS} --preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets@/assets")
         endif()
-        
+
         set_target_properties(${TARGET_NAME} PROPERTIES
             SUFFIX ".html"
             LINK_FLAGS "${WEB_LINK_FLAGS}"
