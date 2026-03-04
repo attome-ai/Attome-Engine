@@ -31,17 +31,25 @@ find_package(imgui      CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 # ── engine static library ──────────────────────────────────────────────────────
-set(ATM_ENGINE_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/engine/engine/ATMEngine.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/engine/lib/ATMByteBuffer.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/engine/lib/ATMBufferPool.cpp"
-)
-
-add_library(AttomeEngine STATIC ${ATM_ENGINE_SOURCES})
+if(ANDROID)
+    _add_library(AttomeEngine STATIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/gameSrc/ATMEngine.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/gameSrc/ATMByteBuffer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/gameSrc/ATMBufferPool.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/gameSrc/iconv_stub.c"
+    )
+else()
+    _add_library(AttomeEngine STATIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/gameSrc/ATMEngine.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/gameSrc/ATMByteBuffer.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/gameSrc/ATMBufferPool.cpp"
+    )
+endif()
 
 target_include_directories(AttomeEngine PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/engine/engine"
-    "${CMAKE_CURRENT_SOURCE_DIR}/engine/game"
+    "${CMAKE_CURRENT_SOURCE_DIR}/game"
+    "${CMAKE_CURRENT_SOURCE_DIR}/gameSrc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
 target_link_libraries(AttomeEngine PUBLIC
@@ -76,46 +84,47 @@ endif()
 
 # ── helper function used by individual game CMakeLists ────────────────────────
 # Usage: attome_add_game(MyGame src/main.cpp src/player.cpp)
-function(attome_add_game TARGET_NAME)
-    set(SOURCES ${ARGN})
+macro(attome_add_game TARGET_NAME)
+    set(_atg_SOURCES "")
+    foreach(_src IN ITEMS ${ARGN})
+        get_filename_component(_abs_src "${_src}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+        list(APPEND _atg_SOURCES "${_abs_src}")
+    endforeach()
 
     if(ANDROID)
         # Android: build as shared library — SDL3's Java glue loads libmain.so
-        add_library(${TARGET_NAME} SHARED ${SOURCES})
+        # Use _add_library to bypass vcpkg's wrapper (which mis-reads ARGC/ARGV)
+        _add_library(${TARGET_NAME} SHARED ${_atg_SOURCES})
         set_target_properties(${TARGET_NAME} PROPERTIES
-            OUTPUT_NAME "main"        # produces libmain.so as SDL expects
-            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/jniLibs/${ANDROID_ABI}"
+            OUTPUT_NAME "main"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/jniLibs/${TARGET_NAME}/${ANDROID_ABI}"
         )
-        # Copy assets to a known path so Gradle can pick them up
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
-            set(ANDROID_ASSETS_DST "${CMAKE_SOURCE_DIR}/platforms/android/app/src/main/assets")
+            set(_atg_ASSETS_DST "${CMAKE_SOURCE_DIR}/platforms/android/app/src/main/assets")
             add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_directory
                     "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-                    "${ANDROID_ASSETS_DST}"
-                COMMENT "Copying assets to Android project: ${ANDROID_ASSETS_DST}"
+                    "${_atg_ASSETS_DST}"
+                COMMENT "Copying assets to Android project"
             )
         endif()
     elseif(EMSCRIPTEN)
-        add_executable(${TARGET_NAME} ${SOURCES})
-        set(WEB_LINK_FLAGS "-s USE_SDL=3 -s ALLOW_MEMORY_GROWTH=1")
+        add_executable(${TARGET_NAME} ${_atg_SOURCES})
+        set(_atg_WEB_FLAGS "-s USE_SDL=3 -s ALLOW_MEMORY_GROWTH=1")
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/platforms/web/shell.html")
-            set(WEB_LINK_FLAGS "${WEB_LINK_FLAGS} --shell-file ${CMAKE_CURRENT_SOURCE_DIR}/platforms/web/shell.html")
+            set(_atg_WEB_FLAGS "${_atg_WEB_FLAGS} --shell-file ${CMAKE_CURRENT_SOURCE_DIR}/platforms/web/shell.html")
         else()
-            set(WEB_LINK_FLAGS "${WEB_LINK_FLAGS} --shell-file ${CMAKE_SOURCE_DIR}/_template/platforms/web/shell.html")
+            set(_atg_WEB_FLAGS "${_atg_WEB_FLAGS} --shell-file ${CMAKE_SOURCE_DIR}/_template/platforms/web/shell.html")
         endif()
-
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
-            set(WEB_LINK_FLAGS "${WEB_LINK_FLAGS} --preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets@/assets")
+            set(_atg_WEB_FLAGS "${_atg_WEB_FLAGS} --preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets@/assets")
         endif()
-
         set_target_properties(${TARGET_NAME} PROPERTIES
             SUFFIX ".html"
-            LINK_FLAGS "${WEB_LINK_FLAGS}"
+            LINK_FLAGS "${_atg_WEB_FLAGS}"
         )
     else()
-        add_executable(${TARGET_NAME} ${SOURCES})
-        # Copy assets next to the executable after build
+        add_executable(${TARGET_NAME} ${_atg_SOURCES})
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
             add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -127,12 +136,12 @@ function(attome_add_game TARGET_NAME)
 
     target_link_libraries(${TARGET_NAME} PRIVATE AttomeEngine)
     target_include_directories(${TARGET_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-endfunction()
+endmacro()
 
 # ── game projects ──────────────────────────────────────────────────────────────
 # Each new game gets its own line here. Run Scripts/new-game.ps1 to add one.
 add_subdirectory(hello-world)
 add_subdirectory(snake)
-add_subdirectory(planet_basic)
-add_subdirectory(planet_optimized)
+# add_subdirectory(planet_basic)    # TODO: source files not yet created
+# add_subdirectory(planet_optimized) # TODO: source files not yet created
 # add_subdirectory(my-next-game)   ← new-game.ps1 appends here
