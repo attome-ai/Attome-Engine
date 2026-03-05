@@ -16,12 +16,10 @@ public class GameActivity extends SDLActivity {
     /**
      * Return the names of shared libraries to load.
      * SDL will load these after its own runtime.
-     * "main" → libmain.so (OUTPUT_NAME "main" set in CMakeLists.txt)
      */
-    @Override
     protected String[] getLibraries() {
         return new String[] {
-            "SDL3",          // SDL3 shared lib (from vcpkg / SDL3 AAR)
+            "c++_shared",
             "main"           // your game's libmain.so
         };
     }

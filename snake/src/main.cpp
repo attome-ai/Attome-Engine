@@ -1,5 +1,6 @@
 #include "ATMEngine.h"
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
@@ -48,7 +49,7 @@ struct GameState {
   float glowTime = 0.0f;
 };
 
-// ── pixel font (5×7 each digit 0-9, stored as 5 column bytes)
+// ── pixel font (5x7 each digit 0-9, stored as 5 column bytes)
 // ───────────────── Each byte = 7-bit column, MSB = top pixel
 static const Uint8 DIGITS[10][5] = {
     {0x7C, 0x8A, 0x92, 0xA2, 0x7C}, // 0
@@ -178,19 +179,17 @@ static void drawGrid(SDL_Renderer *r) {
 // ───────────────────────
 static void drawLabel(SDL_Renderer *r, const char *text, int x, int y,
                       SDL_Color c) {
-  // Draw each character as a tiny block — fall back to pixel digits for numbers
-  // For letters we just draw a labeled rectangle (simple indicator)
+  // Draw each character as a tiny block
   SDL_SetRenderDrawColor(r, c.r, c.g, c.b, 80);
   SDL_FRect bg = {(float)(x - 2), (float)(y - 2), 80, (float)(7 * PX + 4)};
   SDL_RenderFillRect(r, &bg);
-  // Draw the text character by character using digit renderer for digits
   int cx = x;
   for (const char *p = text; *p; ++p) {
     if (*p >= '0' && *p <= '9') {
       drawDigit(r, *p - '0', cx, y, c);
       cx += (5 + 1) * PX;
     } else {
-      cx += (2) * PX; // space for non-digit chars
+      cx += (2) * PX;
     }
   }
 }
@@ -213,6 +212,11 @@ int main(int argc, char *argv[]) {
   bool running = true;
   float dt = 0.016f;
 
+  // Touch input state
+  float touchStartX = 0, touchStartY = 0;
+  bool touchActive = false;
+  static constexpr float SWIPE_THRESHOLD = 0.03f; // normalized coords
+
   while (running) {
     Uint64 t0 = SDL_GetTicks();
 
@@ -220,6 +224,8 @@ int main(int argc, char *argv[]) {
     while (SDL_PollEvent(&ev)) {
       if (ev.type == SDL_EVENT_QUIT)
         running = false;
+
+      // ── Keyboard input ──
       if (ev.type == SDL_EVENT_KEY_DOWN) {
         auto k = ev.key.key;
         if (k == SDLK_ESCAPE)
@@ -241,6 +247,47 @@ int main(int argc, char *argv[]) {
             gs.nextDir = Dir::LEFT;
           if ((k == SDLK_RIGHT || k == SDLK_D) && gs.dir != Dir::LEFT)
             gs.nextDir = Dir::RIGHT;
+        }
+      }
+
+      // ── Touch input (Android) ──
+      if (ev.type == SDL_EVENT_FINGER_DOWN) {
+        touchStartX = ev.tfinger.x;
+        touchStartY = ev.tfinger.y;
+        touchActive = true;
+      }
+      if (ev.type == SDL_EVENT_FINGER_UP && touchActive) {
+        touchActive = false;
+        float dx = ev.tfinger.x - touchStartX;
+        float dy = ev.tfinger.y - touchStartY;
+        float absDx = (dx < 0) ? -dx : dx;
+        float absDy = (dy < 0) ? -dy : dy;
+
+        if (absDx < SWIPE_THRESHOLD && absDy < SWIPE_THRESHOLD) {
+          // Tap — start or restart
+          if (!gs.started)
+            gs.started = true;
+          if (gs.gameOver) {
+            if (gs.score > gs.highScore)
+              gs.highScore = gs.score;
+            resetGame(gs);
+            gs.started = true;
+          }
+        } else if (gs.started && !gs.gameOver) {
+          // Swipe — change direction
+          if (absDx > absDy) {
+            // Horizontal swipe
+            if (dx > 0 && gs.dir != Dir::LEFT)
+              gs.nextDir = Dir::RIGHT;
+            else if (dx < 0 && gs.dir != Dir::RIGHT)
+              gs.nextDir = Dir::LEFT;
+          } else {
+            // Vertical swipe
+            if (dy > 0 && gs.dir != Dir::UP)
+              gs.nextDir = Dir::DOWN;
+            else if (dy < 0 && gs.dir != Dir::DOWN)
+              gs.nextDir = Dir::UP;
+          }
         }
       }
     }

@@ -647,6 +647,10 @@ Engine *engine_create(int window_width, int window_height, int world_width,
   if (!engine)
     return NULL;
 
+  if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+    SDL_Log("SDL_Init failed: %s", SDL_GetError());
+  }
+
   // Use placement new to properly initialize C++ members
   new (&engine->grid) SpatialGrid();
   new (&engine->entityManager) EntityManager();
@@ -654,22 +658,27 @@ Engine *engine_create(int window_width, int window_height, int world_width,
   new (&engine->renderBatchManager) RenderBatchManager(8);
 
   // Create window
+#ifdef __ANDROID__
+  Uint32 windowFlags = SDL_WINDOW_OPENGL;
+#else
   Uint32 windowFlags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#endif
 
   engine->window = SDL_CreateWindow("2D Game Engine", window_width,
                                     window_height, windowFlags);
   if (!engine->window) {
+    SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
     engine->renderBatchManager.~RenderBatchManager();
     engine->entityManager.~EntityManager();
     engine->pending_removals.~vector();
     free(engine);
     return NULL;
   }
-  SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
   // Initialize SDL renderer
   engine->renderer = SDL_CreateRenderer(engine->window, NULL);
   if (!engine->renderer) {
+    SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
     SDL_DestroyWindow(engine->window);
     engine->renderBatchManager.~RenderBatchManager();
     engine->entityManager.~EntityManager();
@@ -719,6 +728,8 @@ void engine_destroy(Engine *engine) {
 
   // Free the engine struct
   free(engine);
+
+  SDL_Quit();
 }
 int engine_register_texture(Engine *engine, SDL_Surface *surface, int x, int y,
                             int width, int height) {

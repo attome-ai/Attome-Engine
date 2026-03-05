@@ -12,7 +12,7 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
-val gameName: String = project.findProperty("GAME_NAME")?.toString() ?: "hello-world"
+val gameName: String = project.findProperty("GAME_NAME")?.toString() ?: "helloworld"
 val gamesRoot: String = project.findProperty("GAMES_ROOT")?.toString()
     ?: rootProject.projectDir.parentFile.parentFile.absolutePath
 
@@ -28,32 +28,29 @@ android {
         versionName = "1.0"
 
         // CMake / NDK config
-        externalNativeBuild {
-            cmake {
-                cppFlags("-std=c++20")
-                arguments(
-                    "-DGAME_NAME=$gameName",
-                    "-DGAMES_ROOT=$gamesRoot",
-                    // vcpkg toolchain is chained via VCPKG_CHAINLOAD in build-android.ps1
-                    // and passed through cmake invocation; Gradle picks it up from
-                    // the cmake block below.
-                    "-DANDROID_STL=c++_shared",
-                    "-DANDROID_PLATFORM=android-24"
-                )
-            }
-        }
+        // externalNativeBuild {
+        //     cmake {
+        //         cppFlags("-std=c++20")
+        //         arguments(
+        //             "-DGAME_NAME=$gameName",
+        //             "-DGAMES_ROOT=$gamesRoot",
+        //             "-DANDROID_STL=c++_shared",
+        //             "-DANDROID_PLATFORM=android-24"
+        //         )
+        //     }
+        // }
 
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
+    // externalNativeBuild {
+    //     cmake {
+    //         path = file("CMakeLists.txt")
+    //         version = "3.22.1"
+    //     }
+    // }
 
     buildTypes {
         release {
