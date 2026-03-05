@@ -4,3 +4,5 @@
 # Windows NUL device — accidentally created by shell redirects, never commit
 nul
 /build-android
+/platforms/android/app/build/
+/platforms/android/.gradle/
