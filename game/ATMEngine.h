@@ -36,9 +36,12 @@ static constexpr float INV_GRID_CELL_SIZE = (1.0f / GRID_CELL_SIZE);
 // Common constants
 static constexpr int MAX_LAYERS = 32;
 static constexpr uint32_t INVALID_ID = 0xFFFFFFFF;
+static constexpr uint32_t INVALID_SLOT = INVALID_ID;
+static constexpr int STATIC_CHUNK_SIZE = 512;
 
 // Forward declarations
 struct Engine;
+class SpatialGrid;
 
 // Entity flags
 enum class EntityFlag : uint8_t {
@@ -50,6 +53,22 @@ enum class ContainerFlag : uint8_t {
   NONE = 0,
   RENDERABLE = 1 << 0,
   UPDATEABLE = 1 << 1
+};
+
+enum class ObjectRuntimeKind : uint8_t {
+  Dynamic = 0,
+  Static = 1,
+  Hybrid = 2,
+};
+
+struct EntityHandle {
+  uint32_t type{INVALID_ID};
+  uint32_t entity{INVALID_ID};
+  uint16_t generation{0};
+
+  bool isValid() const {
+    return type != INVALID_ID && entity != INVALID_ID && generation != 0;
+  }
 };
 
 /**
@@ -135,6 +154,8 @@ public:
   virtual ~EntityContainer();
 
   virtual void update(float delta_time) = 0;
+  virtual void updateVisible(const std::vector<uint32_t> &active_indices,
+                             float delta_time);
   virtual uint32_t createEntity();
   virtual void removeEntity(size_t index);
 
@@ -187,15 +208,46 @@ public:
 
 class EntityManager {
 public:
+  struct TypeRuntimeState {
+    ObjectRuntimeKind runtime_kind{ObjectRuntimeKind::Dynamic};
+    std::vector<uint32_t> entity_to_slot;
+    std::vector<uint16_t> entity_generations;
+    std::vector<uint32_t> free_entity_ids;
+    uint32_t next_entity_id{0};
+  };
+
   std::vector<std::unique_ptr<Layer>> layers;
   std::vector<std::unique_ptr<EntityContainer>> containers;
+  std::vector<TypeRuntimeState> type_states;
+  std::vector<int> dynamic_type_ids;
+  std::vector<int> static_type_ids;
+  std::vector<int> hybrid_type_ids;
   uint32_t next_entity_id;
 
   EntityManager();
 
+  int registerEntityType(EntityContainer *container, ObjectRuntimeKind kind);
   int registerEntityType(EntityContainer *container);
+  int registerDynamicEntityType(EntityContainer *container);
+  int registerStaticEntityType(EntityContainer *container);
+  int registerHybridEntityType(EntityContainer *container);
+
+  EntityHandle createEntityHandle(int type_id);
   uint32_t createEntity(int type_id);
-  void removeEntity(uint32_t index, int type_id);
+  bool resolveEntitySlot(const EntityHandle &handle,
+                         uint32_t &outSlot) const;
+  bool isHandleValid(const EntityHandle &handle) const;
+  bool removeEntity(const EntityHandle &handle, SpatialGrid *grid = nullptr);
+  void removeEntity(uint32_t index, int type_id, SpatialGrid *grid = nullptr);
+
+  ObjectRuntimeKind getRuntimeKind(int type_id) const;
+  const std::vector<int> &getDynamicTypeIds() const { return dynamic_type_ids; }
+  const std::vector<int> &getStaticTypeIds() const { return static_type_ids; }
+  const std::vector<int> &getHybridTypeIds() const { return hybrid_type_ids; }
+
+  void updateDynamic(float delta_time);
+  void updateHybrid(Engine *engine, float delta_time, float x1, float y1,
+                    float x2, float y2);
   void update(float delta_time);
 };
 
@@ -313,6 +365,18 @@ public:
     }
 
     freeNode(nodeIndex);
+  }
+
+  void updateNodeEntity(int32_t nodeIndex, const EntityRef &entity) {
+    if (nodeIndex < 0 || nodeIndex >= static_cast<int32_t>(nodes.size())) {
+      return;
+    }
+
+    if (nodes[nodeIndex].cell_index == -1) {
+      return;
+    }
+
+    nodes[nodeIndex].entity = entity;
   }
 
   // Move: remove from old list, add to new list.
@@ -496,6 +560,35 @@ public:
   size_t getBatchCount() const;
 };
 
+struct StaticChunk {
+  int32_t chunk_x{0};
+  int32_t chunk_y{0};
+  bool dirty{true};
+  std::vector<EntityRef> refs;
+  std::vector<SDL_Vertex> vertices;
+  std::vector<int> indices;
+};
+
+class StaticChunkCache {
+private:
+  std::unordered_map<int64_t, size_t> chunk_index_by_key;
+  std::vector<StaticChunk> chunks;
+  std::vector<size_t> visible_chunk_indices;
+
+  static int64_t makeChunkKey(int32_t chunk_x, int32_t chunk_y);
+
+public:
+  bool needs_full_rebuild{true};
+
+  void clear();
+  void markAllDirty();
+  void markNeedsFullRebuild() { needs_full_rebuild = true; }
+  int32_t worldToChunk(float world_value) const;
+  void rebuildRefs(Engine *engine);
+  std::vector<size_t> &queryVisible(float x1, float y1, float x2, float y2);
+  std::vector<StaticChunk> &getChunks() { return chunks; }
+};
+
 // Main engine struct
 typedef struct Engine {
   SDL_Window *window;
@@ -508,6 +601,7 @@ typedef struct Engine {
   Uint64 last_frame_time;
   float fps;
   std::vector<EntityRef> pending_removals;
+  StaticChunkCache staticChunkCache;
   // Entity type system
   EntityManager entityManager;
 } Engine;
@@ -530,6 +624,23 @@ int engine_register_texture(Engine *engine, SDL_Surface *surface, int x, int y,
 void engine_present(Engine *engine);
 
 SDL_FRect get_texture_region(const TextureAtlas &atlas, int16_t texture_id);
+
+// Type registration helpers by runtime behavior
+int engine_register_dynamic_type(Engine *engine, EntityContainer *container);
+int engine_register_static_type(Engine *engine, EntityContainer *container);
+int engine_register_hybrid_type(Engine *engine, EntityContainer *container);
+
+// Handle-based entity lifecycle
+EntityHandle engine_create_entity(Engine *engine, int type_id);
+void engine_destroy_entity(Engine *engine, const EntityHandle &handle);
+bool engine_is_handle_valid(Engine *engine, const EntityHandle &handle);
+bool engine_set_entity_position(Engine *engine, const EntityHandle &handle,
+                                float x, float y);
+bool engine_set_entity_visible(Engine *engine, const EntityHandle &handle,
+                               bool visible);
+bool engine_set_entity_z_index(Engine *engine, const EntityHandle &handle,
+                               uint8_t z_index);
+void engine_mark_static_dirty(Engine *engine);
 
 // Entity management
 void engine_update_entity_types(Engine *engine, float delta_time);

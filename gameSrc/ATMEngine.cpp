@@ -1,5 +1,6 @@
 ﻿#include "../game/ATMEngine.h"
 #include <algorithm>
+#include <cmath>
 #include <execution>
 #include <future>
 #include <numeric>
@@ -25,6 +26,15 @@ EntityContainer::~EntityContainer() {
   // RAII: DynamicArray destructors automatically free memory
 }
 
+void EntityContainer::updateVisible(const std::vector<uint32_t> &active_indices,
+                                    float delta_time) {
+  // Compatibility fallback: preserve old behavior when a custom visible-only
+  // update path is not implemented by the container.
+  if (!active_indices.empty()) {
+    update(delta_time);
+  }
+}
+
 uint32_t EntityContainer::createEntity() {
   if (count >= capacity) {
     // Resize arrays to accommodate more entities
@@ -35,8 +45,8 @@ uint32_t EntityContainer::createEntity() {
   size_t index = count++;
   x_positions[index] = 0.0f;
   y_positions[index] = 0.0f;
-  flags[index] = static_cast<uint8_t>(EntityFlag::NONE);
-  entity_ids[index] = index;
+  flags[index] = static_cast<uint8_t>(EntityFlag::VISIBLE);
+  entity_ids[index] = INVALID_ID;
   parent_ids[index] = INVALID_ID;
   first_child_ids[index] = INVALID_ID;
   next_sibling_ids[index] = INVALID_ID;
@@ -58,7 +68,7 @@ void EntityContainer::removeEntity(size_t index) {
     x_positions[index] = x_positions[last];
     y_positions[index] = y_positions[last];
     flags[index] = flags[last];
-    entity_ids[index] = index; // Update to new position
+    entity_ids[index] = entity_ids[last];
     parent_ids[index] = parent_ids[last];
     first_child_ids[index] = first_child_ids[last];
     next_sibling_ids[index] = next_sibling_ids[last];
@@ -177,10 +187,34 @@ EntityManager::EntityManager() : next_entity_id(0) {
   layers.push_back(std::make_unique<Layer>(0));
 }
 
-int EntityManager::registerEntityType(EntityContainer *container) {
+int EntityManager::registerEntityType(EntityContainer *container,
+                                      ObjectRuntimeKind kind) {
   PROFILE_FUNCTION();
+  if (!container) {
+    return -1;
+  }
+
   int type_id = containers.size();
+  container->type_id = type_id;
   containers.emplace_back(container);
+  type_states.emplace_back();
+  type_states.back().runtime_kind = kind;
+
+  switch (kind) {
+  case ObjectRuntimeKind::Dynamic:
+    dynamic_type_ids.push_back(type_id);
+    break;
+  case ObjectRuntimeKind::Static:
+    static_type_ids.push_back(type_id);
+    container->containerFlag &= ~(uint8_t)ContainerFlag::UPDATEABLE;
+    break;
+  case ObjectRuntimeKind::Hybrid:
+    hybrid_type_ids.push_back(type_id);
+    break;
+  default:
+    dynamic_type_ids.push_back(type_id);
+    break;
+  }
 
   uint8_t layer_index = container->getDefaultLayer();
   if (layer_index >= layers.size()) {
@@ -194,31 +228,260 @@ int EntityManager::registerEntityType(EntityContainer *container) {
   return type_id;
 }
 
-uint32_t EntityManager::createEntity(int type_id) {
-  PROFILE_FUNCTION();
-  if (type_id >= containers.size())
-    return INVALID_ID;
-  uint32_t index = containers[type_id]->createEntity();
-  if (index != INVALID_ID) {
-    // Could store a mapping from index to next_entity_id if needed
-    next_entity_id++;
-  }
-  return index;
+int EntityManager::registerEntityType(EntityContainer *container) {
+  return registerEntityType(container, ObjectRuntimeKind::Dynamic);
 }
 
-void EntityManager::removeEntity(uint32_t index, int type_id) {
+int EntityManager::registerDynamicEntityType(EntityContainer *container) {
+  return registerEntityType(container, ObjectRuntimeKind::Dynamic);
+}
+
+int EntityManager::registerStaticEntityType(EntityContainer *container) {
+  return registerEntityType(container, ObjectRuntimeKind::Static);
+}
+
+int EntityManager::registerHybridEntityType(EntityContainer *container) {
+  return registerEntityType(container, ObjectRuntimeKind::Hybrid);
+}
+
+EntityHandle EntityManager::createEntityHandle(int type_id) {
   PROFILE_FUNCTION();
-  if (type_id >= containers.size())
+  if (type_id < 0 || type_id >= static_cast<int>(containers.size())) {
+    return {};
+  }
+
+  auto *container = containers[type_id].get();
+  if (!container) {
+    return {};
+  }
+
+  const uint32_t slot = container->createEntity();
+  if (slot == INVALID_ID) {
+    return {};
+  }
+
+  auto &state = type_states[type_id];
+  uint32_t entity_id = INVALID_ID;
+  if (!state.free_entity_ids.empty()) {
+    entity_id = state.free_entity_ids.back();
+    state.free_entity_ids.pop_back();
+  } else {
+    entity_id = state.next_entity_id++;
+  }
+
+  if (entity_id >= state.entity_to_slot.size()) {
+    state.entity_to_slot.resize(entity_id + 1, INVALID_SLOT);
+  }
+  if (entity_id >= state.entity_generations.size()) {
+    state.entity_generations.resize(entity_id + 1, 1);
+  }
+  if (state.entity_generations[entity_id] == 0) {
+    state.entity_generations[entity_id] = 1;
+  }
+
+  state.entity_to_slot[entity_id] = slot;
+  container->entity_ids[slot] = entity_id;
+  next_entity_id++;
+
+  return EntityHandle{static_cast<uint32_t>(type_id), entity_id,
+                      state.entity_generations[entity_id]};
+}
+
+uint32_t EntityManager::createEntity(int type_id) {
+  const EntityHandle handle = createEntityHandle(type_id);
+  uint32_t slot = INVALID_ID;
+  if (!resolveEntitySlot(handle, slot)) {
+    return INVALID_ID;
+  }
+  return slot;
+}
+
+bool EntityManager::resolveEntitySlot(const EntityHandle &handle,
+                                      uint32_t &outSlot) const {
+  outSlot = INVALID_SLOT;
+  if (!handle.isValid()) {
+    return false;
+  }
+
+  if (handle.type >= containers.size() || handle.type >= type_states.size()) {
+    return false;
+  }
+
+  const auto *container = containers[handle.type].get();
+  if (!container) {
+    return false;
+  }
+
+  const auto &state = type_states[handle.type];
+  if (handle.entity >= state.entity_to_slot.size() ||
+      handle.entity >= state.entity_generations.size()) {
+    return false;
+  }
+
+  if (state.entity_generations[handle.entity] != handle.generation) {
+    return false;
+  }
+
+  const uint32_t slot = state.entity_to_slot[handle.entity];
+  if (slot == INVALID_SLOT || slot >= static_cast<uint32_t>(container->count)) {
+    return false;
+  }
+
+  if (container->entity_ids[slot] != handle.entity) {
+    return false;
+  }
+
+  outSlot = slot;
+  return true;
+}
+
+bool EntityManager::isHandleValid(const EntityHandle &handle) const {
+  uint32_t slot = INVALID_SLOT;
+  return resolveEntitySlot(handle, slot);
+}
+
+bool EntityManager::removeEntity(const EntityHandle &handle, SpatialGrid *grid) {
+  uint32_t slot = INVALID_SLOT;
+  if (!resolveEntitySlot(handle, slot)) {
+    return false;
+  }
+
+  removeEntity(slot, static_cast<int>(handle.type), grid);
+  return true;
+}
+
+void EntityManager::removeEntity(uint32_t index, int type_id, SpatialGrid *grid) {
+  PROFILE_FUNCTION();
+  if (type_id < 0 || type_id >= static_cast<int>(containers.size()) ||
+      type_id >= static_cast<int>(type_states.size())) {
     return;
-  containers[type_id]->removeEntity(index);
+  }
+
+  auto *container = containers[type_id].get();
+  if (!container || index >= static_cast<uint32_t>(container->count)) {
+    return;
+  }
+
+  auto &state = type_states[type_id];
+  const ObjectRuntimeKind runtime_kind = state.runtime_kind;
+
+  const uint32_t last = static_cast<uint32_t>(container->count - 1);
+  const uint32_t removed_entity_id = container->entity_ids[index];
+  const bool swapped = index < last;
+  const uint32_t moved_entity_id =
+      swapped ? container->entity_ids[last] : INVALID_ID;
+
+  const int32_t removed_grid_node = container->grid_node_indices[index];
+  const int32_t moved_grid_node =
+      swapped ? container->grid_node_indices[last] : -1;
+
+  container->removeEntity(index);
+
+  if (grid && runtime_kind != ObjectRuntimeKind::Static) {
+    if (removed_grid_node != -1) {
+      grid->remove(removed_grid_node);
+    }
+
+    if (swapped && moved_grid_node != -1) {
+      grid->updateNodeEntity(moved_grid_node,
+                             EntityRef{static_cast<uint32_t>(type_id), index});
+    }
+  }
+
+  if (removed_entity_id != INVALID_ID) {
+    if (removed_entity_id < state.entity_to_slot.size()) {
+      state.entity_to_slot[removed_entity_id] = INVALID_SLOT;
+    }
+    if (removed_entity_id < state.entity_generations.size()) {
+      uint16_t &generation = state.entity_generations[removed_entity_id];
+      generation = static_cast<uint16_t>(generation + 1u);
+      if (generation == 0) {
+        generation = 1;
+      }
+    }
+    state.free_entity_ids.push_back(removed_entity_id);
+  }
+
+  if (swapped && moved_entity_id != INVALID_ID &&
+      moved_entity_id < state.entity_to_slot.size()) {
+    state.entity_to_slot[moved_entity_id] = index;
+  }
+}
+
+ObjectRuntimeKind EntityManager::getRuntimeKind(int type_id) const {
+  if (type_id < 0 || type_id >= static_cast<int>(type_states.size())) {
+    return ObjectRuntimeKind::Dynamic;
+  }
+  return type_states[type_id].runtime_kind;
+}
+
+void EntityManager::updateDynamic(float delta_time) {
+  PROFILE_FUNCTION();
+  for (const int type_id : dynamic_type_ids) {
+    if (type_id < 0 || type_id >= static_cast<int>(containers.size())) {
+      continue;
+    }
+    auto *container = containers[type_id].get();
+    if (!container) {
+      continue;
+    }
+    if (container->containerFlag & (uint8_t)ContainerFlag::UPDATEABLE) {
+      container->update(delta_time);
+    }
+  }
+}
+
+void EntityManager::updateHybrid(Engine *engine, float delta_time, float x1,
+                                 float y1, float x2, float y2) {
+  PROFILE_FUNCTION();
+  if (!engine || hybrid_type_ids.empty()) {
+    return;
+  }
+
+  std::vector<EntityRef> &active_refs = engine->grid.queryRect(x1, y1, x2, y2);
+  if (active_refs.empty()) {
+    return;
+  }
+
+  static thread_local std::vector<std::vector<uint32_t>> active_indices_by_type;
+  static thread_local std::vector<int> touched_types;
+
+  if (active_indices_by_type.size() < containers.size()) {
+    active_indices_by_type.resize(containers.size());
+  }
+  touched_types.clear();
+
+  for (const EntityRef &ref : active_refs) {
+    if (ref.type >= type_states.size()) {
+      continue;
+    }
+    if (type_states[ref.type].runtime_kind != ObjectRuntimeKind::Hybrid) {
+      continue;
+    }
+
+    auto &indices = active_indices_by_type[ref.type];
+    if (indices.empty()) {
+      touched_types.push_back(static_cast<int>(ref.type));
+    }
+    indices.push_back(ref.index);
+  }
+
+  for (const int type_id : touched_types) {
+    auto *container = containers[type_id].get();
+    if (!container) {
+      active_indices_by_type[type_id].clear();
+      continue;
+    }
+
+    if (container->containerFlag & (uint8_t)ContainerFlag::UPDATEABLE) {
+      container->updateVisible(active_indices_by_type[type_id], delta_time);
+    }
+    active_indices_by_type[type_id].clear();
+  }
 }
 
 void EntityManager::update(float delta_time) {
-  PROFILE_FUNCTION();
-  for (auto &layer : layers) {
-    if (layer)
-      layer->update(delta_time);
-  }
+  updateDynamic(delta_time);
 }
 
 // RenderBatch implementation
@@ -386,22 +649,146 @@ size_t RenderBatchManager::getBatchCount() const {
   return batches.size();
 }
 
+int64_t StaticChunkCache::makeChunkKey(int32_t chunk_x, int32_t chunk_y) {
+  return (static_cast<int64_t>(chunk_x) << 32) ^
+         static_cast<uint32_t>(chunk_y);
+}
+
+void StaticChunkCache::clear() {
+  chunk_index_by_key.clear();
+  chunks.clear();
+  visible_chunk_indices.clear();
+  needs_full_rebuild = true;
+}
+
+void StaticChunkCache::markAllDirty() {
+  for (auto &chunk : chunks) {
+    chunk.dirty = true;
+  }
+}
+
+int32_t StaticChunkCache::worldToChunk(float world_value) const {
+  return static_cast<int32_t>(
+      std::floor(world_value / static_cast<float>(STATIC_CHUNK_SIZE)));
+}
+
+void StaticChunkCache::rebuildRefs(Engine *engine) {
+  PROFILE_FUNCTION();
+  chunk_index_by_key.clear();
+  chunks.clear();
+  visible_chunk_indices.clear();
+
+  if (!engine) {
+    needs_full_rebuild = false;
+    return;
+  }
+
+  auto ensureChunk = [&](int32_t chunk_x, int32_t chunk_y) -> StaticChunk & {
+    const int64_t key = makeChunkKey(chunk_x, chunk_y);
+    auto it = chunk_index_by_key.find(key);
+    if (it != chunk_index_by_key.end()) {
+      return chunks[it->second];
+    }
+
+    const size_t index = chunks.size();
+    chunk_index_by_key[key] = index;
+    chunks.push_back(StaticChunk{});
+    chunks.back().chunk_x = chunk_x;
+    chunks.back().chunk_y = chunk_y;
+    chunks.back().dirty = true;
+    return chunks.back();
+  };
+
+  const std::vector<int> &static_types = engine->entityManager.getStaticTypeIds();
+  for (const int type_id : static_types) {
+    if (type_id < 0 ||
+        type_id >= static_cast<int>(engine->entityManager.containers.size())) {
+      continue;
+    }
+
+    auto *container = engine->entityManager.containers[type_id].get();
+    if (!container || container->count <= 0) {
+      continue;
+    }
+
+    if (!(container->containerFlag & (uint8_t)ContainerFlag::RENDERABLE)) {
+      continue;
+    }
+
+    for (int i = 0; i < container->count; ++i) {
+      const int32_t chunk_x = worldToChunk(container->x_positions[i]);
+      const int32_t chunk_y = worldToChunk(container->y_positions[i]);
+      StaticChunk &chunk = ensureChunk(chunk_x, chunk_y);
+      chunk.refs.push_back(
+          EntityRef{static_cast<uint32_t>(type_id), static_cast<uint32_t>(i)});
+      chunk.dirty = true;
+    }
+  }
+
+  needs_full_rebuild = false;
+}
+
+std::vector<size_t> &StaticChunkCache::queryVisible(float x1, float y1, float x2,
+                                                    float y2) {
+  visible_chunk_indices.clear();
+  if (chunks.empty()) {
+    return visible_chunk_indices;
+  }
+
+  const int32_t min_chunk_x = worldToChunk(x1);
+  const int32_t min_chunk_y = worldToChunk(y1);
+  const int32_t max_chunk_x = worldToChunk(x2);
+  const int32_t max_chunk_y = worldToChunk(y2);
+
+  for (int32_t chunk_y = min_chunk_y; chunk_y <= max_chunk_y; ++chunk_y) {
+    for (int32_t chunk_x = min_chunk_x; chunk_x <= max_chunk_x; ++chunk_x) {
+      const int64_t key = makeChunkKey(chunk_x, chunk_y);
+      auto it = chunk_index_by_key.find(key);
+      if (it != chunk_index_by_key.end()) {
+        visible_chunk_indices.push_back(it->second);
+      }
+    }
+  }
+
+  return visible_chunk_indices;
+}
+
 // Process entities marked for removal
 void process_pending_removals(Engine *engine) {
   PROFILE_FUNCTION();
 
-  if (engine->pending_removals.empty())
+  if (engine->pending_removals.empty()) {
     return;
+  }
+
+  bool static_changed = false;
+
+  // Swap-delete invalidates higher indices first; remove in descending index
+  // order per type to avoid skipping entities.
+  std::sort(engine->pending_removals.begin(), engine->pending_removals.end(),
+            [](const EntityRef &a, const EntityRef &b) {
+              if (a.type != b.type) {
+                return a.type < b.type;
+              }
+              return a.index > b.index;
+            });
 
   for (const auto &ref : engine->pending_removals) {
-    if (ref.type < 0 || ref.type >= engine->entityManager.containers.size())
+    if (ref.type >= engine->entityManager.containers.size()) {
       continue;
+    }
 
-    auto container = engine->entityManager.containers[ref.type].get();
-    if (!container)
-      continue;
+    if (engine->entityManager.getRuntimeKind(static_cast<int>(ref.type)) ==
+        ObjectRuntimeKind::Static) {
+      static_changed = true;
+    }
 
-    container->removeEntity(ref.index);
+    engine->entityManager.removeEntity(ref.index, static_cast<int>(ref.type),
+                                       &engine->grid);
+  }
+
+  if (static_changed) {
+    engine->staticChunkCache.markNeedsFullRebuild();
   }
 
   engine->pending_removals.clear();
@@ -414,19 +801,229 @@ void engine_update(Engine *engine) {
   // Calculate delta time
   Uint64 current_time = SDL_GetTicks();
   float delta_time = (current_time - engine->last_frame_time) / 1000.0f;
+  if (delta_time <= 0.0f) {
+    delta_time = 0.0001f;
+  }
   engine->last_frame_time = current_time;
 
   // Smooth FPS calculation
   engine->fps = 0.95f * engine->fps + 0.05f * (1.0f / delta_time);
 
-  // Grid is now updated incrementally during entity updates - no full rebuild
-  // needed!
+  // Option B pipeline:
+  // 1) Dynamic types are always updated globally.
+  engine->entityManager.updateDynamic(delta_time);
 
-  // Update all entity layers
-  engine->entityManager.update(delta_time);
+  // 2) Hybrid types update only inside camera activation bounds.
+  static constexpr float HYBRID_ACTIVATION_MARGIN = 150.0f;
+  const float x1 = engine->camera.x - engine->camera.width / 2.0f;
+  const float y1 = engine->camera.y - engine->camera.height / 2.0f;
+  const float x2 = engine->camera.x + engine->camera.width / 2.0f;
+  const float y2 = engine->camera.y + engine->camera.height / 2.0f;
+  engine->entityManager.updateHybrid(
+      engine, delta_time, x1 - HYBRID_ACTIVATION_MARGIN,
+      y1 - HYBRID_ACTIVATION_MARGIN, x2 + HYBRID_ACTIVATION_MARGIN,
+      y2 + HYBRID_ACTIVATION_MARGIN);
 
   // Process pending removals
   process_pending_removals(engine);
+}
+
+void engine_update_entity_types(Engine *engine, float delta_time) {
+  (void)engine;
+  (void)delta_time;
+  // Backward-compatibility no-op:
+  // engine_update() now owns the full dynamic/hybrid update pipeline.
+}
+
+int engine_register_dynamic_type(Engine *engine, EntityContainer *container) {
+  if (!engine) {
+    return -1;
+  }
+  return engine->entityManager.registerDynamicEntityType(container);
+}
+
+int engine_register_static_type(Engine *engine, EntityContainer *container) {
+  if (!engine) {
+    return -1;
+  }
+  const int type_id = engine->entityManager.registerStaticEntityType(container);
+  engine->staticChunkCache.markNeedsFullRebuild();
+  return type_id;
+}
+
+int engine_register_hybrid_type(Engine *engine, EntityContainer *container) {
+  if (!engine) {
+    return -1;
+  }
+  return engine->entityManager.registerHybridEntityType(container);
+}
+
+EntityHandle engine_create_entity(Engine *engine, int type_id) {
+  if (!engine) {
+    return {};
+  }
+
+  EntityHandle handle = engine->entityManager.createEntityHandle(type_id);
+  uint32_t slot = INVALID_SLOT;
+  if (!engine->entityManager.resolveEntitySlot(handle, slot)) {
+    return {};
+  }
+
+  auto *container = engine->entityManager.containers[type_id].get();
+  if (!container) {
+    return {};
+  }
+
+  const ObjectRuntimeKind kind = engine->entityManager.getRuntimeKind(type_id);
+  if (kind == ObjectRuntimeKind::Static) {
+    engine->staticChunkCache.markNeedsFullRebuild();
+    return handle;
+  }
+
+  const float x = container->x_positions[slot];
+  const float y = container->y_positions[slot];
+  const EntityRef ref{static_cast<uint32_t>(type_id), slot};
+  const int32_t node_idx = engine->grid.add(ref, x, y);
+  container->grid_node_indices[slot] = node_idx;
+  uint16_t cx = 0;
+  uint16_t cy = 0;
+  engine->grid.getCellCoords(x, y, cx, cy);
+  container->cell_x[slot] = cx;
+  container->cell_y[slot] = cy;
+
+  return handle;
+}
+
+void engine_destroy_entity(Engine *engine, const EntityHandle &handle) {
+  if (!engine || !handle.isValid()) {
+    return;
+  }
+
+  if (handle.type >= engine->entityManager.containers.size()) {
+    return;
+  }
+
+  const ObjectRuntimeKind kind =
+      engine->entityManager.getRuntimeKind(static_cast<int>(handle.type));
+  if (engine->entityManager.removeEntity(handle, &engine->grid) &&
+      kind == ObjectRuntimeKind::Static) {
+    engine->staticChunkCache.markNeedsFullRebuild();
+  }
+}
+
+bool engine_is_handle_valid(Engine *engine, const EntityHandle &handle) {
+  if (!engine) {
+    return false;
+  }
+  return engine->entityManager.isHandleValid(handle);
+}
+
+bool engine_set_entity_position(Engine *engine, const EntityHandle &handle,
+                                float x, float y) {
+  if (!engine) {
+    return false;
+  }
+
+  uint32_t slot = INVALID_SLOT;
+  if (!engine->entityManager.resolveEntitySlot(handle, slot)) {
+    return false;
+  }
+
+  auto *container = engine->entityManager.containers[handle.type].get();
+  if (!container) {
+    return false;
+  }
+
+  container->x_positions[slot] = x;
+  container->y_positions[slot] = y;
+
+  const ObjectRuntimeKind kind =
+      engine->entityManager.getRuntimeKind(static_cast<int>(handle.type));
+  if (kind == ObjectRuntimeKind::Static) {
+    engine->staticChunkCache.markNeedsFullRebuild();
+    return true;
+  }
+
+  int32_t node_idx = container->grid_node_indices[slot];
+  const EntityRef ref{handle.type, slot};
+  if (node_idx == -1) {
+    node_idx = engine->grid.add(ref, x, y);
+    container->grid_node_indices[slot] = node_idx;
+  } else {
+    engine->grid.move(node_idx, x, y);
+  }
+
+  uint16_t cx = 0;
+  uint16_t cy = 0;
+  engine->grid.getCellCoords(x, y, cx, cy);
+  container->cell_x[slot] = cx;
+  container->cell_y[slot] = cy;
+  return true;
+}
+
+bool engine_set_entity_visible(Engine *engine, const EntityHandle &handle,
+                               bool visible) {
+  if (!engine) {
+    return false;
+  }
+
+  uint32_t slot = INVALID_SLOT;
+  if (!engine->entityManager.resolveEntitySlot(handle, slot)) {
+    return false;
+  }
+
+  auto *container = engine->entityManager.containers[handle.type].get();
+  if (!container) {
+    return false;
+  }
+
+  if (visible) {
+    container->flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
+  } else {
+    container->flags[slot] &= ~static_cast<uint8_t>(EntityFlag::VISIBLE);
+  }
+
+  if (engine->entityManager.getRuntimeKind(static_cast<int>(handle.type)) ==
+      ObjectRuntimeKind::Static) {
+    engine->staticChunkCache.markNeedsFullRebuild();
+  }
+  return true;
+}
+
+bool engine_set_entity_z_index(Engine *engine, const EntityHandle &handle,
+                               uint8_t z_index) {
+  if (!engine) {
+    return false;
+  }
+
+  uint32_t slot = INVALID_SLOT;
+  if (!engine->entityManager.resolveEntitySlot(handle, slot)) {
+    return false;
+  }
+
+  if (handle.type >= engine->entityManager.containers.size()) {
+    return false;
+  }
+
+  auto *container = engine->entityManager.containers[handle.type].get();
+  auto *renderable = dynamic_cast<RenderableEntityContainer *>(container);
+  if (!renderable || slot >= static_cast<uint32_t>(renderable->count)) {
+    return false;
+  }
+
+  renderable->z_indices[slot] = z_index;
+  if (engine->entityManager.getRuntimeKind(static_cast<int>(handle.type)) ==
+      ObjectRuntimeKind::Static) {
+    engine->staticChunkCache.markNeedsFullRebuild();
+  }
+  return true;
+}
+
+void engine_mark_static_dirty(Engine *engine) {
+  if (!engine) {
+    return;
+  }
+  engine->staticChunkCache.markNeedsFullRebuild();
 }
 
 // Set entity z_index
@@ -447,6 +1044,10 @@ void engine_set_entity_z_index(Engine *engine, uint32_t entity_idx, int type_id,
     return;
 
   renderable->z_indices[entity_idx] = z_index;
+  if (engine->entityManager.getRuntimeKind(type_id) ==
+      ObjectRuntimeKind::Static) {
+    engine->staticChunkCache.markNeedsFullRebuild();
+  }
 }
 
 // Present the renderer
@@ -655,6 +1256,7 @@ Engine *engine_create(int window_width, int window_height, int world_width,
   new (&engine->grid) SpatialGrid();
   new (&engine->entityManager) EntityManager();
   new (&engine->pending_removals) std::vector<EntityRef>();
+  new (&engine->staticChunkCache) StaticChunkCache();
   new (&engine->renderBatchManager) RenderBatchManager(8);
 
   // Create window
@@ -669,8 +1271,10 @@ Engine *engine_create(int window_width, int window_height, int world_width,
   if (!engine->window) {
     SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
     engine->renderBatchManager.~RenderBatchManager();
+    engine->staticChunkCache.~StaticChunkCache();
     engine->entityManager.~EntityManager();
     engine->pending_removals.~vector();
+    engine->grid.~SpatialGrid();
     free(engine);
     return NULL;
   }
@@ -681,8 +1285,10 @@ Engine *engine_create(int window_width, int window_height, int world_width,
     SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
     SDL_DestroyWindow(engine->window);
     engine->renderBatchManager.~RenderBatchManager();
+    engine->staticChunkCache.~StaticChunkCache();
     engine->entityManager.~EntityManager();
     engine->pending_removals.~vector();
+    engine->grid.~SpatialGrid();
     free(engine);
     return NULL;
   }
@@ -718,6 +1324,10 @@ void engine_destroy(Engine *engine) {
   // Call destructors for C++ members in reverse order of construction
   engine->atlas.~TextureAtlas();
   engine->renderBatchManager.~RenderBatchManager();
+  engine->staticChunkCache.~StaticChunkCache();
+  engine->entityManager.~EntityManager();
+  engine->pending_removals.~vector();
+  engine->grid.~SpatialGrid();
 
   // Destroy SDL resources
   if (engine->renderer) {
@@ -738,6 +1348,117 @@ int engine_register_texture(Engine *engine, SDL_Surface *surface, int x, int y,
   return engine->atlas.registerTexture(surface, x, y, width, height);
 }
 
+static inline bool isEntityVisible(const EntityContainer *container,
+                                   uint32_t index) {
+  if (!container || index >= static_cast<uint32_t>(container->count)) {
+    return false;
+  }
+  return (container->flags[index] & static_cast<uint8_t>(EntityFlag::VISIBLE)) !=
+         0;
+}
+
+static void appendQuadToBuffers(std::vector<SDL_Vertex> &vertices,
+                                std::vector<int> &indices, float x, float y,
+                                float w, float h, float rotation_radians,
+                                const SDL_FRect &tex_region) {
+  const int base_vert = static_cast<int>(vertices.size());
+  SDL_Vertex v;
+  v.color = {1, 1, 1, 1};
+
+  const float cx = x + w * 0.5f;
+  const float cy = y + h * 0.5f;
+  const float c = std::cos(rotation_radians);
+  const float s = std::sin(rotation_radians);
+  auto rotate = [&](float vx, float vy) -> SDL_FPoint {
+    return {cx + (vx - cx) * c - (vy - cy) * s,
+            cy + (vx - cx) * s + (vy - cy) * c};
+  };
+
+  v.position = rotate(x, y);
+  v.tex_coord = {tex_region.x, tex_region.y};
+  vertices.push_back(v);
+
+  v.position = rotate(x + w, y);
+  v.tex_coord = {tex_region.x + tex_region.w, tex_region.y};
+  vertices.push_back(v);
+
+  v.position = rotate(x + w, y + h);
+  v.tex_coord = {tex_region.x + tex_region.w, tex_region.y + tex_region.h};
+  vertices.push_back(v);
+
+  v.position = rotate(x, y + h);
+  v.tex_coord = {tex_region.x, tex_region.y + tex_region.h};
+  vertices.push_back(v);
+
+  indices.push_back(base_vert);
+  indices.push_back(base_vert + 1);
+  indices.push_back(base_vert + 2);
+  indices.push_back(base_vert);
+  indices.push_back(base_vert + 2);
+  indices.push_back(base_vert + 3);
+}
+
+static void rebuildStaticChunkMesh(Engine *engine, StaticChunk &chunk) {
+  chunk.vertices.clear();
+  chunk.indices.clear();
+
+  struct SortableEntity {
+    uint64_t sort_key;
+    EntityRef ref;
+    bool operator<(const SortableEntity &other) const {
+      return sort_key < other.sort_key;
+    }
+  };
+
+  std::vector<SortableEntity> sortable_entities;
+  sortable_entities.reserve(chunk.refs.size());
+
+  for (const EntityRef &ref : chunk.refs) {
+    if (ref.type >= engine->entityManager.containers.size()) {
+      continue;
+    }
+
+    auto *base = engine->entityManager.containers[ref.type].get();
+    if (!base || ref.index >= static_cast<uint32_t>(base->count)) {
+      continue;
+    }
+    if (!(base->containerFlag & (uint8_t)ContainerFlag::RENDERABLE)) {
+      continue;
+    }
+    if (!isEntityVisible(base, ref.index)) {
+      continue;
+    }
+
+    auto *renderable = static_cast<RenderableEntityContainer *>(base);
+    const uint64_t sort_key =
+        (static_cast<uint64_t>(renderable->z_indices[ref.index]) << 56) |
+        (static_cast<uint64_t>(ref.type) << 48) |
+        static_cast<uint64_t>(ref.index);
+    sortable_entities.push_back(SortableEntity{sort_key, ref});
+  }
+
+  std::sort(sortable_entities.begin(), sortable_entities.end());
+
+  chunk.vertices.reserve(sortable_entities.size() * 4);
+  chunk.indices.reserve(sortable_entities.size() * 6);
+
+  for (const SortableEntity &se : sortable_entities) {
+    const EntityRef &ref = se.ref;
+    auto *renderable = static_cast<RenderableEntityContainer *>(
+        engine->entityManager.containers[ref.type].get());
+    const float x = renderable->x_positions[ref.index];
+    const float y = renderable->y_positions[ref.index];
+    const float w = renderable->widths[ref.index];
+    const float h = renderable->heights[ref.index];
+    const float angle = renderable->rotations[ref.index];
+    SDL_FRect tex_region = engine->atlas.getRegion(renderable->texture_ids[ref.index]);
+    appendQuadToBuffers(chunk.vertices, chunk.indices, x, y, w, h, angle,
+                        tex_region);
+  }
+
+  chunk.dirty = false;
+}
+
 void engine_render_scene(Engine *engine) {
   PROFILE_FUNCTION();
 
@@ -752,18 +1473,7 @@ void engine_render_scene(Engine *engine) {
   const float x2 = engine->camera.x + engine->camera.width / 2.0f;
   const float y2 = engine->camera.y + engine->camera.height / 2.0f;
 
-  // 1. Thread-safe Parallel Query
-  std::vector<EntityRef> &visible_entities =
-      engine->grid.queryRect(x1 - 50, y1 - 50, x2 + 50, y2 + 50);
-  if (visible_entities.empty())
-    return;
-
-  // 2. OPTIMIZED SORTING: Pre-compute sort keys to eliminate pointer derefs
-  // during comparison. Key layout: (z_index << 56) | (type << 48) | index
-  // This reduces ~40M pointer dereferences to ~N (one per entity during key
-  // building)
-
-  // Pre-computed sort key for zero-cost comparisons during sort
+  // Pre-computed sort key for zero-cost comparisons during sort.
   struct SortableEntity {
     uint64_t sort_key;
     EntityRef ref;
@@ -773,40 +1483,92 @@ void engine_render_scene(Engine *engine) {
     }
   };
 
-  // Reuse buffer across frames to avoid allocation
+  // Reuse buffers across frames to avoid allocations.
   static thread_local std::vector<SortableEntity> sortable_entities;
+  static thread_local std::vector<SDL_Vertex> unified_vertices;
+  static thread_local std::vector<int> unified_indices;
+
   sortable_entities.clear();
+  unified_vertices.clear();
+  unified_indices.clear();
+
+  // Static pass: chunked cached geometry.
+  if (engine->staticChunkCache.needs_full_rebuild) {
+    engine->staticChunkCache.rebuildRefs(engine);
+  }
+
+  std::vector<size_t> &visible_static_chunks =
+      engine->staticChunkCache.queryVisible(x1, y1, x2, y2);
+  for (size_t chunk_idx : visible_static_chunks) {
+    auto &chunks = engine->staticChunkCache.getChunks();
+    if (chunk_idx >= chunks.size()) {
+      continue;
+    }
+
+    StaticChunk &chunk = chunks[chunk_idx];
+    if (chunk.dirty) {
+      rebuildStaticChunkMesh(engine, chunk);
+    }
+    if (chunk.vertices.empty()) {
+      continue;
+    }
+
+    const int base_vert = static_cast<int>(unified_vertices.size());
+    unified_vertices.reserve(unified_vertices.size() + chunk.vertices.size());
+    for (const SDL_Vertex &world_v : chunk.vertices) {
+      SDL_Vertex v = world_v;
+      v.position.x -= x1;
+      v.position.y -= y1;
+      unified_vertices.push_back(v);
+    }
+    unified_indices.reserve(unified_indices.size() + chunk.indices.size());
+    for (int idx : chunk.indices) {
+      unified_indices.push_back(base_vert + idx);
+    }
+  }
+
+  // Dynamic + hybrid pass: moving-grid visible query.
+  std::vector<EntityRef> &visible_entities =
+      engine->grid.queryRect(x1 - 50, y1 - 50, x2 + 50, y2 + 50);
   sortable_entities.reserve(visible_entities.size());
-
-  // Build sort keys - ONE pointer deref per entity (not per comparison)
   for (const auto &entity : visible_entities) {
-    auto rCont = static_cast<RenderableEntityContainer *>(
-        engine->entityManager.containers[entity.type].get());
+    if (entity.type >= engine->entityManager.containers.size()) {
+      continue;
+    }
+    if (engine->entityManager.getRuntimeKind(static_cast<int>(entity.type)) ==
+        ObjectRuntimeKind::Static) {
+      continue;
+    }
 
-    uint64_t key =
-        (static_cast<uint64_t>(rCont->z_indices[entity.index]) << 56) |
+    auto *base = engine->entityManager.containers[entity.type].get();
+    if (!base || entity.index >= static_cast<uint32_t>(base->count)) {
+      continue;
+    }
+    if (!(base->containerFlag & (uint8_t)ContainerFlag::RENDERABLE)) {
+      continue;
+    }
+    if (!isEntityVisible(base, entity.index)) {
+      continue;
+    }
+
+    auto *renderable = static_cast<RenderableEntityContainer *>(base);
+    const uint64_t key =
+        (static_cast<uint64_t>(renderable->z_indices[entity.index]) << 56) |
         (static_cast<uint64_t>(entity.type) << 48) |
         static_cast<uint64_t>(entity.index);
-
     sortable_entities.push_back({key, entity});
   }
 
-  // Sort on pre-computed keys - ZERO pointer derefs during sort
   std::sort(sortable_entities.begin(), sortable_entities.end());
-
-  // 3. Build a SINGLE unified batch - preserves sort order for proper layering
-  // Since all textures are in the atlas, we render with one draw call
-  static std::vector<SDL_Vertex> unified_vertices;
-  static std::vector<int> unified_indices;
-  unified_vertices.clear();
-  unified_indices.clear();
-  unified_vertices.reserve(sortable_entities.size() * 4);
-  unified_indices.reserve(sortable_entities.size() * 6);
 
   for (const auto &se : sortable_entities) {
     const auto &entity = se.ref;
-    auto rCont = static_cast<RenderableEntityContainer *>(
+    auto *rCont = static_cast<RenderableEntityContainer *>(
         engine->entityManager.containers[entity.type].get());
+    if (!rCont || entity.index >= static_cast<uint32_t>(rCont->count)) {
+      continue;
+    }
+
     float x = rCont->x_positions[entity.index] - x1;
     float y = rCont->y_positions[entity.index] - y1;
     float w = rCont->widths[entity.index];
@@ -819,56 +1581,11 @@ void engine_render_scene(Engine *engine) {
     SDL_FRect texRegion =
         engine->atlas.getRegion(rCont->texture_ids[entity.index]);
 
-    // Add quad directly to unified batch
-    int base_vert = unified_vertices.size();
-
-    // Vertices
-    // Vertices - Manual Rotation
-    SDL_Vertex v;
-    v.color = {1, 1, 1, 1};
-
-    float angle = rCont->rotations[entity.index];
-    float cx = x + w * 0.5f;
-    float cy = y + h * 0.5f;
-    float c = cosf(angle);
-    float s = sinf(angle);
-
-    // Lambda to rotate point around center
-    auto rotate = [&](float vx, float vy) -> SDL_FPoint {
-      return {cx + (vx - cx) * c - (vy - cy) * s,
-              cy + (vx - cx) * s + (vy - cy) * c};
-    };
-
-    // Top-left
-    v.position = rotate(x, y);
-    v.tex_coord = {texRegion.x, texRegion.y};
-    unified_vertices.push_back(v);
-
-    // Top-right
-    v.position = rotate(x + w, y);
-    v.tex_coord = {texRegion.x + texRegion.w, texRegion.y};
-    unified_vertices.push_back(v);
-
-    // Bottom-right
-    v.position = rotate(x + w, y + h);
-    v.tex_coord = {texRegion.x + texRegion.w, texRegion.y + texRegion.h};
-    unified_vertices.push_back(v);
-
-    // Bottom-left
-    v.position = rotate(x, y + h);
-    v.tex_coord = {texRegion.x, texRegion.y + texRegion.h};
-    unified_vertices.push_back(v);
-
-    // Indices (two triangles)
-    unified_indices.push_back(base_vert);
-    unified_indices.push_back(base_vert + 1);
-    unified_indices.push_back(base_vert + 2);
-    unified_indices.push_back(base_vert);
-    unified_indices.push_back(base_vert + 2);
-    unified_indices.push_back(base_vert + 3);
+    appendQuadToBuffers(unified_vertices, unified_indices, x, y, w, h,
+                        rCont->rotations[entity.index], texRegion);
   }
 
-  // 4. Single draw call with atlas texture
+  // Single draw call with atlas texture.
   if (!unified_vertices.empty()) {
     SDL_Texture *texture = engine->atlas.getTexture(0);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
@@ -924,6 +1641,10 @@ void SpatialGrid::rebuild_grid(Engine *engine) {
   // Let's try serial query first.
 
   for (int i = 0; i < container_count; ++i) {
+    if (engine->entityManager.getRuntimeKind(i) == ObjectRuntimeKind::Static) {
+      continue;
+    }
+
     auto container = engine->entityManager.containers[i].get();
     if (!container || container->count == 0)
       continue;
