@@ -6,3 +6,4 @@ nul
 /build-android
 /platforms/android/app/build/
 /platforms/android/.gradle/
+/vcpkg_installed/
