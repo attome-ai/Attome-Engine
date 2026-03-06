@@ -142,6 +142,8 @@ endmacro()
 # Each new game gets its own line here. Run Scripts/new-game.ps1 to add one.
 add_subdirectory(hello-world)
 add_subdirectory(snake)
+add_subdirectory(snake_optionb_test)
+add_subdirectory(planet_optionb_benchmark)
 # add_subdirectory(planet_basic)    # TODO: source files not yet created
 # add_subdirectory(planet_optimized) # TODO: source files not yet created
 # add_subdirectory(my-next-game)   ← new-game.ps1 appends here
