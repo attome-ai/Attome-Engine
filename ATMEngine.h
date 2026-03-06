@@ -7,14 +7,14 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <stdbool.h>
 #include <unordered_map>
 #include <vector>
 
-// static constexpr bool useVulkan = 0; // Removed Vulkan path
-// Spatial grid implementation
 static constexpr uint32_t WORLD_WIDTH = 50000;
 static constexpr uint32_t WORLD_HEIGHT = 50000;
 static constexpr uint32_t GRID_CELL_SIZE = 64;
@@ -24,23 +24,21 @@ static constexpr uint32_t GRID_CELL_WIDTH =
 static constexpr uint32_t GRID_CELL_HEIGHT =
     (WORLD_HEIGHT % GRID_CELL_SIZE) == 0 ? (WORLD_HEIGHT / GRID_CELL_SIZE)
                                          : (WORLD_HEIGHT / GRID_CELL_SIZE) + 1;
-static constexpr int MAX_ENTITIES_PER_CELL = 256; // Fixed capacity
+static constexpr int MAX_ENTITIES_PER_CELL = 256;
 
-// Alignment for memory
 #define CACHE_LINE_SIZE 256
 
-// Inverse cell size for faster calculation (multiplication instead of division)
 static constexpr float INV_GRID_CELL_SIZE = (1.0f / GRID_CELL_SIZE);
-
-// Common constants
 static constexpr int MAX_LAYERS = 32;
 static constexpr uint32_t INVALID_ID = 0xFFFFFFFF;
+static constexpr uint32_t INVALID_SLOT = INVALID_ID;
+static constexpr int STATIC_CHUNK_SIZE = 512;
+
 typedef uint32_t EntityHandle;
 
-// Forward declarations
 struct Engine;
+class SpatialGrid;
 
-// Entity flags
 enum class EntityFlag : uint8_t {
   NONE = 0,
   VISIBLE = 1 << 0,
@@ -52,53 +50,43 @@ enum class ContainerFlag : uint8_t {
   UPDATEABLE = 1 << 1
 };
 
-/**
- * TextureAtlas class - Manages multiple textures and regions efficiently
- */
+enum class ObjectRuntimeKind : uint8_t {
+  Dynamic = 0,
+  Static = 1,
+  Hybrid = 2,
+};
+
 class TextureAtlas {
 private:
-  SDL_Texture **textures; // Array of textures
-  int texture_count;      // Number of textures
-  int texture_capacity;   // Capacity of textures array
-  SDL_FRect *regions;     // UV regions for each subtexture
-  int region_count;       // Number of regions
-  int region_capacity;    // Capacity of regions array
-  SDL_Renderer *renderer; // Reference to the renderer
+  SDL_Texture **textures;
+  int texture_count;
+  int texture_capacity;
+  SDL_FRect *regions;
+  int region_count;
+  int region_capacity;
+  SDL_Renderer *renderer;
 
 public:
-  // Constructor and destructor
   TextureAtlas(SDL_Renderer *renderer, int width, int height,
                int initialCapacity = 8);
   ~TextureAtlas();
 
-  // Prevent copying
   TextureAtlas(const TextureAtlas &) = delete;
   TextureAtlas &operator=(const TextureAtlas &) = delete;
-
-  // Allow moving
   TextureAtlas(TextureAtlas &&other) noexcept;
   TextureAtlas &operator=(TextureAtlas &&other) noexcept;
 
-  // Register a texture with the atlas
   int registerTexture(SDL_Surface *surface, int x, int y, int width = 0,
                       int height = 0);
-
-  // Get texture region by ID
   SDL_FRect getRegion(int textureId) const;
-
-  // Get texture by ID (currently returns the first texture)
   SDL_Texture *getTexture(int textureId) const;
-
-  // Get count of registered regions
   int getRegionCount() const { return region_count; }
 
 private:
-  // Ensure capacity for textures and regions
   void ensureTextureCapacity(int needed);
   void ensureRegionCapacity(int needed);
 };
 
-// Camera for culling
 class Camera {
 public:
   float x, y;
@@ -106,13 +94,9 @@ public:
   float zoom;
 };
 
-// Base Entity Container using SOA with RAII wrappers
 class EntityContainer {
-protected:
-  // Base entity data
 public:
   DynamicArray<uint8_t> flags;
-  // Legacy: mirrors slot_to_id (stable handle per slot)
   DynamicArray<uint32_t> entity_ids;
   DynamicArray<uint32_t> parent_ids;
   DynamicArray<uint32_t> first_child_ids;
@@ -121,13 +105,12 @@ public:
   DynamicArray<float> x_positions;
   DynamicArray<float> y_positions;
 
-  // Cell tracking for incremental grid updates (cache-aligned)
   AlignedDynamicArray<uint16_t, CACHE_LINE_SIZE> cell_x;
   AlignedDynamicArray<uint16_t, CACHE_LINE_SIZE> cell_y;
   AlignedDynamicArray<int32_t, CACHE_LINE_SIZE> grid_node_indices;
-  DynamicArray<EntityHandle> slot_to_id; // slot -> stable id
-  std::vector<uint32_t> id_to_slot;      // stable id -> slot
-  std::vector<EntityHandle> free_ids;    // reusable stable ids
+  DynamicArray<EntityHandle> slot_to_id;
+  std::vector<uint32_t> id_to_slot;
+  std::vector<EntityHandle> free_ids;
   EntityHandle next_id;
 
   uint8_t containerFlag;
@@ -140,6 +123,8 @@ public:
   virtual ~EntityContainer();
 
   virtual void update(float delta_time) = 0;
+  virtual void updateVisible(const std::vector<uint32_t> &active_slots,
+                             float delta_time);
   virtual EntityHandle createEntity();
   virtual void removeEntity(EntityHandle id);
   virtual void swapSlots(uint32_t a, uint32_t b);
@@ -157,15 +142,13 @@ protected:
   virtual void resizeArrays(int newCapacity);
 };
 
-// Renderable Entity Container
 class RenderableEntityContainer : public EntityContainer {
 public:
-  // Renderable entity data (RAII managed)
   DynamicArray<int16_t> widths;
   DynamicArray<int16_t> heights;
   DynamicArray<int16_t> texture_ids;
   DynamicArray<uint8_t> z_indices;
-  DynamicArray<float> rotations; // Rotation in radians
+  DynamicArray<float> rotations;
 
   RenderableEntityContainer(int typeId, uint8_t defaultLayer,
                             int initialCapacity);
@@ -197,65 +180,72 @@ public:
 
 class EntityManager {
 public:
+  struct TypeRuntimeState {
+    ObjectRuntimeKind runtime_kind{ObjectRuntimeKind::Dynamic};
+  };
+
   std::vector<std::unique_ptr<Layer>> layers;
   std::vector<std::unique_ptr<EntityContainer>> containers;
+  std::vector<TypeRuntimeState> type_states;
+  std::vector<int> dynamic_type_ids;
+  std::vector<int> static_type_ids;
+  std::vector<int> hybrid_type_ids;
   uint32_t next_entity_id;
 
   EntityManager();
 
+  int registerEntityType(EntityContainer *container, ObjectRuntimeKind kind);
   int registerEntityType(EntityContainer *container);
+  int registerDynamicEntityType(EntityContainer *container);
+  int registerStaticEntityType(EntityContainer *container);
+  int registerHybridEntityType(EntityContainer *container);
+
   EntityHandle createEntity(int type_id);
-  void removeEntity(EntityHandle id, int type_id);
+  void removeEntity(EntityHandle id, int type_id, SpatialGrid *grid = nullptr);
+  bool isHandleValid(EntityHandle id, int type_id) const;
+
+  ObjectRuntimeKind getRuntimeKind(int type_id) const;
+  const std::vector<int> &getDynamicTypeIds() const { return dynamic_type_ids; }
+  const std::vector<int> &getStaticTypeIds() const { return static_type_ids; }
+  const std::vector<int> &getHybridTypeIds() const { return hybrid_type_ids; }
+
+  void updateDynamic(float delta_time);
+  void updateHybrid(Engine *engine, float delta_time, float x1, float y1,
+                    float x2, float y2);
   void update(float delta_time);
 };
 
 struct EntityRef {
   uint32_t type;
-  EntityHandle index; // stable handle (sparse id)
+  EntityHandle index;
 };
 
-// Node for intrusive linked list spatial grid
 struct GridNode {
   EntityRef entity;
   int32_t next;
   int32_t prev;
-  int32_t cell_index; // To validate move/remove
+  int32_t cell_index;
 };
 
 class SpatialGrid {
 private:
-  // Grid of heads: stores index of first node in the cell
-  // Flattened: index = y * GRID_CELL_WIDTH + x
   std::vector<int32_t> cell_heads;
-
-  // Global pool of nodes.
-  // Nodes are allocated once and reused?
-  // Constraint: "adding entity is allowed, removing not allowed".
-  // Actually, we can just append to 'nodes' if we need new ones,
-  // but better to pre-allocate.
   std::vector<GridNode> nodes;
-  std::vector<int32_t> free_node_indices;
-
   std::vector<EntityRef> queryResult;
   int32_t first_free_node;
 
 public:
   SpatialGrid() : first_free_node(-1) {
-    // Initialize grid heads to -1 (empty)
     cell_heads.resize(GRID_CELL_WIDTH * GRID_CELL_HEIGHT, -1);
-
-    // Pre-allocate nodes (e.g., 1,000,000 entities max?)
-    // Let's reserve a safe amount for high entity count
     nodes.reserve(3200000);
     queryResult.reserve(15000);
   }
 
-  // Allocate a node from the pool
   int32_t allocateNode(const EntityRef &entity) {
     int32_t idx;
     if (first_free_node != -1) {
       idx = first_free_node;
-      first_free_node = nodes[idx].next; // Pop from free stack
+      first_free_node = nodes[idx].next;
       nodes[idx].entity = entity;
     } else {
       idx = static_cast<int32_t>(nodes.size());
@@ -264,7 +254,6 @@ public:
     return idx;
   }
 
-  // Free a node to the pool
   void freeNode(int32_t nodeIndex) {
     nodes[nodeIndex].next = first_free_node;
     nodes[nodeIndex].prev = -1;
@@ -272,12 +261,10 @@ public:
     first_free_node = nodeIndex;
   }
 
-  // Add entity to grid, returns node index (handle)
   int32_t add(const EntityRef &entity, float x, float y) {
     uint16_t cellX = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
     uint16_t cellY = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
 
-    // Boundary check
     if (cellX >= GRID_CELL_WIDTH)
       cellX = GRID_CELL_WIDTH - 1;
     if (cellY >= GRID_CELL_HEIGHT)
@@ -285,8 +272,6 @@ public:
 
     int32_t cellIdx = cellY * GRID_CELL_WIDTH + cellX;
     int32_t nodeIdx = allocateNode(entity);
-
-    // Insert at head of list
     int32_t oldHead = cell_heads[cellIdx];
 
     nodes[nodeIdx].next = oldHead;
@@ -301,21 +286,18 @@ public:
     return nodeIdx;
   }
 
-  // Remove by node handle (O(1))
   void remove(int32_t nodeIndex) {
-    if (nodeIndex == -1 || nodeIndex >= nodes.size())
+    if (nodeIndex == -1 || nodeIndex >= static_cast<int32_t>(nodes.size()))
       return;
 
     GridNode &node = nodes[nodeIndex];
     int32_t cellIdx = node.cell_index;
-
     if (cellIdx == -1)
-      return; // Already removed?
+      return;
 
     if (node.prev != -1) {
       nodes[node.prev].next = node.next;
     } else {
-      // It was the head
       cell_heads[cellIdx] = node.next;
     }
 
@@ -326,9 +308,6 @@ public:
     freeNode(nodeIndex);
   }
 
-  // Move: remove from old list, add to new list.
-  // Optimization: reusing the SAME node, just relinking.
-  // Returns true if cell changed.
   bool move(int32_t nodeIndex, float x, float y) {
     uint16_t newCellX = static_cast<uint16_t>(x * INV_GRID_CELL_SIZE);
     uint16_t newCellY = static_cast<uint16_t>(y * INV_GRID_CELL_SIZE);
@@ -340,13 +319,10 @@ public:
 
     int32_t newCellIdx = newCellY * GRID_CELL_WIDTH + newCellX;
     int32_t oldCellIdx = nodes[nodeIndex].cell_index;
-
     if (newCellIdx == oldCellIdx)
       return false;
 
-    // Unlink from old list
     GridNode &node = nodes[nodeIndex];
-
     if (node.prev != -1) {
       nodes[node.prev].next = node.next;
     } else {
@@ -357,7 +333,6 @@ public:
       nodes[node.next].prev = node.prev;
     }
 
-    // Link to new list
     int32_t oldHead = cell_heads[newCellIdx];
     node.next = oldHead;
     node.prev = -1;
@@ -368,17 +343,12 @@ public:
     }
 
     cell_heads[newCellIdx] = nodeIndex;
-
     return true;
   }
 
-  // Clear all grid data (retains node memory/capacity)
   void clearAll() {
-    // Fast clear: just reset all cell heads to -1.
-
-    // If full rebuild:
     std::fill(cell_heads.begin(), cell_heads.end(), -1);
-    nodes.clear(); // Reset count to 0
+    nodes.clear();
     first_free_node = -1;
   }
 
@@ -403,14 +373,13 @@ public:
     int32_t maxY =
         static_cast<int32_t>((centerY + radius) * INV_GRID_CELL_SIZE);
 
-    // Clamp to grid bounds
     if (minX < 0)
       minX = 0;
     if (minY < 0)
       minY = 0;
-    if (maxX >= (int32_t)GRID_CELL_WIDTH)
+    if (maxX >= static_cast<int32_t>(GRID_CELL_WIDTH))
       maxX = GRID_CELL_WIDTH - 1;
-    if (maxY >= (int32_t)GRID_CELL_HEIGHT)
+    if (maxY >= static_cast<int32_t>(GRID_CELL_HEIGHT))
       maxY = GRID_CELL_HEIGHT - 1;
 
     for (int32_t cy = minY; cy <= maxY; ++cy) {
@@ -424,93 +393,92 @@ public:
         }
       }
     }
+
     return queryResult;
   }
 
-  // Declaration only, implemented in cpp
-
-  // Declaration for rebuild_grid
   void rebuild_grid(Engine *engine);
 };
 
-/**
- * RenderBatch class - High-performance batch renderer
- */
 class RenderBatch {
-private:
 public:
   int texture_id;
   int z_index;
-
   std::vector<SDL_Vertex> vertices;
   std::vector<int> indices;
-  // Constructor with initial capacity
-  RenderBatch(int textureId, int zIndex, int initialVertexCapacity = 4096);
 
-  // Destructor
+  RenderBatch(int textureId, int zIndex, int initialVertexCapacity = 4096);
   ~RenderBatch();
 
-  // Prevent copying
   RenderBatch(const RenderBatch &) = delete;
   RenderBatch &operator=(const RenderBatch &) = delete;
-
-  // Allow moving
   RenderBatch(RenderBatch &&other) noexcept;
   RenderBatch &operator=(RenderBatch &&other) noexcept;
 
-  // Add a quad to this batch
   void addQuad(float x, float y, float w, float h, SDL_FRect tex_region);
-
-  // Reset batch for reuse without reallocating memory
   void clear();
-
-private:
 };
 
-/**
- * RenderBatchManager - Efficient batch management with fast lookups
- */
 class RenderBatchManager {
 private:
-  // Use a 64-bit key to combine texture_id and z_index for faster lookup
   using BatchKey = uint64_t;
   static inline BatchKey createKey(int textureId, int zIndex) {
     return (static_cast<uint64_t>(textureId) << 32) |
            static_cast<uint64_t>(zIndex);
-  };
+  }
 
   std::vector<RenderBatch> batches;
-  std::unordered_map<BatchKey, size_t> batchMap; // Maps key to batch index
+  std::unordered_map<BatchKey, size_t> batchMap;
   bool needsSort;
 
 public:
-  // Constructor with pre-allocated batches for common textures
   RenderBatchManager(int initialBatchCount = 8);
-
-  // Add a quad to the appropriate batch
+  RenderBatchManager(const RenderBatchManager &) = delete;
+  RenderBatchManager &operator=(const RenderBatchManager &) = delete;
+  RenderBatchManager(RenderBatchManager &&other) noexcept = default;
+  RenderBatchManager &operator=(RenderBatchManager &&other) noexcept = default;
   void addQuad(int textureId, int zIndex, float x, float y, float w, float h,
                SDL_FRect tex_region);
-
-  // Get or create a batch for the given texture and z-index
   RenderBatch &getBatch(int textureId, int zIndex);
-
-  // Clear all batches for next frame
   void clear();
-
-  // Sort batches by z-index for correct rendering order
   void sortIfNeeded();
-
-  // Get all batches for rendering
   const std::vector<RenderBatch> &getBatches();
-
-  // Get the number of active batches
   size_t getBatchCount() const;
 };
 
-// Main engine struct
+struct StaticChunk {
+  int32_t chunk_x{0};
+  int32_t chunk_y{0};
+  bool dirty{true};
+  std::vector<EntityRef> refs;
+  RenderBatchManager cached_batches{4};
+  std::vector<SDL_Vertex> vertices;
+  std::vector<int> indices;
+};
+
+class StaticChunkCache {
+private:
+  std::unordered_map<int64_t, size_t> chunk_index_by_key;
+  std::vector<StaticChunk> chunks;
+  std::vector<size_t> visible_chunk_indices;
+
+  static int64_t makeChunkKey(int32_t chunk_x, int32_t chunk_y);
+
+public:
+  bool needs_full_rebuild{true};
+
+  void clear();
+  void markAllDirty();
+  void markNeedsFullRebuild() { needs_full_rebuild = true; }
+  int32_t worldToChunk(float world_value) const;
+  void rebuildRefs(Engine *engine);
+  std::vector<size_t> &queryVisible(float x1, float y1, float x2, float y2);
+  std::vector<StaticChunk> &getChunks() { return chunks; }
+};
+
 typedef struct Engine {
   SDL_Window *window;
-  SDL_Renderer *renderer; // SDL renderer
+  SDL_Renderer *renderer;
   RenderBatchManager renderBatchManager;
   SpatialGrid grid;
   TextureAtlas atlas;
@@ -519,48 +487,42 @@ typedef struct Engine {
   Uint64 last_frame_time;
   float fps;
   std::vector<EntityRef> pending_removals;
-  // Entity type system
+  StaticChunkCache staticChunkCache;
   EntityManager entityManager;
 } Engine;
 
-// Modify engine_create to support Vulkan initialization
 Engine *engine_create(int window_width, int window_height, int world_width,
                       int world_height, int cell_size);
-
-// Modified engine_render_scene to use the appropriate renderer
 void engine_render_scene(Engine *engine);
-
-// Add a new function to destroy the engine with Vulkan support
 void engine_destroy(Engine *engine);
-
-// Modify engine_register_texture to handle both renderers
 int engine_register_texture(Engine *engine, SDL_Surface *surface, int x, int y,
                             int width, int height);
-
-// Add engine_present with Vulkan support
 void engine_present(Engine *engine);
 
 SDL_FRect get_texture_region(const TextureAtlas &atlas, int16_t texture_id);
 
-// Entity management
+int engine_register_dynamic_type(Engine *engine, EntityContainer *container);
+int engine_register_static_type(Engine *engine, EntityContainer *container);
+int engine_register_hybrid_type(Engine *engine, EntityContainer *container);
+
+EntityHandle engine_create_entity(Engine *engine, int type_id);
+void engine_destroy_entity(Engine *engine, EntityHandle entity_id, int type_id);
+bool engine_is_handle_valid(Engine *engine, EntityHandle entity_id, int type_id);
+bool engine_set_entity_position(Engine *engine, EntityHandle entity_id,
+                                int type_id, float x, float y);
+bool engine_set_entity_visible(Engine *engine, EntityHandle entity_id,
+                               int type_id, bool visible);
+void engine_mark_static_dirty(Engine *engine);
+
 void engine_update_entity_types(Engine *engine, float delta_time);
-
-// Process entity removals
 void process_pending_removals(Engine *engine);
-
-// Update engine state
 void engine_update(Engine *engine);
-
-// Set entity z-index
 void engine_set_entity_z_index(Engine *engine, EntityHandle entity_idx,
-                               int type_id,
-                               uint8_t z_index);
-
-// Present renderer
+                               int type_id, uint8_t z_index);
 void engine_present(Engine *engine);
 
-// Texture loading functions
-SDL_Surface* load_texture(const char* filename);
-SDL_Surface* create_colored_surface(int width, int height, Uint8 r, Uint8 g, Uint8 b);
+SDL_Surface *load_texture(const char *filename);
+SDL_Surface *create_colored_surface(int width, int height, Uint8 r, Uint8 g,
+                                    Uint8 b);
 
 #endif // ENGINE_H
