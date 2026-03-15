@@ -1,0 +1,13 @@
+{
+  "name": "attome-games",
+  "version": "0.1.0",
+  "dependencies": [
+    "sdl3",
+    "sdl3-image",
+    "sdl3-ttf",
+    "glm",
+    "imgui",
+    "nlohmann-json",
+    "vulkan"
+  ]
+}

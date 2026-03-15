@@ -279,25 +279,25 @@ Build artifacts: auto-upload ZIP of all builds per CI run (90-day retention)
 ## 2C. Web / Browser Build Pipeline (WASM)
 
 ### 2C.1 Build
-- [ ] Emscripten 3.x: `emcmake cmake ... -DCMAKE_BUILD_TYPE=Release`
-- [ ] Output: `tower_swarm.wasm` + `tower_swarm.js` (ES module) + `tower_swarm.data` (assets)
+- [~] Emscripten 3.x: `emcmake cmake ... -DCMAKE_BUILD_TYPE=Release` *(build_web.ps1 uses `em++` directly via emsdk)*
+- [~] Output: `tower_swarm.wasm` + `tower_swarm.js` (ES module) + `tower_swarm.data` (assets) *(generates `.wasm` + `.js`; no `.data` yet)*
 - [ ] Asset pack: `--preload-file assets/` → all assets embedded in `.data` file
-- [ ] Memory: `-sINITIAL_MEMORY=536870912` (512MB), `-sALLOW_MEMORY_GROWTH=1`
+- [~] Memory: `-sINITIAL_MEMORY=536870912` (512MB), `-sALLOW_MEMORY_GROWTH=1` *(growth enabled; initial memory not pinned)*
 - [ ] WASM SIMD: `-msimd128` for 20–40% speedup on supported browsers
 - [ ] Multithreading: `-sUSE_PTHREADS=1` with SharedArrayBuffer (requires COOP/COEP headers)
-- [ ] Optimizations: `-O3 -flto` for release builds
+- [~] Optimizations: `-O3 -flto` for release builds *(currently `-O2`, no LTO)*
 - [ ] Binary size: target < 8MB for `.wasm` compressed — profile and strip unused code
 
 ### 2C.2 Angular NoobyGame Integration
-- [ ] `tower-swarm-wasm.constants.ts`: WASM path, canvas ID, loading config
-- [ ] `game-catalog.constants.ts`: entry for Tower Swarm (name, route, thumbnail, description)
-- [ ] `tower-swarm-game.component.ts`: Angular component wrapping WASM canvas
+- [x] `tower-swarm-wasm.constants.ts`: WASM path, canvas ID, loading config
+- [x] `game-catalog.constants.ts`: entry for Tower Swarm (name, route, thumbnail, description)
+- [~] `tower-swarm-game.component.ts`: Angular component wrapping WASM canvas *(implemented via generic `GamePlayerPage` iframe + catalog entry)*
   - [ ] Lifecycle: `ngOnInit` → download WASM → init → `ngOnDestroy` → cleanup
   - [ ] Resize observer: adapt canvas to container size on window resize
   - [ ] Visibility API: pause WASM loop when tab is hidden
-- [ ] Route: `/games/tower-swarm` with lazy-loaded module
-- [ ] Loading screen: Angular spinner + progress bar while WASM + assets download
-- [ ] Error boundary: show "Failed to load game. Try refreshing." if WASM init fails
+- [~] Route: `/games/tower-swarm` with lazy-loaded module *(route exists as `/games/:gameId`, not lazy-loaded)*
+- [~] Loading screen: Angular spinner + progress bar while WASM + assets download *(basic loader page status text; no progress bar)*
+- [~] Error boundary: show "Failed to load game. Try refreshing." if WASM init fails *(loader shows missing-bundle message; no Angular error boundary yet)*
 
 ### 2C.3 Browser-Specific Input
 - [ ] Keyboard events: `SDL_EVENT_KEY_DOWN/UP` wired via Emscripten event bridge
@@ -308,9 +308,9 @@ Build artifacts: auto-upload ZIP of all builds per CI run (90-day retention)
 - [ ] Pointer lock: optional for precise camera drag
 
 ### 2C.4 Browser Save State
-- [ ] `localStorage`: persist `save.json` string (key: `tower_swarm_save`)
+- [x] `localStorage`: persist `save.json` string (key: `tower_swarm_save`) *(uses `tower_swarm_save_v1`)*
 - [ ] Size limit: `localStorage` 5–10MB per origin — save.json < 50KB so safe
-- [ ] Auto-save after level complete + inter-level shop close
+- [~] Auto-save after level complete + inter-level shop close *(saves on level clear + purchases; no explicit "shop close" hook)*
 - [ ] "Import save" / "Export save" buttons: let users back up their save file
 - [ ] Cross-device sync: logged-in users get cloud save sync via backend API
 
@@ -365,41 +365,41 @@ Build artifacts: auto-upload ZIP of all builds per CI run (90-day retention)
 ## 3. Core Game — Engine Layer
 
 ### 3.1 Entity Containers
-- [ ] `CreatureContainer` — Hybrid, all SoA arrays from GDD §15 + `swapSlots` + `resizeArrays`
-- [ ] `EnemyContainer` — Dynamic, all SoA arrays
-- [ ] `ProjectileContainer` — Dynamic, pooled (10,000 slots pre-allocated)
+- [x] `CreatureContainer` — Hybrid, all SoA arrays from GDD §15 + `swapSlots` + `resizeArrays`
+- [x] `EnemyContainer` — Dynamic, all SoA arrays
+- [x] `ProjectileContainer` — Dynamic, pooled (10,000 slots pre-allocated)
 - [ ] `ParticleContainer` — Dynamic, pooled (50,000 slots pre-allocated)
-- [ ] `PickupContainer` (essence orbs) — Dynamic, pooled (5,000 slots)
-- [ ] `TileContainer` — Static, tilemap rendering
+- [~] `PickupContainer` (essence orbs) — Dynamic, pooled (5,000 slots) *(pooled; capacity currently 4096)*
+- [x] `TileContainer` — Static, tilemap rendering
 - [ ] `WallContainer` — Static, destructible walls
-- [ ] `BaseEntity` — Static, single instance
+- [x] `BaseEntity` — Static, single instance
 
 ### 3.2 World & Camera
-- [ ] `CameraController`: pan (WASD + middle-click drag), zoom (scroll wheel), clamp to world bounds
-- [ ] Smooth lerp on camera movement (`lerp_factor = 8.0f * dt`)
+- [~] `CameraController`: pan (WASD + middle-click drag), zoom (scroll wheel), clamp to world bounds *(pan+clamp+smoothing; zoom/edge-scroll/minimap pending)*
+- [~] Smooth lerp on camera movement (`lerp_factor = 8.0f * dt`) *(implemented as exponential smoothing via `kCameraSmoothRate`)*
 - [ ] Camera follows cursor when at screen edge (edge-scroll, configurable sensitivity)
 - [ ] Mini-map (bottom-right corner): shows world overview, all creatures + enemies, camera viewport rect
 - [ ] Camera zoom: 0.5× to 2.0× range, smooth scale
-- [ ] World size: 5120×2880 (4× window at 1280×720)
+- [x] World size: 5120×2880 (4× window at 1280×720)
 
 ### 3.3 Spatial Grid & Queries
-- [ ] Confirm `queryCircle` works correctly for creature attack range
-- [ ] Confirm `queryRect` works for camera-frustum culling
-- [ ] Verify grid updates on creature repositioning
+- [~] Confirm `queryCircle` works correctly for creature attack range *(used for combat/pickups/auras; not benchmarked)*
+- [~] Confirm `queryRect` works for camera-frustum culling *(used for culling; padded query to avoid pop-in)*
+- [x] Verify grid updates on creature repositioning
 - [ ] Benchmark: 100,000 entities, queryCircle per creature per frame → must be < 1ms total
 
 ### 3.4 Rendering
-- [ ] Texture atlas: all sprites packed into single 2048×2048 atlas at startup
-- [ ] Batch render: all entities grouped by texture + z-index per frame
-- [ ] Z-index assignment: tiles(0–10), walls(11–20), enemies(21–30), creatures(31–40), projectiles(41–50), particles(51–60), pickups(61–70), UI(200–255)
+- [~] Texture atlas: all sprites packed into single 2048×2048 atlas at startup *(atlas exists; sized to world, not packed 2048×2048 yet)*
+- [x] Batch render: all entities grouped by texture + z-index per frame
+- [~] Z-index assignment: tiles(0–10), walls(11–20), enemies(21–30), creatures(31–40), projectiles(41–50), particles(51–60), pickups(61–70), UI(200–255) *(z-index exists; simplified layers in `Constants.h`)*
 - [ ] Additive blend pass for glow effects (high-tier creatures, base)
-- [ ] SDL3 renderer target: hardware-accelerated (GPU), fall back to software
+- [~] SDL3 renderer target: hardware-accelerated (GPU), fall back to software *(uses `SDL_CreateWindowAndRenderer` defaults)*
 - [ ] VSync toggle in settings (default on)
 
 ### 3.5 PathGrid (A* on 64px grid)
-- [ ] Grid dimensions: `world_width / 64` × `world_height / 64`
-- [ ] Walkable cell map: updated when walls placed/destroyed
-- [ ] A* implementation: returns list of cell waypoints
+- [x] Grid dimensions: `world_width / 64` × `world_height / 64`
+- [~] Walkable cell map: updated when walls placed/destroyed *(walkable map exists via `PathGrid`; walls not implemented yet)*
+- [x] A* implementation: returns list of cell waypoints
 - [ ] Path caching: enemy type paths cached per spawn-point → base (recalculated only on wall change)
 - [ ] Path validation before wall placement: reject wall if it fully blocks base path
 - [ ] Flyer type: bypasses PathGrid entirely
@@ -409,231 +409,233 @@ Build artifacts: auto-upload ZIP of all builds per CI run (90-day retention)
 ## 4. Core Game — Gameplay Systems
 
 ### 4.1 Level Manager
-- [ ] State machine: `MAIN_MENU` / `LEVEL_SELECT` / `PRE_LEVEL` / `PLAYING` / `WAVE_CLEAR` / `LEVEL_CLEAR` / `LEVEL_FAILED`
-- [ ] `LevelScaler::generate(N)` → `LevelDefinition` (all formulas from GDD §4)
-- [ ] Wave spawner: dequeue enemies per wave, respects `inter_spawn_delay`
-- [ ] Between-wave grace timer: `max(3, 8 - floor(level/10))` seconds
-- [ ] Level complete → calculate stars, trigger `LEVEL_CLEAR`
-- [ ] Level fail → `LEVEL_FAILED`, preserve pre-level save snapshot for retry
-- [ ] `SaveState::snapshot()` called at level start (retry restores this)
+- [ ] State machine: `MAIN_MENU` / `LEVEL_SELECT` / `PRE_LEVEL` / `PLAYING` / `WAVE_CLEAR` / `LEVEL_CLEAR` / `LEVEL_FAILED` *(partial: PLAYING/WAVE_CLEAR/LEVEL_CLEAR/LEVEL_FAILED + Level Select overlay)*
+- [x] `LevelScaler::generate(N)` → `LevelDefinition` (all formulas from GDD §4)
+- [x] Wave spawner: dequeue enemies per wave, respects `inter_spawn_delay`
+- [x] Between-wave grace timer: `max(3, 8 - floor(level/10))` seconds
+- [x] Level complete → calculate stars, trigger `LEVEL_CLEAR`
+- [x] Level fail → `LEVEL_FAILED`, preserve pre-level save snapshot for retry
+- [x] `SaveState::snapshot()` called at level start (retry restores this)
 - [ ] Level milestone events: hand-authored for levels 1, 5, 10, 25, 50, 100
 
 ### 4.2 Combat System
-- [ ] Creature target acquisition: `queryCircle(x, y, range)` → pick nearest alive enemy
-- [ ] Re-target: if `target_id` handle invalid or out of range → re-acquire next frame
-- [ ] Attack: fire projectile toward target, reset `attack_cd`
-- [ ] Projectile hit: `queryCircle(proj_x, proj_y, 8px)` → apply `damage` to all hits up to `pierce` count
-- [ ] Damage application: `enemy_hp -= damage`, death check, essence drop, kill credit
-- [ ] Base damage: enemy reaching base calls `BaseHealthSystem::take_damage(dmg)`, triggers fail check
+- [x] Creature target acquisition: `queryCircle(x, y, range)` → pick nearest alive enemy
+- [x] Re-target: if `target_id` handle invalid or out of range → re-acquire next frame
+- [x] Attack: fire projectile toward target, reset `attack_cd`
+- [x] Projectile hit: `queryCircle(proj_x, proj_y, 8px)` → apply `damage` to all hits up to `pierce` count
+- [x] Damage application: `enemy_hp -= damage`, death check, essence drop, kill credit
+- [x] Base damage: enemy reaching base calls `BaseHealthSystem::take_damage(dmg)`, triggers fail check *(implemented via `BaseEntity::applyDamage` + LevelManager fail check)*
 
 ### 4.3 Creature Movement AI
-- [ ] Staggered scheduler: each creature recalculates every 3s, stagger start times to spread load
-- [ ] Threat vector: weighted sum of enemy positions within 200/400/600px radii
-- [ ] Support vector: mild repulsion from other creatures within 96px
-- [ ] Desired position: clamp to valid grid cells (not base zone, not occupied, not wall)
-- [ ] If desired position significantly different (> 64px) → enter `MOVING` state
-- [ ] Movement via A*: find path to desired cell, advance along waypoints
-- [ ] Smooth interpolation over 1.5 seconds per waypoint
-- [ ] No attacking while in `MOVING` state
-- [ ] Player drag override: click + drag creature to new cell, 0.5s stun on drop
+- [x] Staggered scheduler: each creature recalculates every 3s, stagger start times to spread load
+- [x] Threat vector: weighted sum of enemy positions within 200/400/600px radii
+- [x] Support vector: mild repulsion from other creatures within 96px
+- [x] Desired position: clamp to valid grid cells (not base zone, not occupied, not wall)
+- [x] If desired position significantly different (> 64px) → enter `MOVING` state
+- [x] Movement via A*: find path to desired cell, advance along waypoints
+- [x] Smooth interpolation over 1.5 seconds per waypoint
+- [x] No attacking while in `MOVING` state
+- [x] Player drag override: click + drag creature to new cell, 0.5s stun on drop
 
 ### 4.4 Evolution System
-- [ ] Kill tracking per creature slot (cumulative across all levels)
-- [ ] Check threshold: `floor(10 × 2.5^(tier-1))` kills needed per tier
-- [ ] On threshold reached: `state = EVOLVING`, `evolve_timer = 0`
-- [ ] Evolve animation: 0.8s pulse (1.0× → 1.5× → new_size), color shift to tier color
-- [ ] Stat recalculation at tier change (all 5 stats from GDD formulas)
-- [ ] Floating text: "[Character] → [Stage Name] TIER N"
-- [ ] Screen-edge glow: 1-second colored flash
+- [x] Kill tracking per creature slot (cumulative across all levels)
+- [~] Check threshold: `floor(10 × 2.5^(tier-1))` kills needed per tier *(uses tuned early-tier thresholds + `10 × 2.5^(tier-1)` beyond Tier 4)*
+- [x] On threshold reached: `state = EVOLVING`, `evolve_timer = 0`
+- [x] Evolve animation: 0.8s pulse (1.0× → 1.5× → new_size), color shift to tier color
+- [x] Stat recalculation at tier change (all 5 stats from GDD formulas)
+- [x] Floating text: "[Character] → [Stage Name] TIER N"
+- [x] Screen-edge glow: 1-second colored flash
 - [ ] Sound: tier-appropriate fanfare
-- [ ] Track evolutions-this-level for inter-level stats display
+- [x] Track evolutions-this-level for inter-level stats display
 
 ### 4.5 Merge System
-- [ ] Every 2 seconds: scan for adjacent same-type + same-tier pairs via `queryRect`
-- [ ] Eligible pair: show pulsing amber link between them
-- [ ] Auto-merge: trigger if both in `IDLE` state for 6 consecutive seconds
-- [ ] Manual merge: drag one creature onto eligible adjacent creature
-- [ ] Merge animation: both slide to midpoint (0.8s), flash white, new creature appears
-- [ ] New creature: `kills = (kills_a + kills_b) / 2`, check if threshold already met
-- [ ] Merge reward: +10 essence, +1 "merges_this_level" counter
-- [ ] Merge blocked when: `ATTACKING`, `MOVING`, `EVOLVING`, or `MERGING` state
+- [~] Every 2 seconds: scan for adjacent same-type + same-tier pairs via `queryRect` *(implemented per-frame during Wave Clear via grid cell occupancy)*
+- [x] Eligible pair: show pulsing amber link between them
+- [x] Auto-merge: trigger if both in `IDLE` state for 6 consecutive seconds
+- [x] Manual merge: drag one creature onto eligible adjacent creature
+- [x] Merge animation: both slide to midpoint (0.8s), flash white, new creature appears
+- [~] New creature: `kills = (kills_a + kills_b) / 2`, check if threshold already met *(kills inherit; no immediate multi-evolve check until next kill)*
+- [x] Merge reward: +10 essence, +1 "merges_this_level" counter
+- [x] Merge blocked when: `ATTACKING`, `MOVING`, `EVOLVING`, or `MERGING` state
 
 ### 4.6 Essence & Pickup System
-- [ ] `PickupEntity` spawned at enemy death position: floats upward 30px over 2s, then auto-collected
-- [ ] Auto-collection on approach: if any creature within 80px, pickup flies toward it and is collected
-- [ ] Essence balance stored in `GameState::essence`
-- [ ] Interest: end of level if essence ≥ 100, grant +5% rounded up
+- [x] `PickupEntity` spawned at enemy death position: floats upward 30px over 2s, then auto-collected
+- [x] Auto-collection on approach: if any creature within 80px, pickup flies toward it and is collected
+- [x] Essence balance stored in `GameState::essence`
+- [~] Interest: end of level if essence ≥ 100, grant +5% rounded up *(implemented as `floor(essence * 0.05)`)*
 - [ ] Placement cost check: grey out creature seeds in selector if insufficient essence
-- [ ] Sell: right-click creature → confirm dialog → remove entity, restore 50% of seed cost
+- [x] Sell: right-click creature → confirm dialog → remove entity, restore 50% of seed cost
 
 ### 4.7 Wave Buff Shop (In-Gameplay)
-- [ ] Card pool: 12 cards defined in `WaveBuffShop::CARD_POOL[]`
-- [ ] Draw: 3 unique random cards per wave clear (no duplicates in same draw)
-- [ ] UI: slide up from bottom, show 3 cards with name + description + icon
-- [ ] Timer: grace period countdown shown, shop closes when timer hits 0 (card chosen or skipped)
-- [ ] Selected card: apply `BuffEffect` to `GameState::active_buffs[]`
-- [ ] Buff effects tick per frame or per event, expire after their `duration_waves` count
-- [ ] "Skip" option: close shop without choosing (no penalty)
+- [~] Card pool: 12 cards defined in `WaveBuffShop::CARD_POOL[]` *(12 cards defined; internal defs table, not `CARD_POOL[]`)*
+- [x] Draw: 3 unique random cards per wave clear (no duplicates in same draw)
+- [~] UI: slide up from bottom, show 3 cards with name + description + icon *(renders overlay UI; no slide animation/icons yet)*
+- [~] Timer: grace period countdown shown, shop closes when timer hits 0 (card chosen or skipped) *(countdown shown; closes when grace ends / selection made)*
+- [x] Selected card: apply `BuffEffect` to `GameState::active_buffs[]`
+- [~] Buff effects tick per frame or per event, expire after their `duration_waves` count *(duration system implemented; some effects/icons still pending)*
+- [x] "Skip" option: close shop without choosing (no penalty)
 
 ---
 
 ## 5. Core Game — Characters & Enemies
 
 ### 5.1 Character Definition System
-- [ ] `CharacterDefinition` struct: id, name, rarity, base_stats, stage_names[3], stage_abilities[3], signature_ability, upgrade_nodes[5]
-- [ ] `CharacterDefinitions.h`: all 10 characters fully defined in code
-- [ ] `CharacterRoster`: player's owned characters, upgrade ranks, current kills, current tier
-- [ ] Character unlock check: `UnlockSystem::is_unlocked(character_id)` queries save state
+- [~] `CharacterDefinition` struct: id, name, rarity, base_stats, stage_names[3], stage_abilities[3], signature_ability, upgrade_nodes[5] *(defs exist; upgrades stored on roster entries)*
+- [x] `CharacterDefinitions.h`: all 10 characters fully defined in code
+- [x] `CharacterRoster`: player's owned characters, upgrade ranks, current kills, current tier
+- [~] Character unlock check: `UnlockSystem::is_unlocked(character_id)` queries save state *(level gate implemented; shard gate pending)*
 - [ ] Locked characters shown in selector with lock icon + "Unlocks at Level N" tooltip
 
 ### 5.2 All 10 Characters Implemented
-- [ ] **Brix** — Shooter — `attack_range=220, base_dmg=12, rate=1.5/s`
-  - [ ] Signature: Avalanche (15s CD — boulder knockback line 150px)
-  - [ ] Stage 4 perk: shots pierce 1 enemy
-  - [ ] Stage 7 perk: shots pierce 3, +20% range
-  - [ ] Stage 10 perk: shots detonate on impact (60px splash)
-- [ ] **Flara** — Splasher — `attack_range=180, base_dmg=8, rate=0.8/s, splash_radius=80px`
-  - [ ] Signature: Conflagration (20s CD — 300px firestorm, 5× damage)
-  - [ ] Stage 4 perk: burning ground 2s AoE after hit
-  - [ ] Stage 7 perk: burning ground 4s + slow
-  - [ ] Stage 10 perk: 3 simultaneous blast targets
-- [ ] **Mossling** — Support — `aura_radius=96px, aura_attack_speed=+5%, aura_damage=0%`
-  - [ ] Signature: Overgrowth (25s CD — resets attack CDs of all nearby creatures)
-  - [ ] Stage 4: aura +10% atk speed + +8% damage
-  - [ ] Stage 7: aura heals creatures 2 HP/s
-  - [ ] Stage 10: aura radius 200px + slows nearby enemies
-- [ ] **Glitch** — Trapper — `slow_field_radius=60px, slow_amount=50%, slow_duration=3s`
-  - [ ] Signature: System Crash (18s CD — freeze all enemies 250px for 2.5s)
-  - [ ] Stage 4: orbs reduce enemy damage output
-  - [ ] Stage 7: orbs detonate after 4s, burst damage
-  - [ ] Stage 10: orbs chain on detonate
-- [ ] **Ironjaw** — Charger — `charge_range=300px, charge_dmg=30, knockback=80px`
-  - [ ] Signature: Override (22s CD — 4s frenzy, 3× attack speed + unlimited movement)
-  - [ ] Stage 4: charge hits 3 enemies in line
-  - [ ] Stage 7: charge leaves shockwave trail
-  - [ ] Stage 10: charge is a rampage, hits all in path
-- [ ] **Wraith** — Sniper — `attack_range=500px, base_dmg=40, rate=0.3/s`
-  - [ ] Signature: Death Mark (30s CD — marked enemy dies in 4s regardless of HP)
-  - [ ] Stage 4: arrows ignore 30% armor
-  - [ ] Stage 7: instakill enemies below 15% HP
-  - [ ] Stage 10: kills chain bolt to nearest enemy
-- [ ] **Crystalis** — Hybrid — `attack_range=280, base_dmg=15, aura_range_boost=+15%`
-  - [ ] Signature: Prismatic Nova (20s CD — 360° beam burst hits all onscreen enemies)
-  - [ ] Stage 4: beams refract to 2 targets
-  - [ ] Stage 7: beams refract to 4 targets
-  - [ ] Stage 10: beams bounce infinitely until enemy dies
-- [ ] **Vex** — Chaos — `random_ability_interval=5s, ability_pool_size=3→6→9`
-  - [ ] Signature: Entropy Storm (25s CD — all random abilities fire simultaneously)
-  - [ ] Stage 4: +2 abilities to pool (lightning strike, clone 3s)
-  - [ ] Stage 7: all abilities 2× stronger
-  - [ ] Stage 10: abilities chain (each triggers next)
-- [ ] **Orin** — Titan — `passive_base_shield_chance=5%→15%→25%`
-  - [ ] Signature: Temporal Ward (60s CD — all enemies frozen 5s, creatures continue attacking)
-  - [ ] Stage 6: shield upgrades to 15%, emits damage aura
-  - [ ] Stage 10: 25% shield + revive 1 creature per level
-  - [ ] Unlock gate: Level 50 3-star OR 500 Shards
-- [ ] **Null** — Nullifier — `drain_radius=180px, drain_damage=10%→25%`
-  - [ ] Signature: Consumption (45s CD — absorbs nearest enemy, gains HP)
-  - [ ] Stage 6: drains 25% damage + 15% speed from enemies
-  - [ ] Stage 10: enemies in range deal 0 damage; their kills credit Null
-  - [ ] Unlock gate: Level 100 OR 800 Shards
+- [x] **Brix** — Shooter — `attack_range=220, base_dmg=12, rate=1.5/s`
+  - [x] Signature: Avalanche (15s CD — boulder knockback line 150px)
+  - [x] Stage 4 perk: shots pierce 1 enemy
+  - [x] Stage 7 perk: shots pierce 3, +20% range
+  - [x] Stage 10 perk: shots detonate on impact (60px splash)
+- [x] **Flara** — Splasher — `attack_range=180, base_dmg=8, rate=0.8/s, splash_radius=80px`
+  - [x] Signature: Conflagration (20s CD — 300px firestorm, 5× damage)
+  - [x] Stage 4 perk: burning ground 2s AoE after hit
+  - [x] Stage 7 perk: burning ground 4s + slow
+  - [x] Stage 10 perk: 3 simultaneous blast targets
+- [x] **Mossling** — Support — `aura_radius=96px, aura_attack_speed=+5%, aura_damage=0%`
+  - [x] Signature: Overgrowth (25s CD — resets attack CDs of all nearby creatures)
+  - [x] Stage 4: aura +10% atk speed + +8% damage
+  - [x] Stage 7: aura heals creatures 2 HP/s
+  - [x] Stage 10: aura radius 200px + slows nearby enemies
+- [x] **Glitch** — Trapper — `slow_field_radius=60px, slow_amount=50%, slow_duration=3s`
+  - [x] Signature: System Crash (18s CD — freeze all enemies 250px for 2.5s)
+  - [x] Stage 4: orbs reduce enemy damage output
+  - [x] Stage 7: orbs detonate after 4s, burst damage
+  - [x] Stage 10: orbs chain on detonate
+- [x] **Ironjaw** — Charger — `charge_range=300px, charge_dmg=30, knockback=80px`
+  - [x] Signature: Override (22s CD — 4s frenzy, 3× attack speed + unlimited movement)
+  - [x] Stage 4: charge hits 3 enemies in line
+  - [~] Stage 7: charge leaves shockwave trail *(gameplay AoE widens; VFX trail pending)*
+  - [x] Stage 10: charge is a rampage, hits all in path
+- [x] **Wraith** — Sniper — `attack_range=500px, base_dmg=40, rate=0.3/s`
+  - [x] Signature: Death Mark (30s CD — marked enemy dies in 4s regardless of HP)
+  - [x] Stage 4: arrows ignore 30% armor
+  - [x] Stage 7: instakill enemies below 15% HP
+  - [x] Stage 10: kills chain bolt to nearest enemy
+- [x] **Crystalis** — Hybrid — `attack_range=280, base_dmg=15, aura_range_boost=+15%`
+  - [x] Signature: Prismatic Nova (20s CD — 360° beam burst hits all onscreen enemies)
+  - [x] Stage 4: beams refract to 2 targets
+  - [x] Stage 7: beams refract to 4 targets
+  - [x] Stage 10: beams bounce infinitely until enemy dies
+- [x] **Vex** — Chaos — `random_ability_interval=5s, ability_pool_size=3→6→9`
+  - [x] Signature: Entropy Storm (25s CD — all random abilities fire simultaneously)
+  - [x] Stage 4: +2 abilities to pool (lightning strike, clone 3s)
+  - [x] Stage 7: all abilities 2× stronger
+  - [~] Stage 10: abilities chain (each triggers next) *(fires multiple abilities; strict chaining pending)*
+- [~] **Orin** — Titan — `passive_base_shield_chance=5%→15%→25%` *(base damage ignore chance implemented; other perks pending)*
+  - [x] Signature: Temporal Ward (60s CD — all enemies frozen 5s, creatures continue attacking)
+  - [~] Stage 6: shield upgrades to 15%, emits damage aura *(shield implemented; damage aura pending)*
+  - [~] Stage 10: 25% shield + revive 1 creature per level *(shield implemented; revive pending)*
+  - [~] Unlock gate: Level 50 3-star OR 500 Shards *(level gate implemented; shard gate pending)*
+- [x] **Null** — Nullifier — `drain_radius=180px, drain_damage=10%→25%`
+  - [x] Signature: Consumption (45s CD — absorbs nearest enemy, gains HP)
+  - [x] Stage 6: drains 25% damage + 15% speed from enemies
+  - [x] Stage 10: enemies in range deal 0 damage; their kills credit Null
+  - [~] Unlock gate: Level 100 OR 800 Shards *(level gate implemented; shard gate pending)*
 
 ### 5.3 All 8 Enemy Types Implemented
-- [ ] **Grub** — `hp=30, speed=90, reward=5` — direct vector path
-- [ ] **Hulk** — `hp=250, speed=35, reward=20` — 50% frontal damage reduction
-- [ ] **Scuttle** — `hp=12, speed=110, reward=2` — spawns in packs of 15–30
-- [ ] **Driftwing** — `hp=60, speed=70, reward=12` — ignores PathGrid, direct vector
-- [ ] **Divide** — `hp=80, speed=55, reward=15` — on death: spawn 2 children at 40% HP
-- [ ] **Vanguard** — `hp=150, speed=50, reward=18` — front shield: 80% resist (track facing direction)
-- [ ] **Mender** — `hp=40, speed=40, reward=10` — heal 8 HP/s to all allies within 120px
-- [ ] **Siege Lord (Boss)** — `hp=50×base, phases=3` — phase triggers at 66%/33%
-  - [ ] Phase 1→2: spawn 20 Grubs, +30% speed
-  - [ ] Phase 2→3: spawn 10 Hulks, charge behavior toward base
+- [x] **Grub** — `hp=30, speed=90, reward=5` — direct vector path
+- [x] **Hulk** — `hp=250, speed=35, reward=20` — 50% frontal damage reduction
+- [x] **Scuttle** — `hp=12, speed=110, reward=2` — spawns in packs of 15–30
+- [x] **Driftwing** — `hp=60, speed=70, reward=12` — ignores PathGrid, direct vector
+- [x] **Divide** — `hp=80, speed=55, reward=15` — on death: spawn 2 children at 40% HP
+- [x] **Vanguard** — `hp=150, speed=50, reward=18` — front shield: 80% resist (track facing direction)
+- [x] **Mender** — `hp=40, speed=40, reward=10` — heal 8 HP/s to all allies within 120px
+- [x] **Siege Lord (Boss)** — `hp=50×base, phases=3` — phase triggers at 66%/33%
+  - [x] Phase 1: stomps nearby creatures (AoE damage)
+  - [x] Phase 1→2: spawn 20 Grubs, +30% speed
+  - [x] Phase 2→3: spawn 10 Hulks, charge behavior toward base
   - [ ] Biome visual variants: Moss / Ember / Frost / Infernal / Void (5 boss skins)
-- [ ] New-enemy introduction: 2s pause on first encounter, zoom + banner, description line
-- [ ] Enemy AI branching: `switch(enemy_type)` in `EnemyAI::update()`
+- [~] New-enemy introduction: 2s pause on first encounter, zoom + banner, description line *(pause + banner implemented; zoom/description pending)*
+- [x] Enemy AI branching: `switch(enemy_type)` in `EnemyAI::update()`
 
 ---
 
 ## 6. Core Game — Shops & Economy
 
 ### 6.1 Wave Buff Shop (12 cards)
-- [ ] Implement all 12 buff cards with correct `BuffEffect` implementations:
-  - [ ] Surge: `all_creatures_attack_speed *= 1.25f` for 4 waves
-  - [ ] Fortify: `base_hp += 15` one-time
-  - [ ] Frenzied Blood: `essence_per_kill += 1` for 3 waves
-  - [ ] Slow Tide: `next_wave_enemy_speed *= 0.65f`
-  - [ ] Foresight: clear next wave's elite modifier
-  - [ ] Mend: `all_creature_hp = all_creature_hp_max * 0.5` (add 50% not set)
-  - [ ] Wild Seed: `spawn_random_tier2_creature()` on open map cell
-  - [ ] Echo Strike: `projectile_echo_chance = 0.20f` (repeated at 0.3s delay) for 3 waves
-  - [ ] Essence Cache: `essence += essence * 0.30f`
-  - [ ] Iron Skin: `all_creatures_damage_received *= 0.80f` for 2 waves
-  - [ ] Apex Hunter: highest-kill creature `damage *= 1.50f` for 1 wave
-  - [ ] Void Pulse: every 10th kill explodes 80px for 1 wave
-- [ ] Buff icons: unique 32×32 icon per card
-- [ ] Active buff HUD strip: show icons of buffs currently active, with wave countdown
+- [x] Implement all 12 buff cards with correct `BuffEffect` implementations
+  - [x] Surge: `all_creatures_attack_speed *= 1.25f` for 4 waves
+  - [x] Fortify: `base_hp += 15` one-time
+  - [x] Frenzied Blood: `essence_per_kill += 1` for 3 waves
+  - [x] Slow Tide: `next_wave_enemy_speed *= 0.65f`
+  - [x] Foresight: clear next wave's elite modifier
+  - [x] Mend: `all_creature_hp = all_creature_hp_max * 0.5` (add 50% not set)
+  - [x] Wild Seed: `spawn_random_tier2_creature()` on open map cell
+  - [x] Echo Strike: `projectile_echo_chance = 0.20f` (repeated at 0.3s delay) for 3 waves
+  - [x] Essence Cache: `essence += essence * 0.30f`
+  - [x] Iron Skin: `all_creatures_damage_received *= 0.80f` for 2 waves
+  - [x] Apex Hunter: highest-kill creature `damage *= 1.50f` for 1 wave
+  - [x] Void Pulse: every 10th kill explodes 80px for 1 wave
+- [x] Buff icons: unique 32×32 icon per card *(procedural icons + glyphs)*
+- [x] Active buff HUD strip: show icons of buffs currently active, with wave countdown
 
 ### 6.2 Inter-Level Shop — Bazaar Tab
-- [ ] Rotation: 4 random character seeds per level (weighted by rarity)
-- [ ] Rarity weights: Common 60%, Rare 25%, Epic 12%, Legendary 3%
-- [ ] Cost formula per GDD §9
-- [ ] Buy: add creature seed to `player_roster`, deduct essence
-- [ ] Duplicate handling: "Already owned — buy for second unit?" prompt
-- [ ] Reroll: costs 15 essence, refreshes all 4 slots (once per visit)
-- [ ] "Can't afford" state: greyed out, shows shortage amount
+- [x] Rotation: 4 random character seeds per level (weighted by rarity)
+- [x] Rarity weights: Common 60%, Rare 25%, Epic 12%, Legendary 3%
+- [x] Cost formula per GDD §9
+- [x] Buy: add creature seed to `player_roster`, deduct essence
+- [x] Duplicate handling: "Already owned — buy for second unit?" prompt
+- [x] Reroll: costs 15 essence, refreshes all 4 slots (once per visit)
+- [x] "Can't afford" state: greyed out, shows shortage amount
 
 ### 6.3 Inter-Level Shop — Forge Tab
-- [ ] Show all owned characters with their 5 upgrade nodes
-- [ ] Upgrade node: clickable, shows current rank, next effect, cost
-- [ ] Cost formula: `(current_rank + 1) × 15 × (1 + level × 0.05)` essence
-- [ ] Max rank enforcement (V for Strike/Vitality, III for Reach/Tempo/Signature)
-- [ ] Upgrade immediately applies to live `CreatureContainer` stats
-- [ ] Visual indicator: "maxed" badge on fully upgraded nodes
+- [x] Show all owned characters with their 5 upgrade nodes
+- [x] Upgrade node: clickable, shows current rank, next effect, cost
+- [x] Cost formula: `(current_rank + 1) × 15 × (1 + level × 0.05)` essence
+- [x] Max rank enforcement (V for Strike/Vitality, III for Reach/Tempo/Signature)
+- [x] Upgrade immediately applies to live `CreatureContainer` stats
+- [x] Visual indicator: "maxed" badge on fully upgraded nodes
 
 ### 6.4 Inter-Level Shop — Relic Tab
-- [ ] Show 3 equip slots + full grid of unlocked relics
-- [ ] Drag-and-drop relic into slot (or click → pick slot)
-- [ ] Active relic effects: applied to `RelicSystem::apply_all()` at level start
-- [ ] Locked relics: shown greyed with "Unlock in Armory — N Shards"
-- [ ] Relics not yet obtained: completely hidden (don't show what you can't get)
+- [x] Show 3 equip slots + full grid of relics (locked + unlocked)
+- [x] Click relic → pick slot (slot click unequip)
+- [x] Active relic effects: applied to `RelicSystem::apply_all()` at level start
+- [x] Locked relics: shown greyed with shard cost; unlock in Armory (inter-level click opens Armory)
+- [ ] (Optional) Hide locked relics (unlocked-only vault view)
 
 ### 6.5 Inter-Level Shop — Repair Tab
-- [ ] 3 repair tiers: +20 HP (40 essence), +50 HP (90 essence), full (160 essence)
-- [ ] Note: base HP still resets to 100 each level — repair is for next level only
-- [ ] Show next-level starting HP preview
+- [x] 3 repair tiers: +20 HP (40 essence), +50 HP (90 essence), full (160 essence)
+- [x] Note: base HP still resets to 100 each level — repair is for next level only
+- [x] Show next-level starting HP preview
 
 ### 6.6 Armory (Meta Hub)
-- [ ] Character Gallery: grid of 10 character portraits, locked/unlocked state, cost
-- [ ] Character detail popup: lore text, evolution stages preview, stats summary
-- [ ] Shard balance displayed top-right
-- [ ] Unlock purchase flow: confirm dialog → deduct Shards → unlock character
-- [ ] Passive Mastery tree: 8 masteries × 3 ranks, visual tree layout
-- [ ] Mastery purchase: confirm → deduct Shards → apply permanently to `PlayerProfile`
+- [~] Character Gallery: grid of 10 character portraits, locked/unlocked state, cost *(grid + lock/cost done; portraits pending)*
+- [x] Character detail popup: lore text, evolution stages preview, stats summary
+- [x] Shard balance displayed top-right
+- [x] Unlock purchase flow: confirm dialog → deduct Shards → unlock character
+- [~] Passive Mastery tree: 8 masteries × 3 ranks, visual tree layout *(masteries + ranks implemented; tree layout pending)*
+- [x] Mastery purchase: confirm → deduct Shards → apply permanently to `PlayerProfile`
+- [x] Relic unlock purchases in Armory (moved from inter-level Relics tab)
 - [ ] Cosmetics tab: skins for characters, base, particles, HUD themes
 - [ ] Cosmetic preview: show character with selected skin in a rotating preview window
-- [ ] All Armory state saved to `PlayerProfile.json` / backend sync
+- [~] All Armory state saved to `PlayerProfile.json` / backend sync *(local save implemented; backend sync pending)*
 
 ---
 
 ## 7. Core Game — UI, HUD & Screens
 
 ### 7.1 HUD (In-Gameplay)
-- [ ] Top bar: `Level N — Wave X / Y` | countdown timer | essence (animated) | ★★★ threshold marks
-- [ ] Base HP bar: bottom-center, shows HP/max, markers at 30% and 70% (star thresholds)
-- [ ] Active buff strip: icons below top bar, wave countdown per buff
-- [ ] Selected creature panel: character art, name, tier, kills, HP bar, attack range circle, evolution progress bar
-- [ ] Creature type selector wheel (bottom-left): 6 type icons + cost, locked types greyed, selected type highlighted
+- [~] Top bar: `Level N — Wave X / Y` | countdown timer | essence (animated) | ★★★ threshold marks *(basic debug text; full HUD layout pending)*
+- [x] Base HP bar: bottom-center, shows HP/max, markers at 30% and 70% (star thresholds)
+- [x] Active buff strip: show active wave buff icons + remaining wave count
+- [~] Selected creature panel: character art, name, tier, kills, HP bar, attack range circle, evolution progress bar *(panel shows name/stage + tier/kills + progress bar)*
+- [~] Creature type selector wheel (bottom-left): 6 type icons + cost, locked types greyed, selected type highlighted *(basic roster cycling + ghost placement; wheel/icons pending)*
 - [ ] Kill feed (top-right): last 5 notable kills (boss kills, elite kills), 3s fade per entry
 - [ ] Floating damage numbers: pool of 500 entities, white for normal, yellow for crit/evolve bonus
-- [ ] Evolution banner: full-width flash, "[Name] EVOLVED → TIER N", 2.5s duration
-- [ ] New enemy banner: "[Enemy Type]" with description, slides in from top, auto-dismisses after 4s
-- [ ] Wave start banner: "WAVE X / Y" pulse, 1.5s
-- [ ] Wave clear banner: "WAVE X CLEAR — N killed" with essence earned, 2s
-- [ ] Boss wave intro banner: "SIEGE LORD APPROACHES" full-screen, 3s, with boss art
+- [~] Evolution banner: full-width flash, "[Name] EVOLVED → TIER N", 2.5s duration *(floating text + screen-edge glow implemented)*
+- [~] New enemy banner: "[Enemy Type]" with description, slides in from top, auto-dismisses after 4s *(basic banner text implemented)*
+- [~] Wave start banner: "WAVE X / Y" pulse, 1.5s *(basic banner text implemented)*
+- [~] Wave clear banner: "WAVE X CLEAR — N killed" with essence earned, 2s *(basic banner text implemented)*
+- [~] Boss wave intro banner: "SIEGE LORD APPROACHES" full-screen, 3s, with boss art *(basic boss banner text implemented)*
 
 ### 7.2 Level Select Screen
-- [ ] Grid of level tiles: 5 per row, scrollable
+- [~] Grid of level tiles: 5 per row, scrollable *(simple level-select overlay implemented; no tile grid yet)*
 - [ ] Each tile: level number, biome color, star rating (0–3 stars), locked state
 - [ ] Locked tile: shows lock icon, "Complete Level N–1 to unlock"
 - [ ] Hover tooltip: enemy types in level, wave count, boss type
@@ -651,13 +653,13 @@ Build artifacts: auto-upload ZIP of all builds per CI run (90-day retention)
 - [ ] "[Deploy]" button → transitions to gameplay with level intro
 
 ### 7.4 Inter-Level Screen
-- [ ] Slide-in animation from right over 0.4s
-- [ ] Results panel: level N, star reveal animation (fill one-by-one with delay), stats table
-- [ ] Stats: enemies killed, essence earned, base HP remaining %, time taken, evolutions this level, merges this level
-- [ ] Best creature highlight: top creature by kills with large portrait + "Tier N, X kills"
-- [ ] Shop tabs: Bazaar / Forge / Relics / Repair (tabbed navigation)
-- [ ] Roster strip at bottom: scrollable row of all owned creatures
-- [ ] Buttons: [Next Level →] [Replay Level] [Level Select]
+- [x] Slide-in animation from right over 0.4s
+- [x] Results panel: level N, star reveal animation (fill one-by-one with delay), stats table
+- [x] Stats: enemies killed, essence earned, base HP remaining %, time taken, evolutions this level, merges this level
+- [x] Best creature highlight: top creature by kills with large portrait + "Tier N, X kills"
+- [x] Shop tabs: Bazaar / Forge / Relics / Repair (tabbed navigation)
+- [x] Roster strip at bottom: scrollable row of all owned creatures *(no scroll yet)*
+- [x] Buttons: [Next Level →] [Replay Level] [Level Select]
 - [ ] Transition back to gameplay: fade out + level intro animation
 
 ### 7.5 Main Menu

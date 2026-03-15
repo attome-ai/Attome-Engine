@@ -1420,6 +1420,10 @@ std::vector<EntityRef> &SpatialGrid::queryRect(float x1, float y1, float x2,
   int32_t maxX = static_cast<int32_t>(std::floor(x2 * INV_GRID_CELL_SIZE));
   int32_t maxY = static_cast<int32_t>(std::floor(y2 * INV_GRID_CELL_SIZE));
 
+  constexpr int32_t kQueryPadCells = 4;
+  minX -= kQueryPadCells;
+  minY -= kQueryPadCells;
+
   minX = std::clamp(minX, 0, static_cast<int32_t>(GRID_CELL_WIDTH) - 1);
   minY = std::clamp(minY, 0, static_cast<int32_t>(GRID_CELL_HEIGHT) - 1);
   maxX = std::clamp(maxX, 0, static_cast<int32_t>(GRID_CELL_WIDTH) - 1);
