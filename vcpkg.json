@@ -8,6 +8,8 @@
     "glm",
     "imgui",
     "nlohmann-json",
-    "vulkan"
+    "vulkan",
+    "asio",
+    "libsodium"
   ]
 }

@@ -1,10 +1,16 @@
 #include "ATMEngine.h"
+#include "engine/net/NetSelfTest.h"
 #include <SDL3/SDL.h>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <deque>
 #include <string>
+
+#if defined(_WIN32) && (NET_SELF_TEST_AUTORUN != 0)
+#include <windows.h>
+#endif
 
 // ── constants
 // ──────────────────────────────────────────────────────────────────
@@ -198,6 +204,29 @@ static void drawLabel(SDL_Renderer *r, const char *text, int x, int y,
 // ── entry
 // ──────────────────────────────────────────────────────────────────────
 int main(int argc, char *argv[]) {
+#if (NET_SELF_TEST_AUTORUN != 0)
+#if defined(_WIN32)
+    if (GetConsoleWindow() == nullptr) {
+      (void)AllocConsole();
+      FILE *dummy = nullptr;
+      (void)freopen_s(&dummy, "CONOUT$", "w", stdout);
+      (void)freopen_s(&dummy, "CONOUT$", "w", stderr);
+      (void)freopen_s(&dummy, "CONIN$", "r", stdin);
+    }
+#endif
+
+    std::fprintf(stderr, "AttomeNet self-tests: start\n");
+    const bool ok = attome::net::run_self_tests();
+    std::fprintf(stderr, "AttomeNet self-tests: %s\n", ok ? "PASS" : "FAIL");
+    std::fflush(stderr);
+
+    std::fprintf(stderr, "Press Enter to exit...\n");
+    std::fflush(stderr);
+    (void)std::getchar();
+
+    return ok ? 0 : 1;
+#endif
+
   srand((unsigned)time(nullptr));
 
   Engine *engine = engine_create(WIN_W, WIN_H, 10000, 10000, 64);

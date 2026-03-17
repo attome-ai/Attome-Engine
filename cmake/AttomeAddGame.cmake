@@ -15,6 +15,7 @@ function(attome_add_game target_name)
 
   find_package(SDL3 CONFIG REQUIRED)
   target_link_libraries(${target_name} PRIVATE SDL3::SDL3)
+  target_link_libraries(${target_name} PRIVATE AttomeNet)
 
   if(MSVC)
     target_compile_options(${target_name} PRIVATE /W4)
@@ -26,4 +27,3 @@ function(attome_add_game target_name)
     target_compile_definitions(${target_name} PRIVATE NOMINMAX)
   endif()
 endfunction()
-
