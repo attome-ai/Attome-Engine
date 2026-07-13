@@ -6,7 +6,13 @@
     "sdl3-image",
     "sdl3-ttf",
     "glm",
-    "imgui",
+    {
+      "name": "imgui",
+      "features": [
+        "sdl3-binding",
+        "sdl3-renderer-binding"
+      ]
+    },
     "nlohmann-json",
     "vulkan",
     "asio",

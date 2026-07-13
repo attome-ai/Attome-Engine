@@ -14,6 +14,7 @@ add_subdirectory(engine/net)
 option(ATTOME_BUILD_HELLO_WORLD   "Build Hello World"     ON)
 option(ATTOME_BUILD_SNAKE         "Build Snake"           ON)
 option(ATTOME_BUILD_TOWER_SWARM   "Build Tower Swarm"     ON)
+option(ATTOME_BUILD_PLANET_OPTIMIZED "Build Planet Optimized" ON)
 
 if(ATTOME_BUILD_HELLO_WORLD)
   add_subdirectory(hello-world)
@@ -25,4 +26,8 @@ endif()
 
 if(ATTOME_BUILD_TOWER_SWARM)
   add_subdirectory(tower_swarm)
+endif()
+
+if(ATTOME_BUILD_PLANET_OPTIMIZED)
+  add_subdirectory(planet_optimized)
 endif()
