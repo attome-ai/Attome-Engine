@@ -8,7 +8,8 @@ struct ModelInstanceGpu {
   mat4 model;
   uint tint;
   uint paletteOffset;
-  uint pad0, pad1;
+  uint flags;         // kInstanceNoRim = 1, kInstanceNoShadow = 2
+  uint pad1;
 };
 layout(std430, set = 0, binding = 7) readonly buffer ModelFaces { uvec2 modelFaces[]; };
 layout(std430, set = 0, binding = 8) readonly buffer Instances { ModelInstanceGpu instances[]; };
@@ -21,4 +22,5 @@ void main() {
   vec3 local = cornerPosition(f, quadCorner(k, f.dir, f.ao));
   vec3 rel = (inst.model * vec4(local, 1.0)).xyz;
   gl_Position = frame.lightViewProj * vec4(rel, 1.0);
+  if ((inst.flags & 2u) != 0u) gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // culled: outside the clip volume
 }

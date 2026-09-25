@@ -135,6 +135,33 @@ struct MonsterDef {
   Drop rare;
 };
 const MonsterDef &monsterDef(uint8_t type);
+
+// Hit volume per monster type, fitted to its model: a vertical capsule
+// (segment from `bottom` to `top` above the feet, radius `radius`). Used by
+// the server for projectile / melee hits and by the client for aim + F8 view.
+struct MonsterHitShape {
+  float radius, bottom, top;
+};
+inline MonsterHitShape monsterHitShape(uint8_t type) {
+  switch (type) {
+  case 0: return {0.6f, 0.45f, 0.45f};  // Slime: ~1.0 wide, 0.8 tall
+  case 1: return {0.75f, 0.55f, 0.85f}; // Wolf: ~1.8 long, 1.1 tall
+  case 2: return {1.0f, 1.0f, 2.2f};    // Golem: ~3.1 tall, 1.5-2.2 wide (1.5x model)
+  default: return {0.8f, 0.8f, 0.8f};
+  }
+}
+// Squared distance from point (px,py,pz) to the capsule of a monster whose
+// feet are at (fx,fy,fz); also returns the capsule's closest axis point y.
+inline double monsterHitDistance2(uint8_t type, double fx, double fy, double fz, double px, double py,
+                                  double pz, double *axisY = nullptr) {
+  const MonsterHitShape s = monsterHitShape(type);
+  double y = py;
+  if (y < fy + s.bottom) y = fy + s.bottom;
+  if (y > fy + s.top) y = fy + s.top;
+  if (axisY) *axisY = y;
+  const double dx = px - fx, dy = py - y, dz = pz - fz;
+  return dx * dx + dy * dy + dz * dz;
+}
 uint8_t monsterTypeCount();
 namespace monsters {
 inline constexpr uint8_t Slime = 0, Wolf = 1, Golem = 2, Count = 3;

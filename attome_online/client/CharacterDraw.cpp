@@ -192,6 +192,29 @@ void App::drawCharacter(const atm::model::Appearance &appearance,
   const float scale = atm::model::kModelVoxelScale;
   const auto &parts = models_.parts();
 
+  // Bow "ready" stance (Trove-like): while a bow is held and no attack is
+  // playing, the left arm is bent with the fist forward at waist height,
+  // instead of hanging straight down (which makes any held bow look dragged).
+  // Rotations are applied at each joint and propagated down the arm chain.
+  const int offPart = resolved.socketParts[size_t(Socket::OffHand)];
+  const bool bowReady = offPart >= 0 && size_t(offPart) < parts.size() &&
+                        parts[size_t(offPart)].name == "bow" && !animator.actionPlaying();
+  constexpr float kUpperPitch = 0.3f, kUpperRoll = -0.22f, kElbow = 1.15f;
+  if (bowReady) {
+    const glm::mat4 up0 = bones[size_t(Bone::ArmUpperL)];
+    const glm::mat4 lo0 = bones[size_t(Bone::ArmLowerL)];
+    const glm::mat4 hd0 = bones[size_t(Bone::HandL)];
+    // Upper arm: a little forward (+X rotation swings -Y toward -Z, the
+    // facing) and out to the left (-Z rotation swings -Y toward -X).
+    const glm::mat4 up1 = glm::rotate(glm::rotate(up0, kUpperPitch, glm::vec3(1, 0, 0)), kUpperRoll,
+                                      glm::vec3(0, 0, 1));
+    // Forearm follows, then bends forward at the elbow.
+    const glm::mat4 lo1 = glm::rotate(up1 * glm::inverse(up0) * lo0, kElbow, glm::vec3(1, 0, 0));
+    bones[size_t(Bone::ArmUpperL)] = up1;
+    bones[size_t(Bone::ArmLowerL)] = lo1;
+    bones[size_t(Bone::HandL)] = lo1 * glm::inverse(lo0) * hd0;
+  }
+
   for (int b = 0; b < kBoneCount; ++b) {
     const int part = resolved.boneParts[size_t(b)];
     if (part < 0 || size_t(part) >= partMeshes_.size() ||
@@ -208,8 +231,15 @@ void App::drawCharacter(const atm::model::Appearance &appearance,
         partMeshes_[size_t(part)] == atm::render::kInvalidModelMesh)
       continue;
     const Bone bone = rig.socketBone[size_t(s)];
-    const glm::mat4 socket =
-        glm::translate(bones[size_t(bone)], rig.socketOffset[size_t(s)]);
+    glm::mat4 socket = glm::translate(bones[size_t(bone)], rig.socketOffset[size_t(s)]);
+    // Ready stance: undo the arm's pitch / roll so the bow stands upright in
+    // the forward fist, then turn it ~35 degrees so its curve reads from
+    // behind and from the side.
+    if (s == int(Socket::OffHand) && bowReady) {
+      socket = glm::rotate(socket, -(kUpperPitch + kElbow), glm::vec3(1, 0, 0));
+      socket = glm::rotate(socket, -kUpperRoll, glm::vec3(0, 0, 1));
+      socket = glm::rotate(socket, 0.6f, glm::vec3(0, 1, 0));
+    }
     renderer_.drawModel(partInstance(partMeshes_[size_t(part)], feet, yawRot, socket,
                                      parts[size_t(part)].pivot, scale, tint,
                                      resolved.socketPaletteOffset[size_t(s)]));

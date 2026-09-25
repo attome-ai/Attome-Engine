@@ -20,6 +20,10 @@ layout(push_constant) uniform Push {
   float shaftStrength; // 0 = off (sun behind the camera / night)
   float aoStrength;
   vec4 sunColor;       // linear rgb
+  float contrast;      // S-curve amount
+  float vibrance;      // muted-colour boost
+  float vignette;      // corner darkening
+  float pad0;
 } pc;
 
 vec3 aces(vec3 x) {
@@ -66,11 +70,11 @@ void main() {
   float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
   float mx = max(col.r, max(col.g, col.b)), mn = min(col.r, min(col.g, col.b));
   float sat = (mx - mn) / max(mx, 1e-4);
-  col = max(mix(vec3(l), col, 1.0 + 0.35 * (1.0 - sat)), vec3(0.0));
+  col = max(mix(vec3(l), col, 1.0 + pc.vibrance * (1.0 - sat)), vec3(0.0));
   col = aces(col * pc.exposure);
-  col = mix(col, col * col * (3.0 - 2.0 * col), 0.55); // punchier contrast
+  col = mix(col, col * col * (3.0 - 2.0 * col), pc.contrast);
   vec2 v = vUv - 0.5;
-  col *= mix(0.8, 1.0, smoothstep(0.85, 0.3, length(v * vec2(1.1, 1.0))));
+  col *= mix(1.0 - pc.vignette, 1.0, smoothstep(0.85, 0.3, length(v * vec2(1.1, 1.0))));
   if (pc.srgbOutput == 0u) col = pow(col, vec3(1.0 / 2.2));
   outColor = vec4(col, 1.0);
 }

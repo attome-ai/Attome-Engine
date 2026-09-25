@@ -119,6 +119,7 @@ bool App::init(const ClientConfig &cfg, std::string *error) {
   ImGui::GetIO().IniFilename = nullptr;
   ImGui::StyleColorsDark();
   ui::init(); // fonts (assets/fonts) + theme
+  look_.load(atm::resolve_path("config/graphics.json")); // saved graphics panel values, if any
 
   if (!renderer_.init(window_, cfg_.render, error))
     return false;
@@ -157,7 +158,7 @@ bool App::init(const ClientConfig &cfg, std::string *error) {
   input_.bind("right", "D");
   input_.bind("jump", "Space");
   input_.bind("jump", "pad:a");
-  input_.bind("dash", "Left Shift");
+  input_.bind("dash", "Q");
   input_.bind("dash", "pad:b");
   input_.bind("sprint", "Left Ctrl");
   input_.bind("primary", "mouse:left");
@@ -169,6 +170,8 @@ bool App::init(const ClientConfig &cfg, std::string *error) {
   input_.bind("skills", "K");
   input_.bind("debug", "F3");
   input_.bind("debug", "F11");
+  input_.bind("graphics", "F10");
+  input_.bind("hitboxes", "F8");
   input_.bind("chat", "Return");
   input_.bind("release_mouse", "Escape");
   input_.bind("screenshot", "F2");
@@ -452,8 +455,13 @@ void App::handleEvents() {
     return; // typing: gameplay keys ignored
 
   if (input_.pressed("release_mouse")) {
-    if (showInventory_ || showSkills_) {
+    if (showInventory_ || showSkills_ || showLook_) {
       showInventory_ = showSkills_ = false;
+      if (showLook_) {
+        showLook_ = false;
+        SDL_SetWindowRelativeMouseMode(window_, true);
+        mouseCaptured_ = true;
+      }
     } else {
       SDL_SetWindowRelativeMouseMode(window_, false);
       mouseCaptured_ = false;
@@ -468,6 +476,13 @@ void App::handleEvents() {
     showSkills_ = !showSkills_;
   if (input_.pressed("debug"))
     showDebug_ = !showDebug_;
+  if (input_.pressed("hitboxes"))
+    showHitboxes_ = !showHitboxes_;
+  if (input_.pressed("graphics")) { // F10: live look tuning (sliders need the mouse)
+    showLook_ = !showLook_;
+    SDL_SetWindowRelativeMouseMode(window_, !showLook_);
+    mouseCaptured_ = !showLook_;
+  }
   if (input_.pressed("screenshot"))
     renderer_.requestScreenshot("screenshot.bmp");
   // Open on release: the chat InputText is created this frame, and opening on
@@ -588,14 +603,58 @@ glm::dvec3 App::eyePosition(float alpha) const {
 
 glm::vec3 App::aimDirection() const { return lookDir(camYaw_, camPitch_); }
 
+glm::vec3 App::crosshairAim(const glm::dvec3 &from) const {
+  const glm::dvec3 d(aimDirection());
+  double best = 150.0; // nothing hit: aim at a far point along the crosshair
+  // Blocks: nearest point of the first solid block on the camera ray.
+  if (world_) {
+    BlockPos hit{};
+    FaceDir face = FaceDir::PosY;
+    if (raycastBlock(*world_, blocks_, camPos_, aimDirection(), float(best), hit, face)) {
+      const glm::dvec3 c(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+      best = std::max(0.5, glm::dot(c - camPos_, d) - 0.5);
+    }
+  }
+  // Monsters / players: closest one the ray passes through (body ~0.9 wide).
+  const float renderTick = serverTickEstimate_ - kInterpDelayTicks;
+  for (const auto &[id, r] : remotes_) {
+    if ((r.last.kind != EntityKind::Monster && r.last.kind != EntityKind::Player) || (r.last.flags & 4u) ||
+        r.track.empty())
+      continue;
+    const glm::dvec3 feet = r.track.sample(renderTick).pos;
+    if (r.last.kind == EntityKind::Monster) {
+      // Per-type hit capsule (same test as the server).
+      const MonsterHitShape hs = monsterHitShape(r.last.type);
+      const glm::dvec3 c = feet + glm::dvec3(0.0, 0.5 * (hs.bottom + hs.top), 0.0);
+      const double t = glm::dot(c - camPos_, d);
+      if (t <= 0.0 || t >= best)
+        continue;
+      const glm::dvec3 q = camPos_ + d * t;
+      if (monsterHitDistance2(r.last.type, feet.x, feet.y, feet.z, q.x, q.y, q.z) < double(hs.radius) * hs.radius)
+        best = t;
+      continue;
+    }
+    const glm::dvec3 c = feet + glm::dvec3(0.0, 0.9, 0.0);
+    const double t = glm::dot(c - camPos_, d);
+    if (t <= 0.0 || t >= best)
+      continue;
+    if (glm::length(c - (camPos_ + d * t)) < 0.9)
+      best = t;
+  }
+  const glm::dvec3 target = camPos_ + d * best;
+  const glm::dvec3 dir = target - from;
+  const double len = glm::length(dir);
+  return len > 1e-4 ? glm::vec3(dir / len) : glm::vec3(d);
+}
+
 void App::updateCamera(float dt) {
   const float alpha = float(accumulator_ / kSimDt);
-  const glm::dvec3 target = eyePosition(alpha) + glm::dvec3(0.0, 0.25, 0.0);
+  const glm::dvec3 target = eyePosition(alpha) + glm::dvec3(0.0, 0.4, 0.0);
   const glm::vec3 fwd = aimDirection();
   const glm::vec3 right{std::cos(camYaw_), 0.0f, -std::sin(camYaw_)};
 
   // Over-the-shoulder offset, then pull in when blocks are in the way.
-  const glm::dvec3 shoulder = target + glm::dvec3(right) * 0.55;
+  const glm::dvec3 shoulder = target + glm::dvec3(right) * 0.95; // over the shoulder: crosshair clears the character
   float dist = camDistance_;
   if (world_) {
     const glm::dvec3 back = -glm::dvec3(fwd);
@@ -768,20 +827,43 @@ void App::updateInteraction(float dt) {
     proto::Attack a;
     // The server tick we are displaying monsters at (lag compensation).
     a.tick = uint32_t(std::max(0.0f, std::round(serverTickEstimate_ - kInterpDelayTicks)));
-    a.yaw = camYaw_;
-    a.pitch = camPitch_;
+    // Aim from our eye (where the server spawns the shot) at whatever the
+    // crosshair is on: the camera sits over the shoulder, so the raw camera
+    // direction would land about a block to the side of the crosshair.
+    const glm::dvec3 shotEye = prediction_.current().pos + glm::dvec3(0.0, moveTuning().eyeHeight, 0.0);
+    const glm::vec3 shotDir = crosshairAim(shotEye);
+    a.yaw = std::atan2(-shotDir.x, -shotDir.z);
+    a.pitch = std::asin(std::clamp(shotDir.y, -1.0f, 1.0f));
     a.ability = 0;
     net_.send(a, atm::net2::Channel::ReliableOrdered);
     attackCooldown_ = weaponCooldown(mainDef.weapon); // same table as the server
     switch (mainDef.weapon) {
     case WeaponType::Bow:
-      playActionAnim(selfAnim_, act::BowShoot, mainDef.weapon);
-      if (sfx_) sfx_->play(GameSound::BowShoot);
+    case WeaponType::Staff: {
+      const bool magic = mainDef.weapon == WeaponType::Staff;
+      if (magic) {
+        playActionAnim(selfAnim_, act::Cast, mainDef.weapon);
+        if (sfx_) sfx_->play(GameSound::SwordSwing);
+      } else {
+        playActionAnim(selfAnim_, act::BowShoot, mainDef.weapon);
+        if (sfx_) sfx_->play(GameSound::BowShoot);
+      }
+      // Launch flash: sparks from in front of the chest, along the aim.
+      const glm::vec3 aim = shotDir;
+      Particles::Burst fl;
+      fl.block = atm::voxel::blocks::Lamp;
+      fl.tint = magic ? rgba(200, 140, 255) : rgba(255, 226, 140);
+      fl.count = magic ? 18 : 12;
+      fl.speed = 2.5f;
+      fl.up = 0.5f;
+      fl.size = 0.07f;
+      fl.life = 0.25f;
+      fl.gravity = 0.0f;
+      fl.drag = 4.0f;
+      fl.spread = 0.12f;
+      particles_.burst(prediction_.current().pos + glm::dvec3(0.0, 1.25, 0.0) + glm::dvec3(aim) * 0.7, fl);
       break;
-    case WeaponType::Staff:
-      playActionAnim(selfAnim_, act::Cast, mainDef.weapon);
-      if (sfx_) sfx_->play(GameSound::SwordSwing);
-      break;
+    }
     default: {
       // Glowing slash arc in front of the player, tinted by the blade.
       const std::string_view wn = mainDef.name;
@@ -888,12 +970,19 @@ void App::updateEntities(float dt) {
 // ---------------------------------------------------------------------------
 
 void App::render(float alpha, float dt) {
-  atm::render::Environment env;
-  // Lower, angled sun so block sides read with strong light/shade contrast;
-  // saturated sky with a paler horizon haze.
-  env.sunDirection = glm::normalize(glm::vec3(0.55f, 0.62f, 0.3f));
-  env.skyColor = glm::vec3(0.30f, 0.58f, 1.0f);
-  env.fogColor = glm::vec3(0.68f, 0.84f, 1.0f);
+  // Look settings from the graphics panel (F10); sun from azimuth/elevation.
+  cfg_.render.fovYDegrees = look_.fov;
+  decor_.setDensity(look_.decorDensity);
+  atm::render::Environment env = look_.env;
+  {
+    const float az = glm::radians(look_.sunAzimuth), el = glm::radians(look_.sunElevation);
+    env.sunDirection = glm::vec3(std::sin(az) * std::cos(el), std::sin(el), -std::cos(az) * std::cos(el));
+  }
+  if (world_) {
+    const atm::voxel::BlockPos cb{int32_t(std::floor(camPos_.x)), int32_t(std::floor(camPos_.y)),
+                                  int32_t(std::floor(camPos_.z))};
+    env.underwater = blocks_.get(world_->blockAt(cb)).liquid;
+  }
 
   if (!renderer_.beginFrame(camera_, env)) {
     SDL_Delay(10); // minimised: don't spin; ImGui::NewFrame is skipped too
@@ -920,8 +1009,12 @@ void App::render(float alpha, float dt) {
       d -= 3.14159265f;
       bodyYaw_ += d * std::min(1.0f, dt * 14.0f);
     }
-    drawCharacter(selfAppearance_, selfAnim_, prediction_.renderPosition(alpha), bodyYaw_,
-                  hp_ == 0 ? rgba(120, 120, 120) : 0xFFFFFFFFu);
+    // Hide our own model when the camera is pushed right against it (tight
+    // spaces, underwater): otherwise it fills the screen as a dark wall.
+    const glm::dvec3 selfFeet = prediction_.renderPosition(alpha);
+    if (glm::length(camPos_ - (selfFeet + glm::dvec3(0.0, 1.1, 0.0))) > 1.2)
+      drawCharacter(selfAppearance_, selfAnim_, selfFeet, bodyYaw_,
+                    hp_ == 0 ? rgba(120, 120, 120) : 0xFFFFFFFFu);
 
     // Remote entities.
     const float renderTick = serverTickEstimate_ - kInterpDelayTicks;
@@ -940,17 +1033,86 @@ void App::render(float alpha, float dt) {
       case EntityKind::DroppedItem:
         drawItemEntity(r.last.item, s.pos, renderTick * 0.08f);
         break;
-      case EntityKind::Projectile:
+      case EntityKind::Projectile: {
         drawProjectile(s.pos, s.vel);
+        // Trove-style glow: a bright head plus a spark trail spawned by
+        // distance travelled (same density at any frame rate).
+        const bool magic = r.last.type == uint8_t(WeaponType::Staff);
+        const uint32_t glow = magic ? rgba(190, 120, 255) : rgba(255, 214, 110);
+        if (atm::voxel::blocks::Lamp < blockItemMeshes_.size()) {
+          atm::render::ModelInstance head;
+          head.mesh = blockItemMeshes_[atm::voxel::blocks::Lamp];
+          head.origin = s.pos;
+          head.pivot = {2.0f, 2.0f, 2.0f};
+          head.voxelScale = (magic ? 0.34f : 0.18f) / 4.0f;
+          head.rotation = glm::angleAxis(renderTick * 0.6f, glm::normalize(glm::vec3(1.0f, 1.0f, 0.3f)));
+          head.tint = glow;
+          head.flags = atm::render::kInstanceNoRim | atm::render::kInstanceNoShadow;
+          renderer_.drawModel(head);
+        }
+        if (r.trailFrom.x > 1e29)
+          r.trailFrom = s.pos;
+        const glm::dvec3 seg = s.pos - r.trailFrom;
+        const double len = glm::length(seg);
+        const double step = 0.12;
+        const int n = std::min(int(len / step), 16);
+        for (int i = 1; i <= n; ++i)
+          particles_.trail(r.trailFrom + seg * (double(i) * step / len), glow, magic ? 0.12f : 0.08f);
+        if (n > 0)
+          r.trailFrom += seg * (double(n) * step / len);
         break;
+      }
       }
     }
 
     decor_.draw(renderer_);
     particles_.draw(renderer_, blockItemMeshes_);
 
-    if (hasTarget_)
-      renderer_.drawBlockHighlight(targetBlock_);
+    // F8 hitbox view: the volumes the server actually tests, at the positions
+    // this client renders. Green = body (0.6 x 1.8 collision box), red =
+    // monster hit zone (bounds of its per-type hit capsule),
+    // yellow = projectile (a point) plus a marker along its velocity.
+    if (showHitboxes_) {
+      const MoveTuning mt = moveTuning();
+      const glm::dvec3 hw(mt.halfWidth, 0.0, mt.halfWidth);
+      auto body = [&](const glm::dvec3 &feet, uint32_t col) {
+        renderer_.drawDebugBox(feet - hw, feet + hw + glm::dvec3(0.0, mt.height, 0.0), col);
+      };
+      body(prediction_.renderPosition(alpha), rgba(80, 255, 120));
+      for (auto &[id, r] : remotes_) {
+        if (r.track.empty() || (r.last.flags & 4u))
+          continue;
+        const RemoteSample s = r.track.sample(renderTick);
+        if (r.last.kind == EntityKind::Player || r.last.kind == EntityKind::Monster) {
+          body(s.pos, rgba(80, 255, 120));
+          if (r.last.kind == EntityKind::Monster) {
+            // Bounds of the per-type hit capsule.
+            const MonsterHitShape hs = monsterHitShape(r.last.type);
+            renderer_.drawDebugBox(s.pos + glm::dvec3(-hs.radius, hs.bottom - hs.radius, -hs.radius),
+                                   s.pos + glm::dvec3(hs.radius, hs.top + hs.radius, hs.radius),
+                                   rgba(255, 70, 60));
+          }
+        } else if (r.last.kind == EntityKind::Projectile) {
+          renderer_.drawDebugBox(s.pos - glm::dvec3(0.1), s.pos + glm::dvec3(0.1), rgba(255, 230, 60));
+          const float sp = glm::length(s.vel);
+          if (sp > 0.01f) {
+            const glm::dvec3 ahead = s.pos + glm::dvec3(s.vel / sp) * 0.6;
+            renderer_.drawDebugBox(ahead - glm::dvec3(0.04), ahead + glm::dvec3(0.04), rgba(255, 230, 60));
+          }
+        } else if (r.last.kind == EntityKind::DroppedItem) {
+          renderer_.drawDebugBox(s.pos - glm::dvec3(0.2, 0.0, 0.2), s.pos + glm::dvec3(0.2, 0.4, 0.2),
+                                 rgba(120, 200, 255));
+        }
+      }
+    }
+
+    // Block outline; skipped when the block nearly touches the camera (its
+    // edges would stretch across the whole screen as long diagonal lines).
+    if (hasTarget_) {
+      const glm::dvec3 bc(targetBlock_.x + 0.5, targetBlock_.y + 0.5, targetBlock_.z + 0.5);
+      if (glm::length(bc - camPos_) > 1.6)
+        renderer_.drawBlockHighlight(targetBlock_);
+    }
   }
 
   drawHud(dt);
@@ -1016,7 +1178,7 @@ void App::onWelcome(const proto::Welcome &m) {
   camYaw_ = 0.0f;
   welcomed_ = true;
   status_.clear();
-  addChatLine("Welcome to Attome Online! WASD move, Space jump/glide, Shift dash, LMB attack/mine, RMB place, Tab inventory, K skills.");
+  addChatLine("Welcome to Attome Online! WASD move, Space jump/glide, Q dash, LMB attack/mine, RMB place, Tab inventory, K skills.");
 }
 
 void App::onChunkData(const proto::ChunkData &m) {
@@ -1114,8 +1276,25 @@ void App::onSnapshot(const proto::SnapshotMsg &m) {
     r.last = merged;
     r.track.push({float(s.tick), merged.pos, merged.vel, merged.yaw, merged.flags});
   }
-  for (EntityId gone : s.removed)
+  for (EntityId gone : s.removed) {
+    auto it = remotes_.find(gone);
+    if (it != remotes_.end() && it->second.last.kind == EntityKind::Projectile) {
+      // Impact burst where the arrow / bolt ended (hit a monster or a wall).
+      const bool magic = it->second.last.type == uint8_t(WeaponType::Staff);
+      Particles::Burst hit;
+      hit.block = atm::voxel::blocks::Lamp;
+      hit.tint = magic ? rgba(200, 140, 255) : rgba(255, 220, 120);
+      hit.count = magic ? 26 : 16;
+      hit.speed = magic ? 6.0f : 4.5f;
+      hit.up = 1.5f;
+      hit.size = magic ? 0.1f : 0.08f;
+      hit.life = 0.4f;
+      hit.gravity = magic ? 0.0f : 10.0f;
+      hit.drag = 3.0f;
+      particles_.burst(it->second.last.pos, hit);
+    }
     remotes_.erase(gone);
+  }
 }
 
 void App::onAppearance(const proto::AppearanceMsg &m) {

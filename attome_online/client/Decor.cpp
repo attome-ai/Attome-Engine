@@ -4,6 +4,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 namespace ao::client {
@@ -22,7 +23,8 @@ enum : uint8_t {
   kPaletteSize
 };
 
-constexpr int kRadius = 36;       // blocks around the player
+constexpr int kRadius = 72;       // blocks around the player
+constexpr float kFadeBand = 14.0f; // items grow in / shrink out over the outer band
 constexpr float kVoxel = 1.0f / 8.0f;
 
 uint32_t hash(int x, int y, int z, uint32_t salt) {
@@ -107,7 +109,7 @@ atm::model::VoxelPart shell() {
 
 std::vector<uint32_t> Decor::palette() {
   // Order matches the palette index enum (index 1 first).
-  return {rgba(88, 164, 44),   rgba(118, 196, 58), rgba(176, 228, 96), rgba(72, 140, 42),
+  return {rgba(100, 168, 60),  rgba(114, 184, 68), rgba(150, 204, 92), rgba(80, 140, 52),
           rgba(236, 62, 72),   rgba(252, 212, 58), rgba(246, 246, 240), rgba(96, 150, 250),
           rgba(255, 186, 40),  rgba(150, 150, 160), rgba(112, 112, 124), rgba(246, 214, 196)};
 }
@@ -134,49 +136,87 @@ void Decor::shutdown(atm::render::Renderer &renderer) {
   items_.clear();
 }
 
+const Decor::Column &Decor::column(const atm::voxel::VoxelWorld &world, int x, int z, int py) {
+  const uint64_t key = (uint64_t(uint32_t(x)) << 32) | uint32_t(z);
+  auto it = cache_.find(key);
+  if (it != cache_.end())
+    return it->second;
+  static const Column kPending{};
+  // Only remember columns whose chunks are loaded (else retry later).
+  if (!world.isLoaded(atm::voxel::chunkOf({x, py + 14, z})) ||
+      !world.isLoaded(atm::voxel::chunkOf({x, py - 20, z})))
+    return kPending;
+  Column c;
+  // Surface: first solid block from above with air on top.
+  atm::voxel::BlockId above = world.blockAt({x, py + 14, z});
+  for (int y = py + 13; y >= py - 20; --y) {
+    const atm::voxel::BlockId b = world.blockAt({x, y, z});
+    if (b != atm::voxel::kAir && above == atm::voxel::kAir) {
+      const uint32_t h = hash(x, y, z, 0x5eedu);
+      const float r = unit(h);
+      int kind = -1;
+      if (b == vb::Grass) {
+        if (r < 0.03f * density_) kind = FlowerRed + int((h >> 20) & 3u);
+        else if (r < 0.13f * density_) kind = TuftA;
+        else if (r < 0.20f * density_) kind = TuftB;
+      } else if (b == vb::Sand) {
+        if (r < 0.02f * density_) kind = Pebble;
+        else if (r < 0.035f * density_) kind = Shell;
+      } else if (b == vb::Stone && r < 0.03f * density_) {
+        kind = Pebble;
+      }
+      if (kind >= 0) {
+        const uint32_t h2 = hash(x, y, z, 0xdec0u);
+        c.has = true;
+        c.item.pos = glm::dvec3(x + 0.5 + (unit(h2) - 0.5) * 0.5, y + 1.0, z + 0.5 + (unit(h2 >> 16) - 0.5) * 0.5);
+        c.item.yaw = unit(h2 * 3u) * 6.2831853f;
+        c.item.scale = 0.85f + unit(h2 * 7u) * 0.35f;
+        c.item.kind = uint8_t(kind);
+      }
+      break;
+    }
+    above = b;
+  }
+  return cache_.emplace(key, c).first->second;
+}
+
 void Decor::update(const atm::voxel::VoxelWorld &world, const glm::dvec3 &player, float dt) {
+  player_ = player;
   timer_ += dt;
+  flushTimer_ += dt;
+  // Forget everything now and then: picks up dug / placed blocks and keeps
+  // the cache from growing while exploring.
+  if (flushTimer_ > 20.0f) {
+    flushTimer_ = 0.0f;
+    cache_.clear();
+    timer_ = 1e9f;
+  }
   const glm::dvec3 d = player - center_;
-  if (d.x * d.x + d.z * d.z < 36.0 && timer_ < 2.0f)
+  if (d.x * d.x + d.z * d.z < 16.0 && timer_ < 1.0f)
     return;
   timer_ = 0.0f;
   center_ = player;
   items_.clear();
   const int px = int(std::floor(player.x)), py = int(std::floor(player.y)), pz = int(std::floor(player.z));
+  const int r2 = kRadius * kRadius;
   for (int z = pz - kRadius; z <= pz + kRadius; ++z)
     for (int x = px - kRadius; x <= px + kRadius; ++x) {
-      // Surface: first solid block from above with air on top.
-      atm::voxel::BlockId above = world.blockAt({x, py + 14, z});
-      for (int y = py + 13; y >= py - 20; --y) {
-        const atm::voxel::BlockId b = world.blockAt({x, y, z});
-        if (b != atm::voxel::kAir && above == atm::voxel::kAir) {
-          const uint32_t h = hash(x, y, z, 0x5eedu);
-          const float r = unit(h);
-          int kind = -1;
-          if (b == vb::Grass) {
-            if (r < 0.045f) kind = FlowerRed + int((h >> 20) & 3u);
-            else if (r < 0.30f) kind = TuftA;
-            else if (r < 0.42f) kind = TuftB;
-          } else if (b == vb::Sand) {
-            if (r < 0.02f) kind = Pebble;
-            else if (r < 0.035f) kind = Shell;
-          } else if (b == vb::Stone && r < 0.03f) {
-            kind = Pebble;
-          }
-          if (kind >= 0) {
-            const uint32_t h2 = hash(x, y, z, 0xdec0u);
-            Item it;
-            it.pos = glm::dvec3(x + 0.5 + (unit(h2) - 0.5) * 0.5, y + 1.0, z + 0.5 + (unit(h2 >> 16) - 0.5) * 0.5);
-            it.yaw = unit(h2 * 3u) * 6.2831853f;
-            it.scale = 0.85f + unit(h2 * 7u) * 0.35f;
-            it.kind = uint8_t(kind);
-            items_.push_back(it);
-          }
-          break;
-        }
-        above = b;
-      }
+      const int dx = x - px, dz = z - pz;
+      if (dx * dx + dz * dz > r2)
+        continue; // round area: the fade band is the same in every direction
+      const Column &c = column(world, x, z, py);
+      if (c.has)
+        items_.push_back(c.item);
     }
+}
+
+void Decor::setDensity(float d) {
+  d = std::clamp(d, 0.0f, 4.0f);
+  if (d == density_)
+    return;
+  density_ = d;
+  cache_.clear(); // placement depends on the density
+  timer_ = 1e9f;
 }
 
 void Decor::draw(atm::render::Renderer &renderer) const {
@@ -184,12 +224,19 @@ void Decor::draw(atm::render::Renderer &renderer) const {
     const auto mesh = meshes_[it.kind];
     if (mesh == atm::render::kInvalidModelMesh)
       continue;
+    // Grow in / shrink out near the edge of the area instead of popping.
+    const double dx = it.pos.x - player_.x, dz = it.pos.z - player_.z;
+    const float dist = float(std::sqrt(dx * dx + dz * dz));
+    const float fade = 1.0f - std::clamp((dist - (float(kRadius) - kFadeBand)) / kFadeBand, 0.0f, 1.0f);
+    if (fade <= 0.02f)
+      continue;
     atm::render::ModelInstance inst;
     inst.mesh = mesh;
     inst.origin = it.pos;
     inst.rotation = glm::angleAxis(it.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
     inst.pivot = pivots_[it.kind];
-    inst.voxelScale = kVoxel * it.scale;
+    inst.voxelScale = kVoxel * it.scale * fade;
+    inst.flags = atm::render::kInstanceNoRim | atm::render::kInstanceNoShadow;
     renderer.drawModel(inst);
   }
 }

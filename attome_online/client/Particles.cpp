@@ -62,6 +62,22 @@ void Particles::slashArc(const glm::dvec3 &center, float yaw, uint32_t tint, flo
   }
 }
 
+void Particles::trail(const glm::dvec3 &at, uint32_t tint, float size) {
+  if (p_.size() > 6000) return;
+  P p;
+  p.pos = at + glm::dvec3(rnds() * 0.04, rnds() * 0.04, rnds() * 0.04);
+  p.vel = glm::vec3(rnds(), rnds() + 0.3f, rnds()) * 0.35f;
+  p.axis = glm::normalize(glm::vec3(rnds(), rnds(), rnds()) + glm::vec3(0.0f, 0.01f, 0.0f));
+  p.spin = rnds() * 8.0f;
+  p.life = 0.28f + rnd() * 0.12f;
+  p.size = size * (0.7f + 0.5f * rnd());
+  p.gravity = 0.0f;
+  p.drag = 3.0f;
+  p.tint = tint;
+  p.block = vb::Lamp;
+  p_.push_back(p);
+}
+
 void Particles::ambient(const glm::dvec3 &around, float dt) {
   // Keep ~48 motes alive around the player; spawn a few per second.
   static float acc = 0.0f;
@@ -117,6 +133,7 @@ void Particles::draw(atm::render::Renderer &renderer,
     inst.pivot = {2.0f, 2.0f, 2.0f};
     inst.voxelScale = std::max(0.0f, p.size * k) / 4.0f; // item cubes are 4 voxels wide
     inst.tint = p.tint;
+    inst.flags = atm::render::kInstanceNoRim | atm::render::kInstanceNoShadow;
     renderer.drawModel(inst);
   }
 }

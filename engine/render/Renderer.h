@@ -51,6 +51,27 @@ struct Environment {
   glm::vec3 fogColor{0.62f, 0.78f, 1.0f};
   float timeOfDay = 0.35f;                  // 0..1, drives sky tint
   float ambient = 0.35f;
+  bool underwater = false;                  // camera inside water: blue fog, sky tint
+
+  // Look tuning (the game's graphics panel). Defaults = the shipped look.
+  float exposure = 0.8f;        // tonemap input scale
+  float contrast = 0.3f;        // S-curve amount after tonemapping
+  float vibrance = 0.12f;       // boosts muted colours
+  float bloom = 0.6f;           // bloom add strength
+  float vignette = 0.2f;        // corner darkening (0 = off)
+  float sunStrength = 1.05f;    // direct sunlight
+  float hazeStrength = 0.3f;    // max distance haze
+  float hazeDensity = 0.003f;   // haze per block
+  float shadowSoftness = 1.0f;  // penumbra width multiplier
+  float aoDarkness = 0.8f;      // voxel corner darkening (0 = off)
+  float tileBevel = 1.0f;       // block edge bevel strength
+  float tileGrain = 1.0f;       // sub-voxel grain strength
+  float blockVariation = 1.0f;  // per-block shade variation
+  float colorPatches = 1.0f;    // broad painterly colour patches
+  float waterReflection = 0.6f; // sky reflection on water
+  float foliageGlow = 0.45f;    // sun shining through leaves
+  float rimLight = 0.55f;       // character rim light
+  bool contactShadows = false;  // true: contact-hardening (PCSS), false: simple soft shadows
 };
 
 // One entry per block id: flat colours (Trove style) + emissive strength.
@@ -66,6 +87,9 @@ struct Material {
 inline constexpr uint32_t kMaterialWater = 1u;   // animated waves, reflections
 inline constexpr uint32_t kMaterialFoliage = 2u; // sways in the wind
 inline constexpr uint32_t kMaterialGrassTop = 4u; // top colour drips over the sides
+// ModelInstance::flags
+inline constexpr uint32_t kInstanceNoRim = 1u;     // no rim light (props, decoration, particles)
+inline constexpr uint32_t kInstanceNoShadow = 2u;  // not drawn into the shadow map
 
 // Material ids >= this are reserved for setModelMaterials().
 inline constexpr uint32_t kModelMaterialBase = 16384;
@@ -85,6 +109,7 @@ struct ModelInstance {
   float voxelScale = 1.0f / 12;  // world blocks per model voxel
   uint32_t tint = 0xFFFFFFFF;    // multiplied colour, bytes R,G,B,A (packRGBA)
   uint16_t paletteOffset = 0;    // material index offset (dye palettes)
+  uint32_t flags = 0;            // kInstanceNoRim | kInstanceNoShadow
 };
 
 struct FrameStats {
@@ -133,6 +158,9 @@ public:
   bool beginFrame(const Camera &camera, const Environment &env);
   void drawModel(const ModelInstance &instance);       // any number per frame
   void drawBlockHighlight(voxel::BlockPos block);      // targeted-block outline
+  // Debug wireframe box (world space, drawn on top of everything). Colour is
+  // bytes R,G,B,A. Queued for this frame only.
+  void drawDebugBox(const glm::dvec3 &min, const glm::dvec3 &max, uint32_t rgba);
   // 2D overlay: ImGui is rendered by the renderer; call ImGui::NewFrame()
   // after beginFrame() and build UI before endFrame().
   void endFrame();

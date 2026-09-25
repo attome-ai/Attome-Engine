@@ -9,7 +9,8 @@ struct ModelInstanceGpu {
   mat4 model;          // part voxel space -> camera-relative blocks
   uint tint;
   uint paletteOffset;
-  uint pad0, pad1;
+  uint flags;         // kInstanceNoRim = 1, kInstanceNoShadow = 2
+  uint pad1;
 };
 layout(std430, set = 0, binding = 7) readonly buffer ModelFaces { uvec2 modelFaces[]; };
 layout(std430, set = 0, binding = 8) readonly buffer Instances { ModelInstanceGpu instances[]; };
@@ -46,7 +47,7 @@ void main() {
   vViewPos = rel;
   vLocal = local;
   vOrigin = ivec3(0);
-  vFlags = 0u;
+  vFlags = (inst.flags & 1u) != 0u ? MODEL_NO_RIM : 0u;
   vTopColor = vec3(0.0);
   gl_Position = frame.viewProj * vec4(rel, 1.0);
 }

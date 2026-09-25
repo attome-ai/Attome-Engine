@@ -65,5 +65,6 @@ void main() {
     col = mix(col, cloudCol, cover * fade * 0.92);
   }
 
+  if (frame.fogParams.w > 0.5) col = vec3(0.03, 0.17, 0.27) * (0.6 + 0.4 * max(dir.y, 0.0)); // underwater
   outColor = vec4(col, 1.0);
 }

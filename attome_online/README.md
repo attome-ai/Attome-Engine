@@ -46,7 +46,7 @@ Useful options: `-DATTOME_RUNTIME_GRID=ON` (runtime-sized 2D grid),
 |---|---|
 | W A S D | Move |
 | Space | Jump · double jump · hold in the air to glide |
-| Left Shift | Dash |
+| Q | Dash |
 | Left Ctrl | Sprint |
 | Mouse | Look · wheel = zoom (Trove style) |
 | Left mouse | Attack (weapon) · mine (pickaxe / hands) |

@@ -422,7 +422,7 @@ void ServerState::meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skil
   const glm::dvec3 aim(dir);
   // Slightly generous reach and a 100 degree cone: the third-person camera
   // aims from over the shoulder, not from the eye.
-  constexpr double kRange = 3.2, kMonsterRadius = 0.7, kCosHalfCone = 0.64278761;
+  constexpr double kRange = 3.2, kCosHalfCone = 0.64278761;
   // Lag compensation: judge the hit against where the player saw monsters
   // (their interpolated view), at most ~300 ms back.
   const Tick rewind = viewTick < tick ? std::min<Tick>(tick - viewTick, 9) : 0;
@@ -430,9 +430,14 @@ void ServerState::meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skil
   candidates.clear();
   for (auto &[id, m] : entities) {
     if (m.kind != EntityKind::Monster || m.dead) continue;
-    const glm::dvec3 d = (historicPos(m, seen) + glm::dvec3(0.0, 0.8, 0.0)) - eye;
+    // Nearest point of the monster's hit capsule (big golems are reachable
+    // at their full size, small slimes only where they are).
+    const glm::dvec3 feet = historicPos(m, seen);
+    double axisY = 0.0;
+    monsterHitDistance2(m.type, feet.x, feet.y, feet.z, eye.x, eye.y, eye.z, &axisY);
+    const glm::dvec3 d = glm::dvec3(feet.x, axisY, feet.z) - eye;
     const double dist = glm::length(d);
-    if (dist > kRange + kMonsterRadius) continue;
+    if (dist > kRange + monsterHitShape(m.type).radius) continue;
     if (dist > 0.5 && glm::dot(d / dist, aim) < kCosHalfCone) continue;
     candidates.emplace_back(float(dist), id);
   }
@@ -478,7 +483,7 @@ void ServerState::rangedAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Wea
   p.move.pos = eye + glm::dvec3(dir) * 0.6;
   p.move.vel = dir * (bow ? 40.0f : 28.0f);
   p.move.yaw = std::atan2(-dir.x, -dir.z);
-  p.gravity = bow ? 18.0f : 0.0f;
+  p.gravity = 0.0f; // straight shots (Trove-style), no Minecraft arc
   p.expireTick = tick + Tick(kSimHz * 3);
   p.damage = dmg;
   p.critical = crit;
@@ -711,9 +716,10 @@ void ServerState::simulateProjectiles() {
       p.move.pos = next;
       for (auto &[mid, m] : entities) {
         if (m.kind != EntityKind::Monster || m.dead) continue;
-        const glm::dvec3 c = m.move.pos + glm::dvec3(0.0, 0.8, 0.0);
-        const glm::dvec3 diff = c - p.move.pos;
-        if (glm::dot(diff, diff) > 0.9 * 0.9) continue;
+        const double r = monsterHitShape(m.type).radius;
+        if (monsterHitDistance2(m.type, m.move.pos.x, m.move.pos.y, m.move.pos.z, p.move.pos.x, p.move.pos.y,
+                                p.move.pos.z) > r * r)
+          continue;
         Entity *oe = findEntity(p.owner);
         if (Player *op = oe ? playerOf(*oe) : nullptr) damageMonster(m, *op, p.damage, p.critical, p.style);
         p.remove = true; // PvP is off in the demo: players are not hit

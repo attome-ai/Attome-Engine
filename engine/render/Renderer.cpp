@@ -79,6 +79,14 @@ void Renderer::drawBlockHighlight(voxel::BlockPos block) {
   impl_->highlightBlock = block;
 }
 
+void Renderer::drawDebugBox(const glm::dvec3 &min, const glm::dvec3 &max, uint32_t rgba) {
+  if (impl_->debugBoxes.size() >= 4096) return;
+  const glm::vec4 c(float(rgba & 0xFF) / 255.0f, float((rgba >> 8) & 0xFF) / 255.0f,
+                    float((rgba >> 16) & 0xFF) / 255.0f, 1.0f);
+  // Colours are sRGB-ish bytes; the HDR target is linear.
+  impl_->debugBoxes.push_back({min, max, glm::vec4(glm::pow(glm::vec3(c), glm::vec3(2.2f)) * 1.5f, 1.0f)});
+}
+
 void Renderer::endFrame() { impl_->endFrame(); }
 
 const FrameStats &Renderer::stats() const { return impl_->stats; }
@@ -176,7 +184,7 @@ void Renderer::Impl::shutdown() {
 
   for (VkPipeline *p : {&opaquePipeline, &translucentPipeline, &modelPipeline, &skyPipeline,
                         &highlightPipeline, &cullPipeline, &bloomPipeline, &tonemapPipeline,
-                        &shadowPipeline, &shadowModelPipeline, &ssaoPipeline}) {
+                        &shadowPipeline, &shadowModelPipeline, &ssaoPipeline, &debugLinePipeline}) {
     if (*p) vkDestroyPipeline(d, *p, nullptr);
     *p = VK_NULL_HANDLE;
   }
@@ -404,9 +412,10 @@ bool Renderer::Impl::createDescriptors() {
   VkDescriptorSetLayoutBinding sb[gpu::kSceneBindingCount]{};
   for (uint32_t i = 0; i < gpu::kSceneBindingCount; ++i) {
     sb[i].binding = i;
-    sb[i].descriptorType = i == gpu::kBindFrame       ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-                           : i == gpu::kBindShadowMap ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                                      : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    const bool image = i == gpu::kBindShadowMap || i == gpu::kBindShadowDepth;
+    sb[i].descriptorType = i == gpu::kBindFrame ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                           : image              ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                                : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     sb[i].descriptorCount = 1;
     sb[i].stageFlags = VK_SHADER_STAGE_ALL;
   }
@@ -447,8 +456,8 @@ bool Renderer::Impl::createDescriptors() {
 
   const VkDescriptorPoolSize sizes[] = {
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxFramesInFlight},
-      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxFramesInFlight * (gpu::kSceneBindingCount - 2)},
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kMaxBloomMips + 4 + 1 + kMaxFramesInFlight},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxFramesInFlight * (gpu::kSceneBindingCount - 3)},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kMaxBloomMips + 4 + 1 + 2 * kMaxFramesInFlight},
       {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * kMaxBloomMips + 1},
   };
   VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -503,11 +512,13 @@ bool Renderer::Impl::createDescriptors() {
     const VkBuffer bufs[gpu::kSceneBindingCount] = {
         f.ubo.buffer,     faceArena.buffer,  chunkMeta.buffer,
         materials.buffer, f.visible.buffer,  f.draws.buffer,
-        f.drawCount.buffer, modelFaces.buffer, f.instances.buffer, VK_NULL_HANDLE};
+        f.drawCount.buffer, modelFaces.buffer, f.instances.buffer, VK_NULL_HANDLE, VK_NULL_HANDLE};
     VkDescriptorBufferInfo infos[gpu::kSceneBindingCount]{};
     VkWriteDescriptorSet writes[gpu::kSceneBindingCount]{};
     const VkDescriptorImageInfo shadowInfo{shadowSampler, shadowMap.view,
                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo shadowDepthInfo{nearestSampler, shadowMap.view,
+                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     for (uint32_t b = 0; b < gpu::kSceneBindingCount; ++b) {
       writes[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       writes[b].dstSet = f.sceneSet;
@@ -516,6 +527,8 @@ bool Renderer::Impl::createDescriptors() {
       writes[b].descriptorType = sb[b].descriptorType;
       if (b == gpu::kBindShadowMap) {
         writes[b].pImageInfo = &shadowInfo;
+      } else if (b == gpu::kBindShadowDepth) {
+        writes[b].pImageInfo = &shadowDepthInfo;
       } else {
         infos[b] = {bufs[b], 0, VK_WHOLE_SIZE};
         writes[b].pBufferInfo = &infos[b];
@@ -598,6 +611,9 @@ bool Renderer::Impl::createPipelines() {
     h.depthWrite = false;
     h.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
     highlightPipeline = vk::createGraphicsPipeline(d, pipelineCache, h);
+    vk::GraphicsPipelineDesc dbg = h; // hitbox view: visible through walls
+    dbg.depthTest = false;
+    debugLinePipeline = vk::createGraphicsPipeline(d, pipelineCache, dbg);
 
     // Shadow map: depth only, standard depth (0 = nearest the sun), both
     // face sides (voxel meshes are closed), slope-scaled bias against acne.

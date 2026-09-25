@@ -158,6 +158,7 @@ struct Renderer::Impl {
   VkPipeline modelPipeline = VK_NULL_HANDLE;
   VkPipeline skyPipeline = VK_NULL_HANDLE;
   VkPipeline highlightPipeline = VK_NULL_HANDLE;
+  VkPipeline debugLinePipeline = VK_NULL_HANDLE; // highlight shader, no depth test
   VkPipeline cullPipeline = VK_NULL_HANDLE;
   VkPipeline bloomPipeline = VK_NULL_HANDLE;
   VkPipeline tonemapPipeline = VK_NULL_HANDLE;
@@ -201,6 +202,8 @@ struct Renderer::Impl {
   std::vector<VkBufferCopy> arenaCopies, modelCopies, metaCopies, materialCopies;
   bool highlightValid = false;
   voxel::BlockPos highlightBlock;
+  struct DebugBox { glm::dvec3 mn, mx; glm::vec4 color; };
+  std::vector<DebugBox> debugBoxes;   // this frame (hitbox view)
   Camera camera;
   Environment env;
   glm::mat4 viewProj{1.0f};

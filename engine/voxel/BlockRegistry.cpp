@@ -29,7 +29,7 @@ const DefaultBlock kDefaults[blocks::Count] = {
     {"air", BlockRender::None, false, false, 0, 0, 0, 0, 0.0f, 0, 1, 0.0f},
     {"stone", BlockRender::Opaque, true, false, C(140, 146, 158), C(128, 134, 146), C(112, 118, 130), 0, 1.5f, 1, 1, 1.0f},
     {"dirt", BlockRender::Opaque, true, false, C(150, 100, 62), C(140, 92, 56), C(124, 80, 48), 0, 0.5f, 3, 1, 0.0f},
-    {"grass", BlockRender::Opaque, true, false, C(112, 194, 58), C(140, 110, 66), C(140, 92, 56), 0, 0.6f, 3, 1, 0.0f},
+    {"grass", BlockRender::Opaque, true, false, C(106, 176, 64), C(140, 110, 66), C(140, 92, 56), 0, 0.6f, 3, 1, 0.0f},
     {"sand", BlockRender::Opaque, true, false, C(234, 200, 118), C(220, 184, 104), C(204, 168, 94), 0, 0.5f, 3, 1, 0.0f},
     {"water", BlockRender::Translucent, false, true, C(56, 140, 236, 160), C(48, 128, 224, 160), C(40, 112, 208, 160), 0, 100.0f, 0, 1, 0.0f},
     {"oak_log", BlockRender::Opaque, true, false, C(190, 150, 96), C(116, 82, 50), C(190, 150, 96), 0, 2.0f, 2, 1, 0.0f},

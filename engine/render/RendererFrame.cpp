@@ -77,6 +77,7 @@ bool Renderer::Impl::beginFrame(const Camera &cam, const Environment &environmen
   env = environment;
   instances.clear();
   highlightValid = false;
+  debugBoxes.clear();
   imgui.newFrame();
   frameActive = true;
   return true;
@@ -109,7 +110,7 @@ void Renderer::Impl::buildFrameUniforms(FrameData &f) {
   const float day = glm::smoothstep(-0.1f, 0.25f, std::sin(6.2831853f * (t - 0.25f)));
   const float dayTint = glm::mix(0.06f, 1.0f, day);
   const float sunI = glm::smoothstep(-0.05f, 0.2f, sun.y) * 1.1f;
-  const glm::vec3 sunColor = glm::mix(glm::vec3(1.0f, 0.5f, 0.25f), glm::vec3(1.0f, 0.95f, 0.86f),
+  const glm::vec3 sunColor = glm::mix(glm::vec3(1.0f, 0.5f, 0.25f), glm::vec3(1.0f, 0.91f, 0.76f), // warm sun
                                       glm::smoothstep(0.0f, 0.35f, sun.y));
   const float fogEnd = std::max(config.viewDistanceBlocks * 0.95f, 16.0f);
   const float fogStart = fogEnd * 0.6f;
@@ -149,11 +150,14 @@ void Renderer::Impl::buildFrameUniforms(FrameData &f) {
   u.sunDir = glm::vec4(sun, env.ambient * glm::mix(0.25f, 1.0f, day));
   u.skyColor = glm::vec4(srgbToLinear(env.skyColor) * dayTint, t);
   u.fogColor = glm::vec4(srgbToLinear(env.fogColor) * dayTint, fogStart);
-  u.fogParams = glm::vec4(fogEnd, 1.0f / (fogEnd - fogStart), sunI, 0.0f);
+  u.fogParams = glm::vec4(fogEnd, 1.0f / (fogEnd - fogStart), sunI, env.underwater ? 1.0f : 0.0f);
   u.sunColor = glm::vec4(sunColor, 0.0f);
   u.counts = glm::uvec4(visibleCount, kMaxDraws, 0u, 0u);
   u.lightViewProj = lightViewProj;
-  u.shadowParams = glm::vec4(float(shadowTexel), 1.0f, 0.0f, 0.0f);
+  u.shadowParams = glm::vec4(float(shadowTexel), 1.0f, 2.0f * kShadowDepthRange, env.contactShadows ? 1.0f : 0.0f);
+  u.style0 = glm::vec4(env.sunStrength, env.hazeStrength, env.hazeDensity, env.shadowSoftness);
+  u.style1 = glm::vec4(env.aoDarkness, env.tileBevel, env.tileGrain, env.blockVariation);
+  u.style2 = glm::vec4(env.colorPatches, env.waterReflection, env.foliageGlow, env.rimLight);
   std::memcpy(f.ubo.mapped, &u, sizeof(u));
   vk::flushBuffer(ctx.allocator, f.ubo, 0, sizeof(u));
   fogColorLinear = glm::vec3(u.fogColor);
@@ -277,7 +281,8 @@ uint32_t Renderer::Impl::writeModelInstances(FrameData &f) {
     g.model = glm::mat4(M);
     g.tint = in.tint;
     g.paletteOffset = in.paletteOffset;
-    g.pad0 = g.pad1 = 0;
+    g.pad0 = in.flags; // kInstance* flags
+    g.pad1 = 0;
     if (pi.mesh != lastMesh) {
       modelDraws.push_back({m.base, m.units, n, 0});
       lastMesh = pi.mesh;
@@ -515,6 +520,20 @@ void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32
                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(hp), &hp);
     vkCmdDraw(cmd, 24, 1, 0, 0);
   }
+  // Debug boxes (hitbox view), on top of everything.
+  if (!debugBoxes.empty() && debugLinePipeline) {
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, debugLinePipeline);
+    const glm::dvec3 cam = glm::dvec3(camBlock) + glm::dvec3(camFrac);
+    for (const DebugBox &b : debugBoxes) {
+      gpu::HighlightPush hp{};
+      hp.minCorner = glm::vec4(glm::vec3(b.mn - cam), 0.0f);
+      hp.maxCorner = glm::vec4(glm::vec3(b.mx - cam), 0.0f);
+      hp.color = b.color;
+      vkCmdPushConstants(cmd, scenePipelineLayout,
+                         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(hp), &hp);
+      vkCmdDraw(cmd, 24, 1, 0, 0);
+    }
+  }
   vkCmdEndRendering(cmd);
 
   vk::imageBarrier(cmd, hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -576,8 +595,11 @@ void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, tonemapPipelineLayout, 0, 1,
                           &tonemapSet, 0, nullptr);
   gpu::TonemapPush tp{};
-  tp.exposure = 0.8f; // keeps bright sand / snow from washing out to white
-  tp.bloomStrength = 0.6f;
+  tp.exposure = env.exposure;
+  tp.contrast = env.contrast;
+  tp.vibrance = env.vibrance;
+  tp.vignette = env.vignette;
+  tp.bloomStrength = env.bloom;
   tp.bloomEnabled = (config.bloom && bloomMips > 0) ? 1u : 0u;
   tp.srgbOutput = swapchain.srgb() ? 1u : 0u;
   tp.aoStrength = kSsaoEnabled ? 0.85f : 0.0f;

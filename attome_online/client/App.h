@@ -7,6 +7,7 @@
 #include "Prediction.h"
 #include "Particles.h"
 #include "Decor.h"
+#include "LookSettings.h"
 
 #include "shared/GameTypes.h"
 #include "shared/Protocol.h"
@@ -65,6 +66,7 @@ struct RemoteEntity {
   float hitFlash = 0.0f;            // seconds of red tint left
   float lastSeenTick = 0.0f;
   float stepDistance = 0.0f;        // footstep sounds
+  glm::dvec3 trailFrom{1e30};       // projectiles: last trail spark position
 };
 
 struct FloatingText {
@@ -108,11 +110,16 @@ private:
   void updateEntities(float dt);
   void render(float alpha, float dt);
   void drawHud(float dt);
+  void drawLookPanel();                   // F10 graphics tuning (Hud.cpp)
 
   // Helpers
   MoveInput buildInput();
   glm::dvec3 eyePosition(float alpha) const;
   glm::vec3 aimDirection() const;
+  // Direction from `from` to what the crosshair points at (first block or
+  // monster along the camera ray, else a far point). Corrects the
+  // over-the-shoulder camera offset so shots land on the crosshair.
+  glm::vec3 crosshairAim(const glm::dvec3 &from) const;
   bool worldToScreen(const glm::dvec3 &p, float &sx, float &sy) const;
   void uploadMaterials();
   void createModelMeshes();
@@ -217,6 +224,10 @@ private:
   struct Banner { std::string text; float age; };
   std::vector<Banner> banners_;
   bool showInventory_ = false, showSkills_ = false, showDebug_ = false;
+  bool showLook_ = false;
+  bool showHitboxes_ = false;             // F8: collision / hit volumes
+  LookSettings look_;                    // graphics panel values (config/graphics.json)
+  std::string lookStatus_;               // last save / load message
   bool chatOpen_ = false;
   float chatIdle_ = 0.0f;                // seconds since the last chat line (fade out)
   float hpTrail_ = 1.0f;                 // lagging health fraction (damage trail)

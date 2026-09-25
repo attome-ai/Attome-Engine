@@ -574,18 +574,22 @@ void buildWeapons(ModelLibrary &lib) {
   socketPiece(lib, "crystal_sword", EquipSlot::MainHand, Socket::MainHand,
               makeSword(lib, "crystal_sword", rgba(110, 230, 255), rgba(230, 250, 255),
                         rgba(250, 200, 60), rgba(90, 40, 120), true), kSword);
-  { // Bow: vertical arc, string toward the player (+Z).
-    Painter p("bow", 3, 21, 6, {1.5f, 10.5f, 1.5f});
-    const int wood = p.c(rgba(150, 96, 50)), woodD = p.c(rgba(108, 66, 34)),
-              wrap = p.c(rgba(210, 60, 50)), str = p.c(rgba(240, 240, 230));
-    for (int y = 0; y < 21; ++y) {
-      const int dy = y < 10 ? 10 - y : y - 10;
-      const int z = dy < 4 ? 1 : (dy < 7 ? 2 : (dy < 9 ? 3 : 4)); // limbs curve back
-      p.set(1, y, z, (dy % 3 == 0) ? woodD : wood);
+  { // Bow: held in the off (left) hand like an archer at rest. The bow's
+    // plane runs alongside the body: limbs up/down, curve bulging forward
+    // (-Z, the way the character faces), string toward the back (+Z), so it
+    // never cuts through the torso. 15 voxels; chunky 2x2 limbs, gold tips,
+    // red grip where the fist closes, thin muted string.
+    Painter p("bow", 2, 15, 6, {1.0f, 7.5f, 1.0f});
+    const int wood = p.c(rgba(156, 100, 52)), woodD = p.c(rgba(112, 70, 36)),
+              wrap = p.c(rgba(200, 56, 48)), str = p.c(rgba(150, 136, 112)), tip = p.c(rgba(236, 196, 90));
+    for (int y = 0; y < 15; ++y) {
+      const int dy = y < 7 ? 7 - y : y - 7;
+      const int z = dy < 3 ? 0 : (dy < 5 ? 1 : (dy < 7 ? 2 : 3)); // grip farthest forward
+      p.box(0, y, z, 2, y + 1, z + 2, dy == 7 ? tip : ((dy % 3 == 0) ? woodD : wood));
     }
-    p.box(1, 9, 0, 2, 12, 2, wrap);                          // grip wrap
-    p.box(1, 1, 5, 2, 20, 6, str);                           // string
-    socketPiece(lib, "bow", EquipSlot::MainHand, Socket::MainHand, lib.addPart(std::move(p.part)), kBow);
+    p.box(0, 6, 0, 2, 9, 2, wrap);                           // grip, where the fist closes
+    p.box(0, 1, 5, 1, 14, 6, str);                           // string: 1x1, tip to tip
+    socketPiece(lib, "bow", EquipSlot::MainHand, Socket::OffHand, lib.addPart(std::move(p.part)), kBow);
   }
   { // Staff: long shaft, gold cage, glowing orb.
     Painter p("staff", 5, 28, 5, {2.5f, 9.5f, 2.5f});

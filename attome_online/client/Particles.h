@@ -34,6 +34,8 @@ public:
   // Glowing sweep in front of a swing: an arc of sparks appearing left to
   // right over ~0.12 s around `center` facing `yaw` (0 = -Z).
   void slashArc(const glm::dvec3 &center, float yaw, uint32_t tint, float radius = 1.7f);
+  // Glowing trail puff left behind a projectile (one spark, short life).
+  void trail(const glm::dvec3 &at, uint32_t tint, float size);
   // Floating firefly motes around the player (call every frame).
   void ambient(const glm::dvec3 &around, float dt);
   void update(float dt);

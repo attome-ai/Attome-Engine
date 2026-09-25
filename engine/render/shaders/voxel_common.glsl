@@ -14,11 +14,14 @@ layout(std140, set = 0, binding = 0) uniform FrameUBO {
   vec4 sunDir;        // xyz, w = ambient
   vec4 skyColor;      // rgb, w = timeOfDay
   vec4 fogColor;      // rgb, w = fog start
-  vec4 fogParams;     // x = fog end, y = 1/(end-start), z = sun intensity
+  vec4 fogParams;     // x = fog end, y = 1/(end-start), z = sun intensity, w = underwater
   vec4 sunColor;
   uvec4 counts;       // x = visible chunks, y = max draws
   mat4 lightViewProj; // camera-relative -> shadow map clip space
   vec4 shadowParams;  // x = texel size (blocks), y = strength (0 = off)
+  vec4 style0;        // sun strength, haze strength, haze density, shadow softness
+  vec4 style1;        // AO darkness, bevel, grain, block variation
+  vec4 style2;        // colour patches, water reflection, foliage glow, rim light
 } frame;
 
 struct ChunkGpu {
@@ -112,6 +115,7 @@ vec3 srgbToLinear(vec3 c) { return pow(c, vec3(2.2)); }
 #define MATERIAL_WATER 1u
 #define MATERIAL_FOLIAGE 2u
 #define MATERIAL_GRASSTOP 4u
+#define MODEL_NO_RIM 16u     // set by model.vert from the instance flags
 
 // Wind offset for foliage vertices. A function of the world position only,
 // so vertices shared by neighbouring faces move together (no cracks).

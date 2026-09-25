@@ -26,10 +26,11 @@ enum SceneBinding : uint32_t {
   kBindModelFaces = 7,  // SSBO   uvec2 modelFaces[]
   kBindInstances = 8,   // SSBO   ModelInstanceGpu[] (per frame)
   kBindShadowMap = 9,   // sampler2DShadow  sun shadow map (depth compare)
-  kSceneBindingCount = 10
+  kBindShadowDepth = 10, // sampler2D  same map, raw depth (PCSS blocker search)
+  kSceneBindingCount = 11
 };
 
-struct FrameUniforms {           // std140, 336 bytes
+struct FrameUniforms {           // std140, 384 bytes
   glm::mat4 viewProj;            // camera-relative (no translation)
   glm::mat4 invViewProj;
   glm::ivec4 camBlock;           // floor(camera position)
@@ -41,9 +42,12 @@ struct FrameUniforms {           // std140, 336 bytes
   glm::vec4 sunColor;            // rgb, w = unused
   glm::uvec4 counts;             // x = visible chunks, y = max draws, z = unused, w = unused
   glm::mat4 lightViewProj;       // camera-relative position -> shadow map clip space
-  glm::vec4 shadowParams;        // x = texel size (blocks), y = strength (0 = off), zw = unused
+  glm::vec4 shadowParams;        // x = texel size (blocks), y = strength (0 = off), z = depth range (blocks), w = unused
+  glm::vec4 style0;              // x = sun strength, y = haze strength, z = haze density, w = shadow softness
+  glm::vec4 style1;              // x = AO darkness, y = bevel, z = grain, w = block variation
+  glm::vec4 style2;              // x = colour patches, y = water reflection, z = foliage glow, w = rim light
 };
-static_assert(sizeof(FrameUniforms) == 336);
+static_assert(sizeof(FrameUniforms) == 384);
 static_assert(offsetof(FrameUniforms, lightViewProj) == 256);
 static_assert(offsetof(FrameUniforms, camBlock) == 128);
 static_assert(offsetof(FrameUniforms, counts) == 240);
@@ -119,8 +123,12 @@ struct TonemapPush {
   float shaftStrength;           // sun shafts, 0 = off
   float aoStrength;              // SSAO, 0 = off
   glm::vec4 sunColor;            // linear rgb
+  float contrast;                // S-curve amount
+  float vibrance;                // muted-colour boost
+  float vignette;                // corner darkening
+  float pad0;
 };
-static_assert(sizeof(TonemapPush) == 48);
+static_assert(sizeof(TonemapPush) == 64);
 
 struct SsaoPush {
   glm::mat4 viewProj;            // camera-relative

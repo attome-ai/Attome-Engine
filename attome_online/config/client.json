@@ -25,13 +25,15 @@
     "bindings": {
       "forward": ["W"], "back": ["S"], "left": ["A"], "right": ["D"],
       "jump": ["Space", "pad:a"],
-      "dash": ["Left Shift", "pad:b"],
+      "dash": ["Q", "pad:b"],
       "sprint": ["Left Ctrl"],
       "primary": ["mouse:left", "pad:rightshoulder"],
       "secondary": ["mouse:right", "pad:leftshoulder"],
       "inventory": ["Tab", "I"],
       "skills": ["K"],
       "debug": ["F3", "F11"],
+      "graphics": ["F10"],
+      "hitboxes": ["F8"],
       "chat": ["Return"],
       "screenshot": ["F2"]
     }
