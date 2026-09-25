@@ -1,4 +1,4 @@
-// Per-frame work: camera, culling, instance lists, command recording, submit
+﻿// Per-frame work: camera, culling, instance lists, command recording, submit
 // and present.
 
 #include "RendererImpl.h"
@@ -530,7 +530,7 @@ void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32
                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
   // --- SSAO (half res) --------------------------------------------------------------
-  {
+  if (kSsaoEnabled) {
     // The previous frame's tonemap read the AO image: finish before overwriting.
     vk::memoryBarrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_NONE,
                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_NONE);
@@ -576,16 +576,16 @@ void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, tonemapPipelineLayout, 0, 1,
                           &tonemapSet, 0, nullptr);
   gpu::TonemapPush tp{};
-  tp.exposure = 1.0f;
+  tp.exposure = 0.8f; // keeps bright sand / snow from washing out to white
   tp.bloomStrength = 0.6f;
   tp.bloomEnabled = (config.bloom && bloomMips > 0) ? 1u : 0u;
   tp.srgbOutput = swapchain.srgb() ? 1u : 0u;
-  tp.aoStrength = 0.85f;
+  tp.aoStrength = kSsaoEnabled ? 0.85f : 0.0f;
   // Sun shafts: project the sun direction; fade out as it leaves the screen,
   // goes behind the camera, or sets.
   {
     const glm::vec4 c = viewProj * glm::vec4(sunDirWorld, 0.0f);
-    if (c.w > 1e-4f) {
+    if (kSunShaftsEnabled && c.w > 1e-4f) {
       tp.sunUv = glm::vec2(c.x / c.w, c.y / c.w) * 0.5f + 0.5f;
       const glm::vec2 outside = glm::max(glm::abs(tp.sunUv - 0.5f) - 0.5f, glm::vec2(0.0f));
       const float onScreen = 1.0f - glm::clamp(glm::length(outside) / 0.35f, 0.0f, 1.0f);

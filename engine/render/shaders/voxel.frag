@@ -15,6 +15,7 @@ layout(location = 4) in vec3 vViewPos;
 layout(location = 5) in vec3 vLocal;
 layout(location = 6) flat in ivec3 vOrigin;
 layout(location = 7) flat in uint vFlags;
+layout(location = 8) flat in vec3 vTopColor;
 
 layout(location = 0) out vec4 outColor;
 
@@ -70,20 +71,64 @@ void main() {
   vec3 n = normalize(vNormal);
   bool isChunk = vLight.w > 0.5;
 
-  if (isChunk) {
-    // Painterly colour patches across the world (lighter / warmer and
-    // darker / cooler areas) instead of a noisy per-block checkerboard.
+  float tileShade = 1.0;
+  if (isChunk && (vFlags & MATERIAL_WATER) == 0u) {
+    // Trove-style crafted blocks:
+    //  1. broad painterly patches (sunny / shaded areas across the land),
+    //  2. every block its own shade, so individual tiles read,
+    //  3. fine sub-voxel grain on each face (4x4 "pixels" per block),
+    //  4. soft bevel: block edges darken, the upper-left inner edge catches light.
+    // Detail fades out once a block is only a few pixels on screen.
     vec3 wp = vec3(vOrigin) + vLocal;
-    float patchN = valueNoise(wp * (1.0 / 14.0)) * 0.65 + valueNoise(wp * (1.0 / 5.0)) * 0.35;
+    float patchN = valueNoise(wp * (1.0 / 16.0)) * 0.65 + valueNoise(wp * (1.0 / 6.0)) * 0.35;
     float s = patchN - 0.5;
-    base *= 1.0 + s * 0.28;
-    base = mix(base, base * vec3(1.06, 1.03, 0.9), clamp(s * 1.5, 0.0, 1.0)); // sunny patches warmer
-    // Faint per-block variation (+-2%) so flat areas are not perfectly uniform.
+    base *= 1.0 + s * 0.22;
+    base = mix(base, base * vec3(1.05, 1.02, 0.9), clamp(s * 1.5, 0.0, 1.0));
+
     ivec3 cell = vOrigin + ivec3(floor(vLocal - n * 0.5));
-    base *= 1.0 + (float(hash3(uvec3(cell)) & 255u) * (1.0 / 255.0) - 0.5) * 0.04;
+    uint h = hash3(uvec3(cell));
+    float blockVar = (float(h & 255u) / 255.0 - 0.5) * 0.07;
+
+    vec2 uv = abs(n.x) > 0.5 ? wp.zy : (abs(n.y) > 0.5 ? wp.xz : wp.xy);
+    vec2 f = fract(uv);
+    vec2 fw = fwidth(uv);
+    float px = max(fw.x, fw.y);                        // blocks per pixel
+    float detail = 1.0 - smoothstep(0.08, 0.3, px);    // fade in the distance
+
+    // Grass overhang (Trove signature): on the sides of grass blocks the top
+    // colour drips down over the dirt with a jagged fringe (4 columns per
+    // block), and the fringe casts a thin dark line onto the dirt below.
+    if ((vFlags & MATERIAL_GRASSTOP) != 0u && abs(n.y) < 0.5) {
+      int colI = int(floor(f.x * 4.0));
+      uint hc = hash3(uvec3(cell) * 3u + uvec3(uint(colI), 17u, uint(n.x + 2.0 * n.z + 3.0)));
+      float drip = 0.30 + float(hc & 3u) * 0.09;       // 0.30 .. 0.57 of the block height
+      float fy = f.y;
+      if (fy > drip) {
+        base = vTopColor * 0.92;                       // sides are a touch darker
+      } else if (fy > drip - 0.07) {
+        base *= mix(1.0, 0.72, detail);
+      }
+      // In the distance a 1-block step is a few pixels tall and its dirt
+      // band turns hills into brown contour stripes: fade sides to grass.
+      float farGrass = 1.0 - smoothstep(0.02, 0.09, px);
+      base = mix(vTopColor * 0.86, base, farGrass);
+    }
+
+    ivec2 sub = ivec2(floor(f * 4.0));
+    uint hs = hash3(uvec3(cell) * 7u + uvec3(uint(sub.x), uint(sub.y), uint(dot(abs(n), vec3(1, 2, 3)))));
+    float grain = (float(hs & 255u) / 255.0 - 0.5) * 0.08;
+
+    float e = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+    float edge = 1.0 - smoothstep(0.0, 0.06 + px, e);  // 1 at the block edge
+    // Light from the upper-left in face space: the top/left inner rim is lit.
+    float lit = (f.x < 0.12 || f.y > 0.88) ? 1.0 : 0.0;
+    float bevel = edge * (lit * 0.13 - 0.08);          // soft: lit rim +5%, shadow rim -8%
+
+    base *= 1.0 + blockVar;
+    tileShade = 1.0 + (grain + bevel) * detail;
   }
 
-  float ao = mix(0.3, 1.0, clamp(vAo / 3.0, 0.0, 1.0));
+  float ao = mix(0.2, 1.0, clamp(vAo / 3.0, 0.0, 1.0)); // crisp voxel corners
   ao = ao * ao * (3.0 - 2.0 * ao) * 0.5 + ao * 0.5; // soften the ramp
 
   vec3 L = frame.sunDir.xyz;
@@ -93,18 +138,18 @@ void main() {
   float blockL = lightCurve(vLight.y) * step(0.001, vLight.y);
 
   // Hemisphere ambient: cool light from the sky dome, warm bounce from below.
-  vec3 skyAmb = mix(vec3(1.0), frame.skyColor.rgb, 0.5) * 0.95;
+  vec3 skyAmb = mix(vec3(1.0), frame.skyColor.rgb, 0.72) * 0.95; // cool blue shade
   vec3 groundAmb = vec3(0.6, 0.52, 0.42) * max(frame.skyColor.b, 0.1);
   vec3 ambient = frame.sunDir.w * mix(groundAmb, skyAmb, n.y * 0.5 + 0.5);
   // Stylised face shading: top 1.0, X sides 0.84, Z sides 0.78, bottom 0.62.
   float faceShade = 0.84 + 0.16 * max(n.y, 0.0) - 0.22 * max(-n.y, 0.0) - 0.06 * abs(n.z);
 
   float shadow = sunShadow(vViewPos, n, ndl);
-  vec3 light = skyL * (ambient * faceShade + frame.sunColor.rgb * (sunI * ndl * 1.05 * shadow)) +
+  vec3 light = skyL * (ambient * faceShade + frame.sunColor.rgb * (sunI * ndl * 1.35 * shadow)) +
                blockL * vec3(1.0, 0.78, 0.52) * 1.2;
   light = max(light, vec3(0.025)) * ao;
 
-  vec3 col = base * light;
+  vec3 col = base * light * tileShade;
 
   float dist = length(vViewPos);
   vec3 viewDir = vViewPos / max(dist, 1e-4);
@@ -135,12 +180,16 @@ void main() {
     vec3 r = reflect(viewDir, wn);
     vec3 horizon = frame.fogColor.rgb + frame.sunColor.rgb * (sunI * 0.25 * pow(max(dot(r, L), 0.0), 6.0));
     vec3 zenith = frame.skyColor.rgb * vec3(0.75, 0.85, 1.0);
-    vec3 refl = mix(horizon, zenith, pow(smoothstep(0.0, 0.7, max(r.y, 0.0)), 0.7)) * skyL;
-    vec3 body = col * vec3(0.55, 0.72, 0.85);
-    col = mix(body, refl, clamp(fresnel * 0.9 + 0.08, 0.0, 1.0));
+    vec3 refl = mix(horizon, zenith, pow(smoothstep(0.0, 0.7, max(r.y, 0.0)), 0.7)) * skyL * vec3(0.55, 0.75, 0.95);
+    vec3 body = col * vec3(0.30, 0.68, 0.82);          // deep turquoise
+    col = mix(body, refl, clamp(fresnel * 0.6 + 0.06, 0.0, 1.0));
     float spec = pow(max(dot(r, L), 0.0), 350.0) * 9.0 + pow(max(dot(r, L), 0.0), 40.0) * 0.25;
     col += frame.sunColor.rgb * (sunI * spec * shadow);
-    alpha = mix(0.62, 0.96, fresnel);
+    alpha = mix(0.82, 0.97, fresnel);
+  } else if ((vFlags & MATERIAL_WATER) != 0u) {
+    // Water side / bottom faces: same deep tint, mostly opaque.
+    col *= vec3(0.30, 0.68, 0.82);
+    alpha = 0.85;
   }
 
   float fog = clamp((dist - frame.fogColor.w) * frame.fogParams.y, 0.0, 1.0);

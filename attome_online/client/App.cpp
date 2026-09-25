@@ -168,6 +168,7 @@ bool App::init(const ClientConfig &cfg, std::string *error) {
   input_.bind("inventory", "I");
   input_.bind("skills", "K");
   input_.bind("debug", "F3");
+  input_.bind("debug", "F11");
   input_.bind("chat", "Return");
   input_.bind("release_mouse", "Escape");
   input_.bind("screenshot", "F2");
@@ -218,6 +219,7 @@ void App::shutdown() {
       renderer_.destroyModelMesh(id);
   if (arrowMesh_ != atm::render::kInvalidModelMesh)
     renderer_.destroyModelMesh(arrowMesh_);
+  decor_.shutdown(renderer_);
   partMeshes_.clear();
   blockItemMeshes_.clear();
   arrowMesh_ = atm::render::kInvalidModelMesh;
@@ -257,6 +259,8 @@ void App::uploadMaterials() {
       m.flags |= atm::render::kMaterialWater;
     if (b.name.find("leaves") != std::string::npos)
       m.flags |= atm::render::kMaterialFoliage;
+    if (b.name == "grass")
+      m.flags |= atm::render::kMaterialGrassTop;
     mats.push_back(m);
   }
   // Model palettes follow the block materials (ModelLibrary material bases
@@ -267,6 +271,13 @@ void App::uploadMaterials() {
     atm::render::Material m;
     m.top = m.side = m.bottom = modelColors[i];
     m.emissive = (i < modelGlow.size() && modelGlow[i]) ? 0.8f : 0.0f;
+    mats.push_back(m);
+  }
+  // Ground decoration colours (Decor.cpp palette) after the model palettes.
+  decorMaterialBase_ = uint32_t(mats.size());
+  for (uint32_t c : Decor::palette()) {
+    atm::render::Material m;
+    m.top = m.side = m.bottom = c;
     mats.push_back(m);
   }
   renderer_.setMaterials(mats);
@@ -299,6 +310,8 @@ void App::createModelMeshes() {
     if (!mesh.empty())
       blockItemMeshes_[id] = renderer_.createModelMesh(mesh);
   }
+
+  decor_.init(renderer_, decorMaterialBase_);
 
   // Arrow: thin stick with a tip (uses wood + stone block materials).
   {
@@ -405,12 +418,14 @@ void App::handleEvents() {
       break;
     case SDL_EVENT_MOUSE_WHEEL:
       if (mouseCaptured_) {
-        if (SDL_GetModState() & SDL_KMOD_CTRL) {
-          camDistance_ = std::clamp(camDistance_ - e.wheel.y * 0.75f, 2.0f, 14.0f);
-        } else {
+        // Trove-style: the wheel zooms the camera; Shift + wheel changes
+        // the hotbar slot (1-9 also select slots).
+        if (SDL_GetModState() & SDL_KMOD_SHIFT) {
           // e.wheel.y is a float (fractional on smooth-scrolling devices).
           const int notch = e.wheel.y > 0.0f ? 1 : (e.wheel.y < 0.0f ? -1 : 0);
           hotbar_ = (hotbar_ - notch + 9) % 9;
+        } else {
+          camDistance_ = std::clamp(camDistance_ - e.wheel.y * 0.75f, 2.0f, 14.0f);
         }
       }
       break;
@@ -850,6 +865,8 @@ void App::updateEntities(float dt) {
   particles_.update(dt);
   if (welcomed_)
     particles_.ambient(me.pos, dt);
+  if (welcomed_ && world_)
+    decor_.update(*world_, me.pos, dt);
 
   // Floating texts, XP drops, banners age out.
   for (auto &f : floating_) f.age += dt;
@@ -929,6 +946,7 @@ void App::render(float alpha, float dt) {
       }
     }
 
+    decor_.draw(renderer_);
     particles_.draw(renderer_, blockItemMeshes_);
 
     if (hasTarget_)

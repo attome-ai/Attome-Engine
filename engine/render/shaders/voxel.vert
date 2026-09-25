@@ -15,6 +15,7 @@ layout(location = 4) out vec3 vViewPos;        // camera-relative
 layout(location = 5) out vec3 vLocal;          // chunk-local position
 layout(location = 6) flat out ivec3 vOrigin;   // chunk origin (blocks)
 layout(location = 7) flat out uint vFlags;     // MATERIAL_* bits
+layout(location = 8) flat out vec3 vTopColor;  // linear top colour (grass overhang on sides)
 
 void main() {
   uint faceIndex = uint(gl_VertexIndex) >> 2u;
@@ -31,6 +32,7 @@ void main() {
   MaterialGpu m = materials[f.material];
   if ((m.flags & MATERIAL_FOLIAGE) != 0u) rel += foliageSway(vec3(origin) + local, frame.camFrac.w);
   vFlags = m.flags;
+  vTopColor = srgbToLinear(unpackRGBA(m.top).rgb);
   vec4 col = unpackRGBA(materialColor(m, f.dir));
   vColor = vec4(srgbToLinear(col.rgb), col.a * m.alpha);
   vLight = vec4(float(f.sky) / 15.0, float(f.blockLight) / 15.0, m.emissive, 1.0);

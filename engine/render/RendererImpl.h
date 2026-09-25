@@ -34,6 +34,11 @@ inline constexpr uint32_t kMaxBloomMips = 6;
 inline constexpr uint32_t kShadowMapSize = 4096;
 inline constexpr float kShadowRadius = 72.0f;      // half extent in blocks (144 x 144 area)
 inline constexpr float kShadowDepthRange = 256.0f; // +- blocks along the light direction
+// Screen-space effects. Both off: on large flat voxel surfaces they produce
+// noise / streaks that swim with the camera (per-vertex voxel AO and the
+// shadow map already give stable contact shading).
+inline constexpr bool kSsaoEnabled = false;
+inline constexpr bool kSunShaftsEnabled = false;
 
 // Deferred release of a face range (after the frame's fence signals).
 struct DeferredFree {

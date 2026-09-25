@@ -6,6 +6,7 @@
 #include "NetClient.h"
 #include "Prediction.h"
 #include "Particles.h"
+#include "Decor.h"
 
 #include "shared/GameTypes.h"
 #include "shared/Protocol.h"
@@ -223,6 +224,8 @@ private:
   int sentHotbar_ = -1;                  // hotbar slot last reported to the server
   Particles particles_;                  // voxel VFX (hits, slashes, debris, motes)
   float bodyYaw_ = 0.0f;                 // rendered facing of the local character
+  Decor decor_;                          // grass tufts, flowers, pebbles
+  uint32_t decorMaterialBase_ = 0;
   char chatInput_[200] = {};
   std::string status_ = "Connecting...";
 

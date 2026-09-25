@@ -65,6 +65,7 @@ struct Material {
 
 inline constexpr uint32_t kMaterialWater = 1u;   // animated waves, reflections
 inline constexpr uint32_t kMaterialFoliage = 2u; // sways in the wind
+inline constexpr uint32_t kMaterialGrassTop = 4u; // top colour drips over the sides
 
 // Material ids >= this are reserved for setModelMaterials().
 inline constexpr uint32_t kModelMaterialBase = 16384;

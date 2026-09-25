@@ -264,14 +264,18 @@ void buildHair(ModelLibrary &lib, std::vector<int16_t> &hair) {
     p.box(9, 2, 3, 10, 4, 4, 2);
     p.box(11, 3, 3, 13, 4, 4, 1);
     // Spikes: up and outward, highlighted tips.
-    hairSpike(p, 5, 8, 5, -1, 1, -1, 4, 1, 3);      // roots start inside the cap
-    hairSpike(p, 10, 8, 5, 1, 1, -1, 4, 1, 3);
-    hairSpike(p, 7, 8, 8, 0, 1, 0, 4, 1, 3);
-    hairSpike(p, 5, 7, 10, -1, 1, 1, 4, 1, 3);
-    hairSpike(p, 10, 7, 10, 1, 1, 1, 4, 1, 3);
-    hairSpike(p, 7, 6, 13, 0, 1, 1, 4, 1, 1);
-    hairSpike(p, 3, 5, 7, -1, 1, 0, 3, 1, 1);
+    // A crown of short, even tufts (tall single spikes read as horns).
+    const int tufts[][5] = {{4, 5, -1, -1, 3},  {7, 4, 0, -1, 2},  {10, 5, 1, -1, 3}, {5, 8, -1, 0, 2},
+                            {8, 7, 0, 0, 3},    {11, 8, 1, 0, 2},  {4, 11, -1, 1, 3}, {7, 11, 0, 1, 2},
+                            {10, 11, 1, 1, 3},  {6, 9, 0, 0, 2},   {9, 5, 0, -1, 2}};
+    for (const auto &t : tufts)
+      hairSpike(p, t[0], 8, t[1], t[2], 1, t[3], t[4], 1, 3);
+    hairSpike(p, 3, 5, 7, -1, 1, 0, 3, 1, 1);       // side flicks
     hairSpike(p, 12, 5, 7, 1, 1, 0, 3, 1, 1);
+    // Back: vertical strands (alternating shades) instead of a flat slab.
+    for (int x = 3; x < 14; ++x)
+      if (x % 3 == 1)
+        p.box(x, 2, 14, x + 1, 8, 15, 2);
     p.clearBox(4, 0, 4, 13, 6, 13);                 // never inside the head
     finish(p);
   }

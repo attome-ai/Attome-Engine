@@ -22,6 +22,7 @@ layout(location = 4) out vec3 vViewPos;
 layout(location = 5) out vec3 vLocal;
 layout(location = 6) flat out ivec3 vOrigin;
 layout(location = 7) flat out uint vFlags;
+layout(location = 8) flat out vec3 vTopColor;
 
 void main() {
   uint faceIndex = uint(gl_VertexIndex) >> 2u;
@@ -46,5 +47,6 @@ void main() {
   vLocal = local;
   vOrigin = ivec3(0);
   vFlags = 0u;
+  vTopColor = vec3(0.0);
   gl_Position = frame.viewProj * vec4(rel, 1.0);
 }

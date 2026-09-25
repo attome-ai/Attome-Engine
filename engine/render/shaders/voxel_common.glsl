@@ -111,6 +111,7 @@ vec3 srgbToLinear(vec3 c) { return pow(c, vec3(2.2)); }
 
 #define MATERIAL_WATER 1u
 #define MATERIAL_FOLIAGE 2u
+#define MATERIAL_GRASSTOP 4u
 
 // Wind offset for foliage vertices. A function of the world position only,
 // so vertices shared by neighbouring faces move together (no cracks).

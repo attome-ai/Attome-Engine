@@ -31,7 +31,7 @@
       "secondary": ["mouse:right", "pad:leftshoulder"],
       "inventory": ["Tab", "I"],
       "skills": ["K"],
-      "debug": ["F3"],
+      "debug": ["F3", "F11"],
       "chat": ["Return"],
       "screenshot": ["F2"]
     }

@@ -48,14 +48,14 @@ Useful options: `-DATTOME_RUNTIME_GRID=ON` (runtime-sized 2D grid),
 | Space | Jump · double jump · hold in the air to glide |
 | Left Shift | Dash |
 | Left Ctrl | Sprint |
-| Mouse | Look · Ctrl + wheel = zoom |
+| Mouse | Look · wheel = zoom (Trove style) |
 | Left mouse | Attack (weapon) · mine (pickaxe / hands) |
 | Right mouse | Place the selected block |
-| 1–9 / wheel | Select hotbar slot |
+| 1–9 / Shift + wheel | Select hotbar slot |
 | Tab / I | Inventory and equipment (click to equip — gear swaps instantly) |
 | K | Skills (21 RuneScape-style skills, total and combat level) |
 | Enter | Chat |
-| F3 | Debug overlay (FPS, GPU time, chunks, network) |
+| F3 / F11 | Debug overlay (FPS, GPU time, chunks, network) |
 | F2 | Screenshot (`screenshot.bmp`) |
 | Esc | Release the mouse |
 
