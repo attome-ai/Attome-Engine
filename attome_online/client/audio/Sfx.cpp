@@ -136,10 +136,10 @@ std::vector<float> pluck(float freq, float seconds, float damping, uint32_t seed
   Rng rng(seed);
   const int n = samplesFor(seconds);
   const int period = std::max(2, int(kSr / freq));
-  std::vector<float> ring(size_t(period));
+  std::vector<float> ring(static_cast<size_t>(period));
   for (float &v : ring)
     v = rng.noise();
-  std::vector<float> out(size_t(n));
+  std::vector<float> out(static_cast<size_t>(n));
   size_t idx = 0;
   for (int i = 0; i < n; ++i) {
     const size_t next = (idx + 1) % ring.size();
@@ -543,7 +543,7 @@ std::vector<float> ambient() {
   std::vector<float> wind = loopify(windSrc, len, fade);
   normalize(pad, 1.0f);
   normalize(wind, 1.0f);
-  std::vector<float> out(size_t(len));
+  std::vector<float> out(static_cast<size_t>(len));
   for (int i = 0; i < len; ++i)
     out[size_t(i)] = std::tanh(0.55f * pad[size_t(i)] + 0.25f * wind[size_t(i)]);
   normalize(out, 0.5f);

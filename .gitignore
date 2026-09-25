@@ -1,6 +1,7 @@
 # Build output
 /out/
 /build/
+/build-*/
 /cmake-build-*/
 CMakeUserPresets.json
 

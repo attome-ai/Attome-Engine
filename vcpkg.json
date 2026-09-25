@@ -2,7 +2,12 @@
   "name": "attome-games",
   "version": "0.2.0",
   "dependencies": [
-    "sdl3",
+    {
+      "name": "sdl3",
+      "features": [
+        "vulkan"
+      ]
+    },
     "sdl3-image",
     "sdl3-ttf",
     "glm",
