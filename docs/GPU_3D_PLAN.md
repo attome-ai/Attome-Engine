@@ -393,6 +393,42 @@ Checked once at startup, logged, and exposed in `engine->gpu_caps`:
 A device below Vulkan 1.2 or without dynamic rendering fails with a clear
 message box (for Steam, listed as the minimum requirement).
 
+## 9A. Voxel rendering techniques (research, 2026)
+
+Survey of the fastest open-source voxel renderers and meshers, and what we
+take from each. Sources are linked; figures are as published.
+
+| Technique | Best-known user | Numbers | Our design |
+|---|---|---|---|
+| Compact vertex format | Sodium: 20 B/vertex = **80 B per quad** ([source](https://github.com/CaffeineMC/sodium)) | — | **8 B per quad** (`PackedFace`, incl. AO + light) — 10× less |
+| Vertex pulling from a storage buffer | Vercidium, vkguide "Ascendant" ([voxel.wiki](https://voxel.wiki/wiki/vertex-pulling/)) | Same speed as vertex buffers, far less memory | Faces read by `gl_VertexIndex`, one shared quad index buffer |
+| Binary greedy meshing | cgerikj/binary-greedy-meshing ([repo](https://github.com/cgerikj/binary-greedy-meshing)) | **74 µs/chunk** (62³, Ryzen 3800X), 8 B/quad without AO/light | Same algorithm on 32³ (+border) with 64-bit column masks; merges only equal AO/light |
+| Per-direction face buckets | Sodium, Nick McDonald ([blog](https://nickmcd.me/2021/04/04/high-performance-voxel-engine/)) | ~2× vs one mesh per chunk | Faces grouped by direction; back-facing groups never drawn |
+| Arena + multi-draw | Sodium regions | Few draws for many chunks | One GPU face arena; **compute cull → `vkCmdDrawIndexedIndirectCount`** |
+| Cave / visibility-graph culling | Minecraft (Checchi) ([part 1](https://tomcc.github.io/2014/08/31/visibility-1.html)) | Culls 50–99% underground; 0.1–0.2 ms per edit | Face-connectivity bits per chunk (built by the mesher), BFS on the CPU as a pre-pass |
+| Two-phase Hi-Z occlusion | niagara (zeux) ([shader](https://github.com/zeux/niagara/blob/master/src/shaders/drawcull.comp.glsl)) | No one-frame popping | M7+: early pass (last frame's visible) → depth pyramid → late pass |
+| Hierarchical LOD | Voxy (32³ sections, 5 levels, GPU traversal) | Very long view distance | M7: 2×/4×/8× downsampled chunks meshed by the same mesher; edits propagate to LOD lazily with a budget |
+| Palette + uniform sub-chunks | Minecraft, Veloren | Veloren network chunks: LZ4 ≈ 25% of raw | `Chunk`: 0-bit uniform chunks, 1–16-bit palette indices, RLE on the wire |
+| Flood-fill light (add/remove queues) | Minecraft, 0fps ([article](https://0fps.net/2018/02/21/voxel-lighting/)) | — | 1 byte per voxel (sky + block), budgeted per frame |
+| Vertex AO + diagonal flip | 0fps ([article](https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/)) | — | 2 bits per corner in `PackedFace`; flip when a00+a11 > a01+a10 |
+| Mesh shaders | Nvidium (NVIDIA-only GL) | No published measurements | Optional backend later; MDI-count path is primary (works everywhere incl. Steam Deck) |
+| Ray-marched SVO/DAG | ESVO, HashDAG, Aokana (2025) | Great far-field memory; complex edits | Not for primary visibility; possible far-field layer later |
+
+**Benchmark to claim "fastest"** (none of these projects publishes one):
+
+- Scenes (fixed seeds): flat plains, dense forest, cave-heavy mountains,
+  ocean (translucency), dense player-built city.
+- Fixed camera flythroughs at 16 / 32 / 64 / 128-chunk distances, plus LOD
+  to 1–4 km.
+- Metrics: frame time p50/p99/p99.9, CPU and GPU ms per pass (timestamps),
+  terrain VRAM (bytes per face, MB per km²), faces drawn vs resident, mesh
+  time per chunk, **edit-to-photon latency**, streaming chunks/s.
+- Hardware: NVIDIA (Turing+), AMD desktop, Intel Arc/iGPU, Steam Deck.
+- Run Sodium / Nvidium / Voxy on the same machines with equivalent content
+  and distance for the comparison.
+- First reproduce the published mesher number (~74 µs per chunk) to validate
+  the harness.
+
 ## 10. Phase 4 — voxel world
 
 ### 10.1 Data
@@ -477,6 +513,11 @@ Nothing in the engine assumes a particular tick length.
   limbs move as whole pieces), sampled and interpolated on the render frame;
   part matrices in a storage buffer.
 - **Attachments**: weapons, hats, gliders, mounts attach to named sockets.
+- **Modular characters** (see `GAME_DESIGN.md` §10.1): all players share one
+  rig and one animation set; equipment pieces replace or attach to rig parts.
+  Rendering groups pieces by mesh id and draws each group **instanced** with
+  per-instance part transforms and a palette index, so gear swaps are an id
+  change and crowds of players cost a handful of draws.
 - **Entities**: a `ModelContainer` (SoA like today) with exact world
   position, yaw, `model_id`, `anim_id`, `anim_time`. It registers as Dynamic
   or Hybrid like any container, so monsters out of view stop animating for

@@ -124,7 +124,7 @@ verify (§25).
   - Switching weapons changes your playstyle instantly. Two weapons can be
     held in quick slots.
 - **Skill level** in the matching combat skill raises damage, unlocks weapon
-  tiers and ability upgrades.
+  tiers and ability upgrades (details in §9.3).
 - **Armour** sets add passive effects (e.g. lifesteal, speed, glide time),
   letting players build hybrid styles.
 - **Dodge** with a dash; enemy attacks are telegraphed (ground markers,
@@ -132,21 +132,196 @@ verify (§25).
 - **Crowd rule:** hundreds of players in one fight must stay readable — other
   players' effects are drawn dimmer than your own (Proposed).
 
-## 9. No classes: skills — Decided (list Proposed)
+## 9. Skills (RuneScape-style) — Decided; list Proposed
 
-Every skill levels by doing it, 1–99 (RuneScape curve), and anyone can train
-all of them.
+No classes. Everyone can train every skill, by doing it, and what you are is
+simply what you've trained. **There is no level or XP cap (Decided)**: 99 is
+a milestone, not the end (§9.4).
 
-| Group | Skills |
+### 9.1 Which RuneScape skills we keep, and why
+
+A skill is kept only if it passes all three checks:
+
+1. **Fun to do** in a Trove-style action/voxel world (not a single repeated
+   click).
+2. **Makes something other players need** (feeds the economy or group
+   content).
+3. **Has a reason to reach 99** beyond the number: unlocks, gear, areas.
+
+| RuneScape skill | Here | Why |
+|---|---|---|
+| Attack, Strength, Defence, Ranged, Magic, Hitpoints | **Keep** (renamed only where it helps) | Core of combat progression |
+| Prayer | **Keep** | Combat buffs; gives bones/remains value |
+| Mining, Woodcutting, Fishing | **Keep** | Breaking ore/tree blocks and fishing fit the voxel world |
+| Hunter | **Keep** | Trapping and tracking creatures in the open world |
+| Farming | **Keep** | Works on owned plots — gives land a use |
+| Smithing, Crafting, Fletching, Cooking, Herblore | **Keep** | Every combat style needs their products |
+| Construction | **Keep, becomes central** | Voxel building on your land (§17.3) |
+| Agility | **Keep, reworked** | Unlocks movement upgrades (extra jump, glide time, dash) |
+| Slayer | **Keep** | Task-based combat with unique monsters and drops |
+| Firemaking | **Drop** | No product; fires become part of Cooking |
+| Runecrafting | **Drop** | Long repetitive loop; Magic uses crafted catalysts instead (§9.3) |
+| Thieving | **Drop** | Doesn't fit action combat; pickpocket loot moves to Hunter/Slayer |
+| — | **New: Taming** | Mounts and pets, very Trove |
+
+**Total: 21 skills.** The list is a proposal; any skill can be added or
+removed before content production starts.
+
+### 9.2 The skills
+
+| Skill | Train by | Makes / unlocks | Level 99 reward |
+|---|---|---|---|
+| **Attack** | Melee combat | Melee weapon tiers; weapon abilities per tier; crit chance | Top-tier melee weapons |
+| **Strength** | Melee combat | Melee damage; heavy weapons (hammers, greatswords) | Max melee damage |
+| **Defence** | Taking hits in any style | Armour tiers; damage reduction | Best armour sets |
+| **Ranged** | Bows, crossbows, thrown | Ranged weapon tiers and abilities; damage | Top ranged weapons |
+| **Magic** | Staves, wands, spells | Spell tiers, teleports, utility spells | Top spells and staves |
+| **Hitpoints** | Any combat | Max health | — |
+| **Prayer** | Offering bones/remains at altars | Temporary combat buffs (protection, damage, healing); prayer points drain in use | Strongest prayers |
+| **Mining** | Breaking ore and gem blocks | Ores, gems, stone blocks | Rarest ores, fastest pickaxes |
+| **Woodcutting** | Chopping tree blocks | Logs, building wood | Magic trees, best axes |
+| **Fishing** | Fishing spots, nets, spears | Fish for Cooking; rare catches | Deep-sea fishing |
+| **Hunter** | Traps, tracking, catching creatures | Hides, feathers, rare creature parts, pet eggs | Rarest creatures |
+| **Farming** | Planting on owned plots (and farming patches in towns) | Herbs, crops, trees, seeds | Rare seeds, fastest growth |
+| **Smithing** | Anvils: ore → bars → weapons/armour | Metal weapons, armour, tools, construction parts | Best metal gear |
+| **Crafting** | Leather, gems, cloth, jewellery, magic catalysts | Light armour, jewellery, Magic catalysts, glass blocks | Best jewellery, top catalysts |
+| **Fletching** | Logs + materials → bows, arrows, staves | Ranged weapons and ammunition; staff bases | Best bows and ammo |
+| **Cooking** | Fish/meat/crops on fires or ranges | Food (healing), buff meals | Best food |
+| **Herblore** | Herbs + ingredients → potions | Potions (boosts, antidotes, stamina) | Best potions |
+| **Construction** | Building on your plot | Block sets, furniture, crafting stations, portals, shop stalls, guild halls | Best blocks and plot features |
+| **Agility** | Obstacle courses, parkour routes in the world | Movement upgrades: extra jumps, longer glide, faster dash, stamina | Best movement kit |
+| **Slayer** | Tasks from Slayer masters ("kill 120 frost wolves") | Access to Slayer-only monsters and their drops | Hardest Slayer monsters |
+| **Taming** | Befriending creatures, raising pets, training mounts | Mounts (speed, flying in allowed zones), combat pets | Rarest mounts |
+
+### 9.3 How skills fit Trove-style action combat
+
+In RuneScape, levels decide almost everything in combat. Here the player's
+own aim and dodging matter too, so levels are designed to **unlock and
+scale**, not to make fights automatic:
+
+- **Attack / Ranged / Magic** level unlocks **weapon tiers**; each tier gives
+  better abilities (the Q/E/R abilities from §8), not just bigger numbers.
+- **Strength** and the style's level scale **damage**; **Defence** scales
+  **damage reduction**; **Hitpoints** scales **max health**.
+- **Hit chance comes from aim**, not from the Attack level. Attack instead
+  adds **critical-hit chance** and unlocks weapons.
+- **Magic** uses **catalysts** (made with Crafting from gems and ores)
+  instead of runes, which is why Runecrafting isn't needed.
+- **Prayer** gives timed buffs with a cooldown, so it's an active choice in
+  fights rather than a toggle.
+
+### 9.4 Experience and levels
+
+- **The RuneScape experience curve**: the XP needed for level *L* is
+
+  `XP(L) = floor( (1/4) × Σ from x=1 to L−1 of floor(x + 300 × 2^(x/7)) )`
+
+  giving **13,034,431 XP for level 99** — half of it is earned between
+  levels 92 and 99, the classic RuneScape feel.
+- **No XP or level cap** (Decided). XP is stored as a 64-bit integer.
+- **After level 99 the curve becomes linear** (Proposed): every level past 99
+  costs the same XP as the 98 → 99 step, **1,228,825 XP**.
+
+  | Level | RuneScape curve continued | This game (linear after 99) |
+  |---|---|---|
+  | 99 | 13,034,431 | 13,034,431 |
+  | 120 | 104,273,167 | 38,839,756 |
+  | 150 | 2,033,749,558 | 75,704,506 |
+  | 200 | 287,416,243,706 | 137,145,756 |
+
+  Continuing the RuneScape formula would make level 150 cost 2 billion XP
+  and level 200 cost 287 billion, so progress would silently stop around
+  120–130. A fixed cost per level keeps every level reachable and every
+  hour of training visible, forever.
+- **XP rates** per activity live in the JSON tunables, so they can be
+  balanced without a client update.
+- **XP drops**: numbers float up on screen as XP is earned (toggleable).
+- **Level-up**: fireworks effect visible to nearby players, message with
+  what the new level unlocked.
+
+### 9.4.1 What levels above 99 give (Proposed)
+
+Unlimited levels must not mean unlimited power, or veterans would make
+combat content and the Wilderness unwinnable for everyone else:
+
+- **Unlocks stop at 99** for content access (areas, weapon tiers, recipes),
+  so 99 is always enough to use everything.
+- **Stat bonuses continue with diminishing returns and a ceiling**: each
+  level past 99 adds a small bonus to the skill's effect (damage, gather
+  speed, crafting success) that shrinks per level and approaches a
+  **hard ceiling of +10%** over level 99. A level-300 player is noticeably
+  better than a level-99 one, never overwhelmingly.
+- **Prestige keeps growing without limit**: mastery ranks every 10 levels
+  past 99 (cape colours and trims, titles, auras, emotes), hiscores by total
+  XP, and rare cosmetic unlocks at milestone levels (150, 200, 250, …).
+- Values for bonus size and ceiling live in the JSON tunables.
+
+### 9.5 Combat level
+
+A single number showing overall combat strength, used for matching and for
+the Wilderness (§14). Same shape as Old School RuneScape's formula:
+
+```
+base   = 0.25 × (Defence + Hitpoints + floor(Prayer / 2))
+melee  = 0.325 × (Attack + Strength)
+ranged = 0.325 × floor(1.5 × Ranged)
+magic  = 0.325 × floor(1.5 × Magic)
+combat = floor(base + max(melee, ranged, magic))
+```
+
+Hitpoints starts at level 10 (as in RuneScape). The formula uses levels
+**capped at 99**, so combat level ranges from 3 to 126 and stays a fair
+matching number; levels above 99 show separately as **mastery** on the
+profile. In the Wilderness, players can attack each other only
+within a combat-level range that widens the deeper they go.
+
+### 9.6 Rewards for mastery
+
+| Reward | How |
 |---|---|
-| Combat | Melee, Ranged, Magic, Defence, Vitality (health) |
-| Gathering | Mining, Woodcutting, Fishing, Foraging, Hunting |
-| Production | Smithing, Crafting (armour/jewellery), Fletching, Cooking, Alchemy (potions), Enchanting |
-| World | Building (blocks, structures), Farming, Agility (movement upgrades), Taming (mounts, pets) |
+| **Skill cape** | Reaching 99 in a skill; gives a small perk (e.g. Cooking cape: never burn food) and an emote |
+| **Trimmed cape** | Any cape once the player has two or more 99s |
+| **Max cape** | 99 in every skill; combines all cape perks |
+| **Mastery ranks** | Every 10 levels past 99 in a skill: new cape colour/trim, title; no end |
+| **Skill pets** | Very rare drop while training a skill (e.g. a rock golem while mining) |
+| **Hiscores** | Rank per skill (by XP, unlimited), total level, total XP; per world and global |
+| **Guilds** | Areas unlocked by level (Mining guild at 60, Cooking guild at 32, …) with better resources |
 
-- **Total level** is shown on the profile and hiscores.
-- Some content needs levels (e.g. a boss needs 70 combat skills), never a
-  specific class.
+### 9.7 Temporary boosts
+
+Potions (Herblore), meals (Cooking) and some items give **temporary level
+boosts** (e.g. +5 Mining for 5 minutes), letting players reach a content
+requirement early — the same trick RuneScape uses to reward
+cross-skilling.
+
+### 9.8 How skills feed each other and the economy
+
+```
+ Mining ─▶ Smithing ─▶ metal weapons/armour ──┐
+ Woodcutting ─▶ Fletching ─▶ bows, arrows ────┤
+ Hunter ─▶ Crafting ─▶ leather, jewellery, ───┼──▶ combat (all players)
+            catalysts (for Magic)             │
+ Fishing/Farming ─▶ Cooking ─▶ food ──────────┤
+ Farming ─▶ Herblore ─▶ potions ──────────────┘
+ Mining/Woodcutting/Smithing ─▶ Construction ─▶ builds on plots
+ Slayer/combat ─▶ rare drops, bones (Prayer), hides (Crafting)
+```
+
+Every combat player consumes what skillers make (food, potions, ammo,
+catalysts, repairs), so pure skillers have a real place in the economy —
+the RuneScape feel where "no gameplay is forced" still works.
+
+### 9.9 Skills in the voxel world
+
+- **Gathering is breaking blocks**: ore blocks, tree blocks, and fishing
+  spots in water. In **reserved** areas they regrow on a timer so they're
+  never used up.
+- **On owned plots**, players can place **resource nodes** (trees, farming
+  patches, an ore vein) through Construction/Farming, limited per plot so
+  land doesn't become an infinite resource farm.
+- **In the Wilderness**, resource nodes are richer (rare ores, magic trees)
+  but you can be attacked while gathering — risk vs reward, as in
+  RuneScape.
 
 ## 10. Progression and gear
 
@@ -157,6 +332,75 @@ all of them.
   (visible when inspected) — this helps trading trust and audits.
 - **Cosmetics**: voxel skins for weapons, armour, mounts, gliders; earned in
   game or bought (see monetisation §21).
+
+### 10.1 Player character model — modular, one shared rig (Decided)
+
+Every player character is built from the **same skeleton ("rig")**, so every
+animation works for every player, and clothes, armour and weapons are pieces
+that snap onto that rig. Changing equipment is swapping a piece, never
+building a new model.
+
+**The rig** (one for all players):
+
+```
+root
+ └─ pelvis
+     ├─ torso
+     │   ├─ head
+     │   ├─ arm_upper_L ─ arm_lower_L ─ hand_L ─ [off-hand socket]
+     │   ├─ arm_upper_R ─ arm_lower_R ─ hand_R ─ [main-hand socket]
+     │   └─ [back socket: cape / glider / quiver]
+     ├─ leg_upper_L ─ leg_lower_L ─ foot_L
+     └─ leg_upper_R ─ leg_lower_R ─ foot_R
+```
+
+- Each bone is a **rigid voxel part** (Trove-style: limbs move as whole
+  pieces, no bending), so animation is just one transform per part.
+- Fixed proportions and pivot points, published as a **MagicaVoxel template**
+  that every artist models against.
+
+**Equipment slots** and what they replace or attach to:
+
+| Slot | Replaces / attaches | Notes |
+|---|---|---|
+| Head | Replaces `head` covering (helmet, hat, hood) | Can hide hair; face shows through where the design allows |
+| Torso | Replaces `torso` and `arm_upper` parts | Chest armour, shirts, robes |
+| Hands | Replaces `arm_lower` + `hand` parts | Gloves, gauntlets |
+| Legs | Replaces `leg_upper` + `leg_lower` | Trousers, leg armour, skirts |
+| Feet | Replaces `foot` parts | Boots |
+| Back | Attaches to back socket | Capes (incl. skill capes), gliders, quivers |
+| Main hand / off hand | Attaches to hand sockets | Weapons, shields, tools (pickaxe, axe, rod) |
+| Cosmetic overrides | Same slots, drawn instead of the real item | Wear any look over your actual gear |
+
+- **Body customisation**: skin colour, hair, face, and body shape variants
+  (e.g. slimmer/bulkier torso pieces) — all built on the same rig and bone
+  lengths, so animations never need changing.
+- **Dyes**: each item uses a small colour palette; dye slots swap palette
+  entries in the shader, so recolours cost nothing to store or draw.
+
+**Shared animations**:
+
+- One animation set for all players: idle, run, jump, double jump, glide,
+  swim, climb, dodge, hit, death, emotes, and skilling actions (mine, chop,
+  fish, cook, smith, build).
+- **Weapon-type layers**: each weapon type (sword, bow, staff, hammer,
+  daggers, …) has its own upper-body attack/ability animations, played on top
+  of the lower-body movement, so you can run and attack at the same time.
+- A new weapon or armour **needs no new animation** — only a new item of an
+  existing weapon type needs art.
+
+**Why this matters technically**:
+
+| Concern | Result |
+|---|---|
+| Swapping gear | Change one mesh id per slot; instant, no rebuild, no loading hitch |
+| Art cost | One rig, one animation set; each item is a small voxel piece |
+| Network | A player's appearance is ~24 bytes (item id per slot + dyes + body options), sent only when it changes |
+| Rendering 250 visible players | Every body part and item piece is drawn **instanced**: all players wearing the same helmet share one draw; per-player data is just part transforms + palette |
+| Animation cost | One transform per part (~16 parts) per visible player per frame — tiny |
+
+Monsters and NPCs use the same system with their own rigs (e.g. a
+quadruped rig), so humanoid NPCs can wear any player equipment too.
 
 ## 11. Drops shared by damage — Decided (rules Proposed)
 
@@ -550,7 +794,7 @@ engine plan.
 | **0. Engine** | Engine plan M1–M6: benchmarks, Vulkan renderer, 3D core | 3D scene on Vulkan, gates met |
 | **1. Voxel prototype** (offline) | Chunks, meshing, lighting, building, Trove movement, 1 weapon, 1 monster | Fun to move, jump, build and fight alone |
 | **2. Networked prototype** | One zone server, prediction/interpolation, 50 players, block edits over the network | 50 bots + testers smooth at 30 Hz |
-| **3. Vertical slice** | 1 town + GE (basic) + 3 skills + 3 weapons + damage-share loot + inventory/trading + persistence | Complete loop in a small world |
+| **3. Vertical slice** | 1 town + GE (basic) + 5 skills (Attack, Strength, Mining, Smithing, Construction) + 3 weapons + damage-share loot + inventory/trading + persistence | Complete loop in a small world |
 | **4. Scale** | Multiple zones, handoff, border ghosts, interest management, load tests to 10,000 bots per zone | 10k bots at target tick time and bandwidth |
 | **5. Land & growth** | Plots, auctions, upkeep, permissions, daily growth, wilderness rules | A week of simulated days without manual fixes |
 | **6. Content alpha** | Skills to 99, weapons, dungeons, bosses, quests, guilds | Closed alpha on Steam (Playtest) |
@@ -580,7 +824,8 @@ engine plan.
 
 1. **Monetisation model** (§21).
 2. **Death rules** in the Wilderness (§14) — accept the proposal?
-3. **Skill list** (§9) — add/remove skills?
+3. **Skill list** (§9.1) — 21 skills proposed (Firemaking, Runecrafting and
+   Thieving dropped; Taming added). Add or remove any?
 4. **Plot size and per-account limit** (§17) — plot = 1 sector (256×256)?
 5. **Flying mounts** — allowed where?
 6. **Game name**.
