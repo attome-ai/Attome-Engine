@@ -1,0 +1,64 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// Expands the CPU-visible chunk list into indirect draws: one draw per
+// (chunk, face direction) whose faces can face the camera. Directions whose
+// every face points away from the camera (camera behind the chunk's content
+// bounds along that axis) are dropped. Output: VkDrawIndexedIndirectCommand
+// list + count for vkCmdDrawIndexedIndirectCount (count reset to 0 before).
+#include "voxel_common.glsl"
+
+layout(local_size_x = 64) in;
+
+struct DrawCmd {
+  uint indexCount;
+  uint instanceCount;
+  uint firstIndex;
+  int vertexOffset;
+  uint firstInstance;
+};
+
+layout(std430, set = 0, binding = 4) readonly buffer Visible { uint visible[]; };
+layout(std430, set = 0, binding = 5) writeonly buffer Draws { DrawCmd draws[]; };
+layout(std430, set = 0, binding = 6) buffer DrawCount { uint drawCount; };
+
+void main() {
+  uint i = gl_GlobalInvocationID.x;
+  if (i >= frame.counts.x) return;
+  uint slot = visible[i];
+  ChunkGpu ch = chunks[slot];
+  if ((ch.flags & 1u) == 0u) return;
+
+  // Camera in chunk-local coordinates (integer difference first).
+  vec3 cam = vec3(frame.camBlock.xyz - ivec3(ch.originX, ch.originY, ch.originZ)) +
+             frame.camFrac.xyz;
+  vec3 mn = vec3(float(ch.aabbMin & 255u), float((ch.aabbMin >> 8) & 255u),
+                 float((ch.aabbMin >> 16) & 255u));
+  vec3 mx = vec3(float(ch.aabbMax & 255u), float((ch.aabbMax >> 8) & 255u),
+                 float((ch.aabbMax >> 16) & 255u));
+  // +dir faces lie on planes > min, -dir faces on planes < max.
+  bool facing[6] = bool[6](cam.x > mn.x, cam.x < mx.x, cam.y > mn.y, cam.y < mx.y,
+                           cam.z > mn.z, cam.z < mx.z);
+
+  uint mask = 0u, n = 0u;
+  for (uint d = 0u; d < 6u; ++d) {
+    if (facing[d] && ch.dirOffset[d + 1u] > ch.dirOffset[d]) {
+      mask |= 1u << d;
+      ++n;
+    }
+  }
+  if (n == 0u) return;
+  uint base = atomicAdd(drawCount, n);
+  uint maxDraws = frame.counts.y;
+  for (uint d = 0u; d < 6u; ++d) {
+    if ((mask & (1u << d)) == 0u) continue;
+    if (base >= maxDraws) return;
+    DrawCmd cmd;
+    cmd.indexCount = (ch.dirOffset[d + 1u] - ch.dirOffset[d]) * 6u;
+    cmd.instanceCount = 1u;
+    cmd.firstIndex = 0u;
+    cmd.vertexOffset = int((ch.faceBase + ch.dirOffset[d]) * 4u);
+    cmd.firstInstance = slot;
+    draws[base] = cmd;
+    ++base;
+  }
+}

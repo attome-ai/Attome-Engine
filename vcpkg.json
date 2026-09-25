@@ -1,6 +1,6 @@
 {
   "name": "attome-games",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "dependencies": [
     "sdl3",
     "sdl3-image",
@@ -10,11 +10,20 @@
       "name": "imgui",
       "features": [
         "sdl3-binding",
-        "sdl3-renderer-binding"
+        "sdl3-renderer-binding",
+        "vulkan-binding"
       ]
     },
     "nlohmann-json",
     "vulkan",
+    {
+      "name": "glslang",
+      "features": [
+        "tools"
+      ]
+    },
+    "vulkan-memory-allocator",
+    "vk-bootstrap",
     "asio",
     "libsodium"
   ]

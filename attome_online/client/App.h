@@ -1,0 +1,228 @@
+#pragma once
+
+// The game client: window, renderer, audio, input, world streaming,
+// networking, prediction, entities, HUD.
+
+#include "NetClient.h"
+#include "Prediction.h"
+
+#include "shared/GameTypes.h"
+#include "shared/Protocol.h"
+
+#include "../../engine/ATMAudio.h"
+#include "../../engine/ATMInput.h"
+#include "../../engine/model/Character.h"
+#include "../../engine/render/Renderer.h"
+#include "../../engine/voxel/BlockRegistry.h"
+#include "../../engine/voxel/VoxelWorld.h"
+
+#include <atomic>
+#include <deque>
+#include <memory>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
+struct SDL_Window;
+
+namespace ao::server {
+class ZoneServer;
+}
+
+namespace ao::client {
+
+class SfxPlayer;
+
+struct ClientConfig {
+  std::string name = "Player";
+  std::string host = "127.0.0.1";
+  uint16_t port = 27015;
+  bool local = false;              // start an in-process server
+  std::string serverConfigPath = "config/server.json";
+  float mouseSensitivity = 0.0025f;
+  bool invertY = false;
+  int windowWidth = 1600, windowHeight = 900;
+  bool fullscreen = false;
+  atm::render::RendererConfig render;
+  int viewRadiusChunks = 12;
+  float masterVolume = 0.8f;
+};
+
+bool loadClientConfig(const std::string &path, ClientConfig &cfg, std::string *error);
+
+// A remote entity (other players, monsters, dropped items, projectiles).
+struct RemoteEntity {
+  EntityId id = kNoEntity;
+  EntityState last;                 // last full state (fills omitted delta fields)
+  RemoteTrack track;
+  atm::model::Animator animator;
+  atm::model::Appearance appearance;
+  std::string name;
+  uint8_t lastActionSeq = 0;
+  float hitFlash = 0.0f;            // seconds of red tint left
+  float lastSeenTick = 0.0f;
+  float stepDistance = 0.0f;        // footstep sounds
+};
+
+struct FloatingText {
+  glm::dvec3 world{0.0};
+  std::string text;
+  uint32_t color = 0xFFFFFFFF;
+  float age = 0.0f, life = 1.2f;
+};
+
+class App : public NetHandler {
+public:
+  App();
+  ~App() override;
+
+  bool init(const ClientConfig &cfg, std::string *error);
+  int run();
+  void shutdown();
+
+  // NetHandler
+  void onConnected() override;
+  void onDisconnected(atm::net2::DisconnectReason reason) override;
+  void onWelcome(const proto::Welcome &m) override;
+  void onChunkData(const proto::ChunkData &m) override;
+  void onEditedChunks(const proto::EditedChunks &m) override;
+  void onBlockChanged(const proto::BlockChanged &m) override;
+  void onSnapshot(const proto::SnapshotMsg &m) override;
+  void onAppearance(const proto::AppearanceMsg &m) override;
+  void onDamage(const proto::DamageEvent &m) override;
+  void onInventory(const proto::InventoryMsg &m) override;
+  void onXpGain(const proto::XpGain &m) override;
+  void onLoot(const proto::LootMsg &m) override;
+  void onChat(const proto::ChatMsg &m) override;
+
+private:
+  // Frame stages
+  void handleEvents();
+  void fixedTick();                       // 30 Hz: input -> prediction -> send
+  void updateWorld();
+  void updateCamera(float dt);
+  void updateInteraction(float dt);       // mining, placing, attacking
+  void updateEntities(float dt);
+  void render(float alpha, float dt);
+  void drawHud(float dt);
+
+  // Helpers
+  MoveInput buildInput();
+  glm::dvec3 eyePosition(float alpha) const;
+  glm::vec3 aimDirection() const;
+  bool worldToScreen(const glm::dvec3 &p, float &sx, float &sy) const;
+  void uploadMaterials();
+  void createModelMeshes();
+  void addFloatingText(const glm::dvec3 &at, std::string text, uint32_t color);
+  void addChatLine(std::string line);
+  void startLocalServer();
+  void stopLocalServer();
+  int selectedSlot() const { return hotbar_; }
+  ItemId equippedMainHand() const;
+
+  // Character / model drawing (CharacterDraw.cpp)
+  void drawCharacter(const atm::model::Appearance &appearance,
+                     const atm::model::Animator &animator, const glm::dvec3 &feet,
+                     float yaw, uint32_t tint);
+  void drawMonster(uint8_t type, const atm::model::Animator &animator,
+                   const glm::dvec3 &feet, float yaw, uint32_t tint);
+  void drawItemEntity(uint16_t item, const glm::dvec3 &pos, float spin);
+  void drawProjectile(const glm::dvec3 &pos, const glm::vec3 &vel);
+  // creature = ModelLibrary creature index for monsters, -1 for humanoids.
+  void selectLocomotion(atm::model::Animator &anim, const glm::vec3 &vel,
+                        uint8_t flags, bool isLocal, int creature = -1);
+  void playActionAnim(atm::model::Animator &anim, uint8_t action, WeaponType weapon,
+                      int creature = -1);
+  int creatureForMonster(uint8_t type);
+
+  // Config and platform
+  ClientConfig cfg_;
+  SDL_Window *window_ = nullptr;
+  bool running_ = false;
+  bool mouseCaptured_ = false;
+  bool sdlInit_ = false;           // what init() got through (shutdown() undoes only that)
+  bool imguiContext_ = false;
+  bool imguiSdlInit_ = false;
+
+  // Engine systems
+  atm::render::Renderer renderer_;
+  atm::Audio audio_;
+  std::unique_ptr<SfxPlayer> sfx_;
+  atm::InputMap input_;
+  atm::voxel::BlockRegistry blocks_;
+  atm::model::ModelLibrary models_;
+  atm::model::AnimLibrary anims_;
+  std::vector<atm::render::ModelMeshId> partMeshes_;   // per ModelLibrary part
+  std::vector<atm::render::ModelMeshId> blockItemMeshes_; // per block id (dropped items)
+  atm::render::ModelMeshId arrowMesh_ = atm::render::kInvalidModelMesh;
+  std::vector<int> monsterCreature_;                   // monster type -> creature (-2 = not looked up)
+  std::unique_ptr<atm::voxel::VoxelWorld> world_;
+  std::vector<atm::voxel::ChunkMeshResult> meshResults_;
+  std::vector<atm::voxel::ChunkCoord> unloaded_;
+
+  // Networking
+  NetClient net_;
+  std::unique_ptr<server::ZoneServer> localServer_;
+  std::thread localServerThread_;
+  std::atomic<bool> localServerStop_{false};
+  bool welcomed_ = false;
+  uint64_t worldSeed_ = 0;
+  EntityId selfId_ = kNoEntity;
+
+  // Local player
+  Prediction prediction_;
+  atm::model::Animator selfAnim_;
+  atm::model::Appearance selfAppearance_;
+  uint32_t nextInputSeq_ = 1;
+  Tick clientTick_ = 0;
+  uint32_t newestSnapshotTick_ = 0;
+  float serverTickEstimate_ = 0.0f;     // for remote interpolation
+  uint16_t hp_ = 100, maxHp_ = 100;
+  uint16_t pendingButtons_ = 0;         // edge-triggered buttons collected between ticks
+  float footstepDistance_ = 0.0f;
+  bool wasOnGround_ = true;
+
+  // Remote entities
+  std::unordered_map<EntityId, RemoteEntity> remotes_;
+
+  // Inventory, skills
+  std::vector<ItemStack> inventory_ = std::vector<ItemStack>(kInventorySlots);
+  std::vector<uint16_t> equipped_ = std::vector<uint16_t>(atm::model::kEquipSlotCount, 0);
+  std::array<uint64_t, kSkillCount> skillXp_{};
+  int hotbar_ = 0;
+
+  // Camera
+  float camYaw_ = 0.0f, camPitch_ = -0.25f, camDistance_ = 6.0f;
+  glm::dvec3 camPos_{0.0};
+  atm::render::Camera camera_;
+  float aspect_ = 16.0f / 9.0f;
+
+  // Interaction
+  bool hasTarget_ = false;
+  BlockPos targetBlock_{};
+  atm::voxel::FaceDir targetFace_ = atm::voxel::FaceDir::PosY;
+  float mineProgress_ = 0.0f;
+  BlockPos miningBlock_{};
+  float attackCooldown_ = 0.0f;
+  float placeCooldown_ = 0.0f;
+
+  // HUD
+  std::deque<std::string> chat_;
+  std::vector<FloatingText> floating_;
+  struct XpDrop { Skill skill; uint32_t amount; float age; };
+  std::vector<XpDrop> xpDrops_;
+  struct Banner { std::string text; float age; };
+  std::vector<Banner> banners_;
+  bool showInventory_ = false, showSkills_ = false, showDebug_ = false;
+  bool chatOpen_ = false;
+  char chatInput_[200] = {};
+  std::string status_ = "Connecting...";
+
+  // Timing
+  double accumulator_ = 0.0;
+  uint64_t lastCounter_ = 0;
+  float fps_ = 0.0f;
+};
+
+} // namespace ao::client

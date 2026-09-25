@@ -28,7 +28,7 @@ measurement that would trigger them.
 | Decision | Choice | Why |
 |---|---|---|
 | GPU API | **Raw Vulkan 1.3** (1.2 + `dynamic_rendering`, `synchronization2`, `descriptor_indexing` accepted) | In-engine GPU timing (timestamp queries), bindless textures, multi-threaded command recording, async compute, and a path to mesh shaders — all useful for a large voxel MMO and unavailable in SDL3 GPU. |
-| Vulkan helpers | **volk** (loader), **vk-bootstrap** (instance/device/swapchain setup), **VMA** (memory) | Removes most of the boilerplate while keeping full control. To verify: all three available through vcpkg. |
+| Vulkan helpers | **vk-bootstrap** (instance/device/swapchain setup), **VMA** (memory), standard Vulkan loader | Removes most of the boilerplate while keeping full control. volk was dropped: ImGui's Vulkan backend (vcpkg) calls Vulkan functions directly, which conflicts with volk's same-named function pointers. |
 | Platform layer | **SDL3 stays** for window, input, audio, events, and `SDL_Vulkan_CreateSurface` | Only drawing moves to Vulkan. |
 | Platforms | Windows (primary), Linux / Steam Deck (native), macOS via MoltenVK (optional), Android later | Matches Steam's audience. |
 | Web | **Dropped** | Browsers have no Vulkan, and a voxel MMO isn't a browser target. The SDL_Renderer path is removed once all games run on Vulkan (M5). TowerSwarm and Meteor Dodge lose their web builds. |

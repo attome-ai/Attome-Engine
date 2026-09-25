@@ -1,0 +1,14 @@
+{
+  "port": 27015,
+  "seed": 12345,
+  "maxPlayers": 1024,
+  "viewRadiusChunks": 8,
+  "simRadiusChunks": 3,
+  "workerThreads": 0,
+  "monstersPerPlayer": 6,
+  "maxMonsters": 300,
+  "bandwidthKBps": 256,
+  "snapshotBudgetBytes": 1100,
+  "timeoutMs": 10000,
+  "verbose": true
+}

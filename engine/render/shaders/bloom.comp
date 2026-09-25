@@ -1,0 +1,72 @@
+#version 460
+// Bloom mip chain (Call of Duty: Advanced Warfare style):
+//   mode 0: 13-tap downsample of the HDR image with soft threshold and Karis
+//           average (kills fireflies) into bloom mip 0
+//   mode 1: 13-tap downsample mip i-1 -> mip i
+//   mode 2: 3x3 tent upsample of mip i+1, added onto mip i
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcTex;
+layout(set = 0, binding = 1, rgba16f) uniform image2D dstImg;
+
+layout(push_constant) uniform Push {
+  vec2 srcTexel;
+  float threshold;
+  float intensity;
+  uint mode;
+  uint pad0, pad1, pad2;
+} pc;
+
+vec3 tap(vec2 uv) { return textureLod(srcTex, uv, 0.0).rgb; }
+float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+vec3 karis(vec3 c) { return c / (1.0 + luma(c)); }
+
+vec3 prefilter(vec3 c) {
+  float br = max(c.r, max(c.g, c.b));
+  float knee = pc.threshold * 0.5;
+  float soft = clamp(br - pc.threshold + knee, 0.0, 2.0 * knee);
+  soft = soft * soft / (4.0 * knee + 1e-4);
+  float contrib = max(soft, br - pc.threshold) / max(br, 1e-4);
+  return c * contrib;
+}
+
+void main() {
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 size = imageSize(dstImg);
+  if (p.x >= size.x || p.y >= size.y) return;
+  vec2 uv = (vec2(p) + 0.5) / vec2(size);
+  vec2 t = pc.srcTexel;
+
+  if (pc.mode <= 1u) {
+    vec3 a = tap(uv + t * vec2(-2, -2)), b = tap(uv + t * vec2(0, -2)), c = tap(uv + t * vec2(2, -2));
+    vec3 d = tap(uv + t * vec2(-2, 0)), e = tap(uv), f = tap(uv + t * vec2(2, 0));
+    vec3 g = tap(uv + t * vec2(-2, 2)), h = tap(uv + t * vec2(0, 2)), i = tap(uv + t * vec2(2, 2));
+    vec3 j = tap(uv + t * vec2(-1, -1)), k = tap(uv + t * vec2(1, -1));
+    vec3 l = tap(uv + t * vec2(-1, 1)), m = tap(uv + t * vec2(1, 1));
+    vec3 result;
+    if (pc.mode == 0u) {
+      // Karis average per 2x2 block group.
+      vec3 g0 = karis((j + k + l + m) * 0.25);
+      vec3 g1 = karis((a + b + d + e) * 0.25);
+      vec3 g2 = karis((b + c + e + f) * 0.25);
+      vec3 g3 = karis((d + e + g + h) * 0.25);
+      vec3 g4 = karis((e + f + h + i) * 0.25);
+      result = g0 * 0.5 + (g1 + g2 + g3 + g4) * 0.125;
+      result = result / max(1.0 - luma(result), 1e-3); // undo Karis weighting
+      result = prefilter(max(result, vec3(0.0)));
+    } else {
+      result = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 +
+               (j + k + l + m) * 0.125;
+    }
+    imageStore(dstImg, p, vec4(result, 1.0));
+  } else {
+    vec3 s = tap(uv + t * vec2(-1, -1)) + tap(uv + t * vec2(1, -1)) +
+             tap(uv + t * vec2(-1, 1)) + tap(uv + t * vec2(1, 1));
+    s += 2.0 * (tap(uv + t * vec2(0, -1)) + tap(uv + t * vec2(-1, 0)) +
+                tap(uv + t * vec2(1, 0)) + tap(uv + t * vec2(0, 1)));
+    s += 4.0 * tap(uv);
+    s *= 1.0 / 16.0;
+    vec3 cur = imageLoad(dstImg, p).rgb;
+    imageStore(dstImg, p, vec4(cur + s * pc.intensity, 1.0));
+  }
+}

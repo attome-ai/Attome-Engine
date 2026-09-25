@@ -40,3 +40,12 @@ if(ATTOME_WITH_TEXT)
     message(STATUS "AttomeCore: SDL3_ttf not found, ATMText disabled")
   endif()
 endif()
+
+# --- voxel MMO engine modules (docs/DEMO_PLAN.md) ---------------------------
+option(ATTOME_BUILD_VOXEL "Build the voxel engine modules (world, models, net2, Vulkan renderer)" ON)
+if(ATTOME_BUILD_VOXEL)
+  add_subdirectory(voxel)
+  add_subdirectory(model)
+  add_subdirectory(net2)
+  add_subdirectory(render)
+endif()

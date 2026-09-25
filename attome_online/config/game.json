@@ -1,0 +1,5 @@
+{
+  // Gameplay tunables shared by client and server (ATM_TUNABLE values).
+  // Edits apply live. Missing keys keep their built-in defaults; the full
+  // list can be regenerated with Tunables::writeFile.
+}

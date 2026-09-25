@@ -1,0 +1,39 @@
+{
+  // Attome Online client settings. Edit freely; restart to apply.
+  "client": {
+    "name": "Player",
+    "host": "127.0.0.1",
+    "port": 27015,
+    "local": true,              // true = single player (server runs in-process)
+    "serverConfig": "config/server.json",
+    "mouseSensitivity": 0.0025,
+    "invertY": false
+  },
+  "window": { "width": 1600, "height": 900, "fullscreen": false },
+  "render": {
+    "vsync": true,
+    "msaa": 4,
+    "bloom": true,
+    "fov": 70,
+    "viewDistanceChunks": 12,
+    "validation": false
+  },
+  "audio": { "masterVolume": 0.8 },
+
+  // Key bindings: SDL scancode names, "mouse:left", "pad:a", ...
+  "input": {
+    "bindings": {
+      "forward": ["W"], "back": ["S"], "left": ["A"], "right": ["D"],
+      "jump": ["Space", "pad:a"],
+      "dash": ["Left Shift", "pad:b"],
+      "sprint": ["Left Ctrl"],
+      "primary": ["mouse:left", "pad:rightshoulder"],
+      "secondary": ["mouse:right", "pad:leftshoulder"],
+      "inventory": ["Tab", "I"],
+      "skills": ["K"],
+      "debug": ["F3"],
+      "chat": ["Return"],
+      "screenshot": ["F2"]
+    }
+  }
+}
