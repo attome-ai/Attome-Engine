@@ -1,0 +1,42 @@
+{
+  "engine": {
+    "audio": {
+      "enabled": true,
+      "master_volume": 1,
+      "max_voices": 32
+    },
+    "grid": {
+      "hybrid_activation_margin": 150,
+      "node_reserve": 3200000,
+      "query_pad_cells": 4,
+      "static_chunk_size": 512
+    },
+    "time": {
+      "fixed_timestep_hz": 0,
+      "max_fixed_steps_per_frame": 4,
+      "max_frame_dt": 0.1
+    },
+    "window": {
+      "resizable": false,
+      "vsync": false
+    }
+  },
+  "meteor_dodge": {
+    "GRID_CELL_SIZE": 64,
+    "INITIAL_METEOR_COUNT": 44,
+    "MAX_METEOR_COUNT": 80,
+    "METEOR_DRIFT_RANGE": 68,
+    "METEOR_HEIGHT": 24,
+    "METEOR_MAX_SPEED": 320,
+    "METEOR_MIN_SPEED": 140,
+    "METEOR_WIDTH": 24,
+    "PLAYER_HEIGHT": 24,
+    "PLAYER_SPEED": 540,
+    "PLAYER_WIDTH": 58,
+    "TITLE_UPDATE_MS": 180,
+    "WINDOW_HEIGHT": 560,
+    "WINDOW_WIDTH": 960,
+    "WORLD_HEIGHT": 1200,
+    "WORLD_WIDTH": 2000
+  }
+}

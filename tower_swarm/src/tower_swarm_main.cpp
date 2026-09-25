@@ -2,6 +2,7 @@
 #include "InputManager.h"
 #include "TowerSwarmGame.h"
 
+#include "ATMConfig.h"
 #include "ATMEngine.h"
 
 #include <SDL3/SDL.h>
@@ -12,8 +13,126 @@
 #endif
 
 #include <algorithm>
+#include <cstring>
+#include <string>
 
 namespace {
+
+// Relative paths are resolved against the working directory first, then the
+// executable directory (atm::resolve_path). On web the file is preloaded into
+// the virtual FS at the same path (see build_web.ps1).
+constexpr const char *kDefaultConfigPath = "config/tower_swarm.json";
+
+struct CommandLine final {
+  std::string config_path = kDefaultConfigPath;
+  std::string write_default_config_path; // empty = run the game
+};
+
+bool parse_command_line(int argc, char *argv[], CommandLine &out) {
+  for (int i = 1; i < argc; ++i) {
+    const char *arg = argv[i];
+    const bool has_value = (i + 1) < argc;
+    if (std::strcmp(arg, "--config") == 0 && has_value) {
+      out.config_path = argv[++i];
+    } else if (std::strcmp(arg, "--write-default-config") == 0 && has_value) {
+      out.write_default_config_path = argv[++i];
+    } else if (std::strcmp(arg, "--config") == 0 ||
+               std::strcmp(arg, "--write-default-config") == 0) {
+      SDL_Log("TowerSwarm: %s needs a file path.", arg);
+      return false;
+    }
+    // Anything else is ignored (platform launchers may add their own args).
+  }
+  return true;
+}
+
+// Engine settings for this game. Window and world size come from the game
+// tunables (general.kWindowWidthPx, ...), so they have a single source of
+// truth; the optional "engine" section of the config file can override the
+// rest (grid, timestep, vsync, audio). Everything else keeps the EngineConfig
+// defaults, which match the legacy engine_create() setup (64px grid cells,
+// variable timestep).
+EngineConfig make_engine_config(const atm::Json *engine_section) {
+  EngineConfig cfg;
+  if (engine_section) {
+    std::string error;
+    if (!engine_config_from_json(*engine_section, cfg, &error)) {
+      SDL_Log("TowerSwarm: config \"engine\" section: %s (keeping defaults "
+              "for the bad values).",
+              error.c_str());
+    }
+    if (engine_section->findPath("window.width") ||
+        engine_section->findPath("window.height") ||
+        engine_section->find("world")) {
+      SDL_Log("TowerSwarm: engine.window.width/height and engine.world.* are "
+              "ignored; set general.kWindowWidthPx/kWindowHeightPx/"
+              "kWorldWidthPx/kWorldHeightPx instead.");
+    }
+  }
+  cfg.window_width = tower_swarm::kWindowWidthPx;
+  cfg.window_height = tower_swarm::kWindowHeightPx;
+  cfg.world_width = tower_swarm::kWorldWidthPx;
+  cfg.world_height = tower_swarm::kWorldHeightPx;
+  return cfg;
+}
+
+// Writes every tunable with its compiled-in default plus the engine section.
+bool write_default_config(const std::string &path) {
+  atm::Json root = atm::Tunables::instance().toJson();
+  atm::Json engine = engine_config_to_json(make_engine_config(nullptr));
+  // Window/world size live in "general"; the title is set by the game.
+  atm::Json::Object &sections = engine.asObject();
+  sections.erase("world");
+  if (auto window = sections.find("window"); window != sections.end()) {
+    window->second.asObject().erase("width");
+    window->second.asObject().erase("height");
+    window->second.asObject().erase("title");
+  }
+  root["engine"] = std::move(engine);
+  if (!atm::write_text_file(path, root.dump(2))) {
+    SDL_Log("TowerSwarm: could not write '%s': %s", path.c_str(),
+            SDL_GetError());
+    return false;
+  }
+  SDL_Log("TowerSwarm: wrote %zu tunables + engine settings to '%s'.",
+          atm::Tunables::instance().count(), path.c_str());
+  return true;
+}
+
+// Loads the game config. Missing or broken files are not fatal: the game runs
+// with the compiled-in defaults. Returns the parsed document (for the
+// "engine" section), or a null Json when nothing usable was read.
+atm::Json load_config(const std::string &requested_path) {
+  const std::string path = atm::resolve_path(requested_path);
+  if (!SDL_GetPathInfo(path.c_str(), nullptr)) {
+    SDL_Log("TowerSwarm: no config at '%s'; using compiled defaults.",
+            path.c_str());
+    return atm::Json();
+  }
+
+  atm::Tunables &tunables = atm::Tunables::instance();
+  std::string error;
+  if (!tunables.loadFile(path, &error)) {
+    if (tunables.loadedPath().empty()) {
+      // Could not read/parse the file at all: nothing was applied.
+      SDL_Log("TowerSwarm: failed to load config '%s': %s. Using compiled "
+              "defaults; fix the file and restart.",
+              path.c_str(), error.c_str());
+      return atm::Json();
+    }
+    SDL_Log("TowerSwarm: config '%s' has invalid values (%s); those keep "
+            "their defaults.",
+            path.c_str(), error.c_str());
+  }
+  SDL_Log("TowerSwarm: loaded config '%s' (%zu tunables, live reload on).",
+          path.c_str(), tunables.count());
+
+  atm::Json root;
+  if (!atm::Json::parseFile(path, root, &error)) {
+    return atm::Json();
+  }
+  return root;
+}
 
 struct TowerSwarmRuntime final {
   Engine *engine = nullptr;
@@ -49,6 +168,10 @@ void shutdown_runtime(TowerSwarmRuntime &rt) {
 }
 
 void run_frame(TowerSwarmRuntime &rt) {
+  // Picks up edits to the config file (checks its timestamp twice a second;
+  // the engine logs "[tunables] reloaded ..." when it applies a change).
+  atm::Tunables::instance().reloadIfChanged();
+
   const Uint64 frame_start = SDL_GetPerformanceCounter();
   const Uint64 now = frame_start;
   const float dt = compute_dt_sec(now, rt.counter_freq, rt.last_counter);
@@ -136,15 +259,23 @@ void web_main_loop(void *arg) {
 } // namespace
 
 int main(int argc, char *argv[]) {
-  (void)argc;
-  (void)argv;
+  CommandLine cli;
+  if (!parse_command_line(argc, argv, cli)) {
+    return 2;
+  }
+
+  // Tool mode: dump the defaults and exit without opening a window.
+  if (!cli.write_default_config_path.empty()) {
+    return write_default_config(cli.write_default_config_path) ? 0 : 1;
+  }
+
+  const atm::Json config = load_config(cli.config_path);
+  const EngineConfig engine_config =
+      make_engine_config(config.isObject() ? config.find("engine") : nullptr);
 
   TowerSwarmRuntime rt;
   rt.counter_freq = SDL_GetPerformanceFrequency();
-  rt.engine = engine_create(tower_swarm::kWindowWidthPx,
-                            tower_swarm::kWindowHeightPx,
-                            tower_swarm::kWorldWidthPx,
-                            tower_swarm::kWorldHeightPx, tower_swarm::kTileSizePx);
+  rt.engine = engine_create_with_config(engine_config);
   if (!rt.engine) {
     SDL_Log("TowerSwarm: failed to create engine.");
     return 1;

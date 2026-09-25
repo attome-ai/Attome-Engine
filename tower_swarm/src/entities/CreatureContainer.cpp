@@ -34,10 +34,12 @@ void move_with_grid(Engine *engine, RenderableEntityContainer *container,
     engine->grid.move(node_idx, x, y);
   }
 
-  const int cx = std::clamp(static_cast<int>(x * INV_GRID_CELL_SIZE), 0,
-                            static_cast<int>(GRID_CELL_WIDTH) - 1);
-  const int cy = std::clamp(static_cast<int>(y * INV_GRID_CELL_SIZE), 0,
-                            static_cast<int>(GRID_CELL_HEIGHT) - 1);
+  // Live grid layout (sized from the EngineConfig the engine was created with).
+  const SpatialGrid &grid = engine->grid;
+  const int cx = std::clamp(static_cast<int>(x * grid.invCellSize()), 0,
+                            grid.cellsWide() - 1);
+  const int cy = std::clamp(static_cast<int>(y * grid.invCellSize()), 0,
+                            grid.cellsHigh() - 1);
   container->cell_x[slot] = static_cast<std::uint16_t>(cx);
   container->cell_y[slot] = static_cast<std::uint16_t>(cy);
 }
@@ -1436,10 +1438,9 @@ void CreatureContainer::update(float delta_time) {
             static_cast<int>(xorshift32(rng_state[slot]) % 3u) - 1;
         const int oy =
             static_cast<int>(xorshift32(rng_state[slot]) % 3u) - 1;
-        const float dx =
-            static_cast<float>(ox) * static_cast<float>(GRID_CELL_SIZE);
-        const float dy =
-            static_cast<float>(oy) * static_cast<float>(GRID_CELL_SIZE);
+        const float cell = engine_->grid.cellSize();
+        const float dx = static_cast<float>(ox) * cell;
+        const float dy = static_cast<float>(oy) * cell;
         const float nx =
             std::clamp(x_positions[slot] + dx, 0.0f,
                        std::max(0.0f, static_cast<float>(kWorldWidthPx - widths[slot])));

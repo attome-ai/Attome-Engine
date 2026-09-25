@@ -1,29 +1,30 @@
 function(attome_add_game target_name)
-  if(NOT DEFINED ATTOME_GAMES_ROOT)
-    message(FATAL_ERROR "ATTOME_GAMES_ROOT is not set. Include from games/CMakeLists.txt.")
-  endif()
-
-  add_executable(${target_name}
-    ${ARGN}
-    "${ATTOME_GAMES_ROOT}/ATMEngine.cpp"
-  )
+  add_executable(${target_name} ${ARGN})
 
   target_include_directories(${target_name} PRIVATE
-    "${ATTOME_GAMES_ROOT}"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
   )
 
-  find_package(SDL3 CONFIG REQUIRED)
-  target_link_libraries(${target_name} PRIVATE SDL3::SDL3)
-  target_link_libraries(${target_name} PRIVATE AttomeNet)
+  target_link_libraries(${target_name} PRIVATE AttomeCore)
+  if(TARGET AttomeNet)
+    target_link_libraries(${target_name} PRIVATE AttomeNet)
+  endif()
+
+  # Ship the game's JSON config (editable without rebuilding) and assets next
+  # to the executable.
+  foreach(data_dir config assets)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${data_dir}")
+      add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+          "${CMAKE_CURRENT_SOURCE_DIR}/${data_dir}"
+          "$<TARGET_FILE_DIR:${target_name}>/${data_dir}"
+      )
+    endif()
+  endforeach()
 
   if(MSVC)
     target_compile_options(${target_name} PRIVATE /W4)
   else()
     target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wpedantic)
-  endif()
-
-  if(WIN32)
-    target_compile_definitions(${target_name} PRIVATE NOMINMAX)
   endif()
 endfunction()

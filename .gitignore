@@ -1,2 +1,18 @@
-/out/build/x64-Debug/
+# Build output
+/out/
+/build/
+/cmake-build-*/
+CMakeUserPresets.json
+
+# vcpkg (restored from vcpkg.json in manifest mode)
+/vcpkg_installed/
+
+# IDEs
 /.vs/
+/.idea/
+/.vscode/
+*.user
+
+# Logs / scratch
+errors.txt
+*.log

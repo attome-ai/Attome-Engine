@@ -1,0 +1,35 @@
+{
+  // Engine settings: read once at startup (restart to apply).
+  "engine": {
+    "window": { "title": "My Attome Game", "width": 1280, "height": 720,
+                "resizable": false, "vsync": true },
+    "world":  { "width": 50000, "height": 50000 },
+    "grid":   { "cell_size": 64, "node_reserve": 65536, "query_pad_cells": 4,
+                "static_chunk_size": 512, "hybrid_activation_margin": 150 },
+    // fixed_timestep_hz: 0 = one update per frame with the real frame time.
+    "time":   { "max_frame_dt": 0.1, "fixed_timestep_hz": 0,
+                "max_fixed_steps_per_frame": 4 },
+    "audio":  { "enabled": true, "max_voices": 32, "master_volume": 1.0 }
+  },
+
+  // Key bindings: SDL scancode names, "mouse:left", "pad:a", ...
+  "input": {
+    "bindings": {
+      "quit":  ["Escape"],
+      "left":  ["A", "Left", "pad:dpleft"],
+      "right": ["D", "Right", "pad:dpright"]
+    },
+    "axes": {
+      "move_x": { "negative": "left", "positive": "right",
+                  "pad_axis": "leftx", "deadzone": 0.2 }
+    }
+  },
+
+  // Game tunables (ATM_TUNABLE): edits apply live while the game runs.
+  "game": {
+    "kPlayerSpeed": 400,
+    "kClearR": 10,
+    "kClearG": 10,
+    "kClearB": 15
+  }
+}

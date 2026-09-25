@@ -53,3 +53,27 @@ Angular route `/games/meteor-dodge` loads:
 - `/wasm/meteor-dodge/index.html`
 
 The page then boots `meteor_dodge.js` and attaches SDL3 rendering to the canvas.
+
+## Configuration
+
+Tuning values from `src/MeteorDodgeConstants.h` are loaded from
+`config/meteor_dodge.json` (section `"meteor_dodge"`, e.g.
+`"meteor_dodge": { "PLAYER_SPEED": 540 }`). `build_web.ps1` preloads the
+`config/` folder into the virtual FS (`meteor_dodge.data`, deploy it next to
+the `.js`/`.wasm`). Missing keys keep their compiled-in default; unknown keys
+and wrong types are logged and ignored. If the file is missing or broken the
+game runs with the defaults.
+
+- Edits apply **live** (checked twice a second; `[tunables] reloaded ...` is
+  logged). On web the preloaded file is baked into the bundle, so rebuild to
+  change it there.
+- **Restart required**: `WINDOW_*`, `WORLD_*`, `GRID_CELL_SIZE`,
+  `PLAYER_WIDTH/HEIGHT`, `METEOR_WIDTH/HEIGHT`, `INITIAL_METEOR_COUNT`,
+  `MAX_METEOR_COUNT` and the optional `"engine"` section (timestep, vsync,
+  audio, grid tuning). Meteor speed/drift changes apply as meteors respawn.
+
+Command line (desktop builds):
+
+- `--config <path>`: use another config file (default `config/meteor_dodge.json`).
+- `--write-default-config <path>`: write all values with their compiled-in
+  defaults (plus the `"engine"` section) to `<path>` and exit.

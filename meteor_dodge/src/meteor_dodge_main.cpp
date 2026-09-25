@@ -8,7 +8,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
+#include <string>
 #include <utility>
 
 #if defined(__EMSCRIPTEN__)
@@ -58,8 +60,8 @@ public:
     const uint32_t slot = getSlot(id);
     x_positions[slot] = x;
     y_positions[slot] = y;
-    widths[slot] = meteor_dodge::PLAYER_WIDTH;
-    heights[slot] = meteor_dodge::PLAYER_HEIGHT;
+    widths[slot] = static_cast<int16_t>(meteor_dodge::PLAYER_WIDTH);
+    heights[slot] = static_cast<int16_t>(meteor_dodge::PLAYER_HEIGHT);
     texture_ids[slot] = textureId;
     z_indices[slot] = 100;
     flags[slot] |= static_cast<uint8_t>(EntityFlag::VISIBLE);
@@ -93,8 +95,8 @@ public:
     const uint32_t slot = getSlot(id);
     x_positions[slot] = x;
     y_positions[slot] = y;
-    widths[slot] = meteor_dodge::METEOR_WIDTH;
-    heights[slot] = meteor_dodge::METEOR_HEIGHT;
+    widths[slot] = static_cast<int16_t>(meteor_dodge::METEOR_WIDTH);
+    heights[slot] = static_cast<int16_t>(meteor_dodge::METEOR_HEIGHT);
     texture_ids[slot] = textureId;
     z_indices[slot] = 50;
     speeds[slot] = speed;
@@ -161,8 +163,9 @@ void moveEntityWithGrid(Engine *engine, RenderableEntityContainer *container, ui
     engine->grid.move(nodeIndex, newX, newY);
   }
 
-  container->cell_x[slot] = static_cast<uint16_t>(newX * INV_GRID_CELL_SIZE);
-  container->cell_y[slot] = static_cast<uint16_t>(newY * INV_GRID_CELL_SIZE);
+  const float invCellSize = engine->grid.invCellSize();
+  container->cell_x[slot] = static_cast<uint16_t>(newX * invCellSize);
+  container->cell_y[slot] = static_cast<uint16_t>(newY * invCellSize);
 }
 
 void respawnMeteor(MeteorDodgeRuntime &runtime, uint32_t slot, bool addScore) {
@@ -293,14 +296,83 @@ void updateGameplay(MeteorDodgeRuntime &runtime, float deltaTime) {
   }
 }
 
-bool initializeGame(MeteorDodgeRuntime &runtime) {
-  runtime.engine = engine_create(
-    meteor_dodge::WINDOW_WIDTH,
-    meteor_dodge::WINDOW_HEIGHT,
-    meteor_dodge::WORLD_WIDTH,
-    meteor_dodge::WORLD_HEIGHT,
-    meteor_dodge::GRID_CELL_SIZE
-  );
+// Relative paths are resolved against the working directory, then the
+// executable directory. On web the file is preloaded into the virtual FS at
+// this path (see build_web.ps1).
+constexpr const char *kDefaultConfigPath = "config/meteor_dodge.json";
+
+// Window, world and grid size come from the tunables; the optional "engine"
+// section of the config file can override the rest (timestep, vsync, ...).
+EngineConfig makeEngineConfig(const atm::Json *engineSection) {
+  EngineConfig config;
+  if (engineSection) {
+    std::string error;
+    if (!engine_config_from_json(*engineSection, config, &error)) {
+      SDL_Log("MeteorDodge: config \"engine\" section: %s", error.c_str());
+    }
+  }
+  config.window_width = meteor_dodge::WINDOW_WIDTH;
+  config.window_height = meteor_dodge::WINDOW_HEIGHT;
+  config.world_width = meteor_dodge::WORLD_WIDTH;
+  config.world_height = meteor_dodge::WORLD_HEIGHT;
+  config.grid_cell_size = meteor_dodge::GRID_CELL_SIZE;
+  return config;
+}
+
+bool writeDefaultConfig(const std::string &path) {
+  atm::Json root = atm::Tunables::instance().toJson();
+  atm::Json engine = engine_config_to_json(makeEngineConfig(nullptr));
+  // Window/world/grid size live in the "meteor_dodge" section.
+  atm::Json::Object &sections = engine.asObject();
+  sections.erase("world");
+  if (auto window = sections.find("window"); window != sections.end()) {
+    window->second.asObject().erase("width");
+    window->second.asObject().erase("height");
+    window->second.asObject().erase("title");
+  }
+  if (auto grid = sections.find("grid"); grid != sections.end()) {
+    grid->second.asObject().erase("cell_size");
+  }
+  root["engine"] = std::move(engine);
+  if (!atm::write_text_file(path, root.dump(2))) {
+    SDL_Log("MeteorDodge: could not write '%s': %s", path.c_str(), SDL_GetError());
+    return false;
+  }
+  SDL_Log("MeteorDodge: wrote default config to '%s'.", path.c_str());
+  return true;
+}
+
+// Missing or broken config files are not fatal: the game runs with the
+// compiled-in defaults. Returns the parsed document, or a null Json.
+atm::Json loadConfig(const std::string &requestedPath) {
+  const std::string path = atm::resolve_path(requestedPath);
+  if (!SDL_GetPathInfo(path.c_str(), nullptr)) {
+    SDL_Log("MeteorDodge: no config at '%s'; using compiled defaults.", path.c_str());
+    return atm::Json();
+  }
+
+  atm::Tunables &tunables = atm::Tunables::instance();
+  std::string error;
+  if (!tunables.loadFile(path, &error)) {
+    if (tunables.loadedPath().empty()) {
+      SDL_Log("MeteorDodge: failed to load config '%s': %s. Using compiled defaults; fix the file and restart.",
+              path.c_str(), error.c_str());
+      return atm::Json();
+    }
+    SDL_Log("MeteorDodge: config '%s' has invalid values (%s); those keep their defaults.",
+            path.c_str(), error.c_str());
+  }
+  SDL_Log("MeteorDodge: loaded config '%s' (live reload on).", path.c_str());
+
+  atm::Json root;
+  if (!atm::Json::parseFile(path, root, &error)) {
+    return atm::Json();
+  }
+  return root;
+}
+
+bool initializeGame(MeteorDodgeRuntime &runtime, const EngineConfig &engineConfig) {
+  runtime.engine = engine_create_with_config(engineConfig);
 
   if (!runtime.engine) {
     SDL_Log("Failed to initialize engine.");
@@ -375,6 +447,10 @@ void shutdownGame(MeteorDodgeRuntime &runtime) {
 }
 
 void runSingleFrame(MeteorDodgeRuntime &runtime) {
+  // Applies edits to the config file while the game runs (the engine logs
+  // "[tunables] reloaded ..." when it does).
+  atm::Tunables::instance().reloadIfChanged();
+
   Uint64 now = SDL_GetTicks();
   float deltaTime = std::min((now - runtime.lastFrameTicks) / 1000.0f, 0.05f);
   runtime.lastFrameTicks = now;
@@ -424,10 +500,21 @@ void webMainLoop(void *arg) {
 } // namespace
 
 int main(int argc, char *argv[]) {
-  (void)argc;
-  (void)argv;
+  std::string configPath = kDefaultConfigPath;
+  for (int i = 1; i < argc; i++) {
+    const bool hasValue = (i + 1) < argc;
+    if (std::strcmp(argv[i], "--config") == 0 && hasValue) {
+      configPath = argv[++i];
+    } else if (std::strcmp(argv[i], "--write-default-config") == 0 && hasValue) {
+      // Tool mode: dump the defaults and exit without opening a window.
+      return writeDefaultConfig(argv[i + 1]) ? 0 : 1;
+    }
+  }
 
-  if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+  const atm::Json config = loadConfig(configPath);
+  const EngineConfig engineConfig = makeEngineConfig(config.isObject() ? config.find("engine") : nullptr);
+
+  if (!SDL_Init(SDL_INIT_VIDEO)) {
     SDL_Log("SDL_Init failed: %s", SDL_GetError());
     return 1;
   }
@@ -435,7 +522,7 @@ int main(int argc, char *argv[]) {
   std::srand(static_cast<unsigned int>(std::time(nullptr)));
 
   MeteorDodgeRuntime runtime;
-  if (!initializeGame(runtime)) {
+  if (!initializeGame(runtime, engineConfig)) {
     shutdownGame(runtime);
     SDL_Quit();
     return 1;

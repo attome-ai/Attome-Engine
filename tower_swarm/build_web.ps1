@@ -49,9 +49,13 @@ $emsdkBat = Join-Path $emsdkDir 'emsdk.bat'
 
 $outDir = Join-Path $repoRoot 'frontend/webai/projects/noobygame/public/wasm/tower-swarm'
 
-$engineCpp = Join-Path $gamesRoot 'ATMEngine.cpp'
-$engineInclude = $gamesRoot
+$engineCpp = Join-Path $gamesRoot 'engine/ATMEngine.cpp'
+$engineJsonCpp = Join-Path $gamesRoot 'engine/ATMJson.cpp'
+$engineConfigCpp = Join-Path $gamesRoot 'engine/ATMConfig.cpp'
+$engineInclude = Join-Path $gamesRoot 'engine'
 $gameInclude = Join-Path $scriptDir 'src'
+# Runtime JSON config, preloaded into the virtual FS as config/tower_swarm.json.
+$configDir = Join-Path $scriptDir 'config'
 
 $sources = @(
   (Join-Path $scriptDir 'src/tower_swarm_main.cpp')
@@ -64,12 +68,16 @@ $sources = @(
   (Join-Path $scriptDir 'src/entities/ProjectileContainer.cpp')
   (Join-Path $scriptDir 'src/entities/PickupContainer.cpp')
   (Join-Path $scriptDir 'src/entities/TileContainer.cpp')
+  (Join-Path $scriptDir 'src/systems/PathGrid.cpp')
   (Join-Path $scriptDir 'src/levels/WaveSpawner.cpp')
   (Join-Path $scriptDir 'src/levels/LevelManager.cpp')
   (Join-Path $scriptDir 'src/levels/SaveState.cpp')
   (Join-Path $scriptDir 'src/screens/HUD.cpp')
   (Join-Path $scriptDir 'src/shop/WaveBuffShop.cpp')
+  (Join-Path $scriptDir 'src/shop/RelicSystem.cpp')
   $engineCpp
+  $engineJsonCpp
+  $engineConfigCpp
 )
 
 foreach ($src in $sources) {
@@ -77,6 +85,11 @@ foreach ($src in $sources) {
     throw "Source file missing: $src"
   }
 }
+
+if (-not (Test-Path (Join-Path $configDir 'tower_swarm.json'))) {
+  throw "Config file missing: $(Join-Path $configDir 'tower_swarm.json')"
+}
+$configDir = (Resolve-Path $configDir).Path
 
 if (-not (Test-Path $engineCpp)) {
   throw "Engine source missing: $engineCpp"
@@ -134,6 +147,8 @@ $emArgs = @(
   '-sASSERTIONS=1'
   '-sEXPORTED_RUNTIME_METHODS=["ccall","cwrap"]'
   '-sENVIRONMENT=web'
+  '--preload-file'
+  "$configDir@config"
   '-o'
   $outFile
 )
@@ -147,6 +162,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host 'Done. Generated files:'
 Write-Host " - $(Join-Path $outDir 'tower_swarm.js')"
 Write-Host " - $(Join-Path $outDir 'tower_swarm.wasm')"
+Write-Host " - $(Join-Path $outDir 'tower_swarm.data') (preloaded config/)"
 
 if ($Play) {
   Start-NoobyGameDevServer -RepoRootPath $repoRoot

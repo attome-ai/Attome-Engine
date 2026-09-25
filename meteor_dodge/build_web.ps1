@@ -50,8 +50,19 @@ $outDir = Join-Path $repoRoot '../AttomeAngular/webai/projects/noobygame/public/
 
 $mainCpp = Join-Path $scriptDir 'src/meteor_dodge_main.cpp'
 $engineCpp = Join-Path $repoRoot 'engine/ATMEngine.cpp'
+$engineJsonCpp = Join-Path $repoRoot 'engine/ATMJson.cpp'
+$engineConfigCpp = Join-Path $repoRoot 'engine/ATMConfig.cpp'
 $engineDir = Join-Path $repoRoot 'engine'
 $libDir = Join-Path $repoRoot 'lib'
+# Runtime JSON config, preloaded into the virtual FS as config/meteor_dodge.json.
+$configDir = Join-Path $scriptDir 'config'
+
+foreach ($src in @($mainCpp, $engineCpp, $engineJsonCpp, $engineConfigCpp, (Join-Path $configDir 'meteor_dodge.json'))) {
+  if (-not (Test-Path $src)) {
+    throw "Source file missing: $src"
+  }
+}
+$configDir = (Resolve-Path $configDir).Path
 
 if (-not (Get-Command em++ -ErrorAction SilentlyContinue)) {
   if (-not (Test-Path $emsdkEnvScript)) {
@@ -95,6 +106,8 @@ $outFile = Join-Path $outDir 'meteor_dodge.js'
 $emArgs = @(
   $mainCpp
   $engineCpp
+  $engineJsonCpp
+  $engineConfigCpp
   '-I'
   $engineDir
   '-I'
@@ -106,6 +119,8 @@ $emArgs = @(
   '-sASSERTIONS=1'
   '-sEXPORTED_RUNTIME_METHODS=["ccall","cwrap"]'
   '-sENVIRONMENT=web'
+  '--preload-file'
+  "$configDir@config"
   '-o'
   $outFile
 )
@@ -119,6 +134,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host 'Done. Generated files:'
 Write-Host " - $(Join-Path $outDir 'meteor_dodge.js')"
 Write-Host " - $(Join-Path $outDir 'meteor_dodge.wasm')"
+Write-Host " - $(Join-Path $outDir 'meteor_dodge.data') (preloaded config/)"
 
 if ($Play) {
   Start-NoobyGameDevServer -RepoRootPath $repoRoot

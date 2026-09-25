@@ -2050,7 +2050,7 @@ void TowerSwarmGame::tick(float dt, const InputManager &input) {
                 UpgradeNode node;
                 int max_rank;
               };
-              constexpr std::array<NodeDef, 5> kNodes{
+              const std::array<NodeDef, 5> kNodes{
                   NodeDef{UpgradeNode::Strike, inter_level_shop::kUpgradeStrikeMaxRanks},
                   NodeDef{UpgradeNode::Vitality, inter_level_shop::kUpgradeVitalityMaxRanks},
                   NodeDef{UpgradeNode::Reach, inter_level_shop::kUpgradeReachMaxRanks},
@@ -2182,7 +2182,7 @@ void TowerSwarmGame::tick(float dt, const InputManager &input) {
                 int add_hp;
                 bool full;
               };
-              constexpr std::array<RepairOpt, 3> kOpts{
+              const std::array<RepairOpt, 3> kOpts{
                   RepairOpt{inter_level_shop::kRepairRestore20Cost,
                             inter_level_shop::kRepairRestore20Hp, false},
                   RepairOpt{inter_level_shop::kRepairRestore50Cost,
@@ -4780,7 +4780,7 @@ void TowerSwarmGame::renderHUD(const InputManager &input) {
         UpgradeNode node;
         int max_rank;
       };
-      constexpr std::array<NodeRow, 5> kNodes{
+      const std::array<NodeRow, 5> kNodes{
           NodeRow{"Strike", UpgradeNode::Strike, inter_level_shop::kUpgradeStrikeMaxRanks},
           NodeRow{"Vitality", UpgradeNode::Vitality, inter_level_shop::kUpgradeVitalityMaxRanks},
           NodeRow{"Reach", UpgradeNode::Reach, inter_level_shop::kUpgradeReachMaxRanks},
@@ -4952,7 +4952,7 @@ void TowerSwarmGame::renderHUD(const InputManager &input) {
         int add;
         bool full;
       };
-      constexpr std::array<Opt, 3> kOpts{
+      const std::array<Opt, 3> kOpts{
           Opt{"+20 HP", inter_level_shop::kRepairRestore20Cost,
               inter_level_shop::kRepairRestore20Hp, false},
           Opt{"+50 HP", inter_level_shop::kRepairRestore50Cost,
