@@ -92,7 +92,7 @@ const Rig &Rig::humanoid() {
     // MainHand/OffHand: centre of the fist (hand part is 3 voxels, pivot on
     // top). Back: centre of the upper back surface. Head: top of the head,
     // hats/helmets/hair are authored with their pivot at the crown centre.
-    r.socketOffset = {glm::vec3(0.0f, -1.5f, 0.0f), glm::vec3(0.0f, -1.5f, 0.0f),
+    r.socketOffset = {glm::vec3(0.0f, -2.0f, 0.0f), glm::vec3(0.0f, -2.0f, 0.0f),
                       glm::vec3(0.0f, 5.0f, 3.5f), glm::vec3(0.0f, 9.0f, 0.0f)};
     return r;
   }();

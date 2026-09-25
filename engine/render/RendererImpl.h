@@ -124,6 +124,10 @@ struct Renderer::Impl {
   vk::Image hdrMsaa;            // only when msaa > 1
   vk::Image hdr;                // resolved HDR colour (sampled)
   vk::Image depth;
+  vk::Image depthResolve;       // single-sample resolved depth (only when msaa > 1)
+  vk::Image ao;                 // half-res SSAO (R32F, GENERAL layout)
+  VkImage sceneDepthImage = VK_NULL_HANDLE; // sampled depth: depthResolve or depth
+  VkImageView sceneDepthView = VK_NULL_HANDLE;
   vk::Image bloom;              // mip chain, GENERAL layout
   std::array<VkImageView, kMaxBloomMips> bloomMipViews{};
   uint32_t bloomMips = 0;
@@ -136,6 +140,11 @@ struct Renderer::Impl {
   VkDescriptorSetLayout tonemapSetLayout = VK_NULL_HANDLE;
   std::array<VkDescriptorSet, 2 * kMaxBloomMips> bloomSets{};
   VkDescriptorSet tonemapSet = VK_NULL_HANDLE;
+  VkDescriptorSetLayout ssaoSetLayout = VK_NULL_HANDLE;
+  VkDescriptorSet ssaoSet = VK_NULL_HANDLE;
+  VkPipelineLayout ssaoPipelineLayout = VK_NULL_HANDLE;
+  VkPipeline ssaoPipeline = VK_NULL_HANDLE;
+  VkSampler nearestSampler = VK_NULL_HANDLE;
   VkPipelineLayout scenePipelineLayout = VK_NULL_HANDLE;
   VkPipelineLayout bloomPipelineLayout = VK_NULL_HANDLE;
   VkPipelineLayout tonemapPipelineLayout = VK_NULL_HANDLE;
@@ -203,6 +212,9 @@ struct Renderer::Impl {
   uint32_t opaqueDrawEstimate = 0;
   uint64_t facesEstimate = 0;
   glm::vec3 fogColorLinear{0.0f};
+  glm::vec3 sunDirWorld{0.0f, 1.0f, 0.0f}; // normalised, for sun shafts
+  glm::vec3 sunColorLinear{1.0f};
+  float sunIntensity = 0.0f;
 
   // --- screenshot ------------------------------------------------------------------
   std::string screenshotRequest;     // requested, not yet recorded

@@ -186,11 +186,47 @@ void ServerState::sendInventory(Player &pl) {
   m.equipped.assign(pl.equipped.begin(), pl.equipped.end());
   sendTo(pl, m, Channel::ReliableOrdered);
   pl.inventoryDirty = false;
+  // The held item may have changed (moved, used up): keep the hand in sync.
+  const ItemId held = heldWeapon(pl);
+  const auto piece = held < itemPiece.size() ? itemPiece[held] : atm::model::kNoPiece;
+  if (pl.appearance.pieces[size_t(EquipSlot::MainHand)] != piece) refreshAppearance(pl);
+}
+
+ItemId ServerState::heldWeapon(const Player &pl) const {
+  if (pl.heldSlot < 9) {
+    const ItemStack &s = pl.inv[pl.heldSlot];
+    if (s.item && s.count > 0) {
+      const ItemDef &d = itemDef(s.item);
+      if (isHoldable(d.kind) && skillLevel(pl, d.skill) >= d.levelReq) return s.item;
+    }
+  }
+  return pl.equipped[size_t(EquipSlot::MainHand)];
+}
+
+void ServerState::consumeItem(Player &pl, uint8_t slot) {
+  if (slot >= kInventorySlots || tick < pl.eatReadyTick) return;
+  Entity *pe = findEntity(pl.entity);
+  if (!pe || pe->dead) return;
+  const ItemStack &s = pl.inv[slot];
+  if (!s.item || s.count == 0) return;
+  const ItemDef &d = itemDef(s.item);
+  if (d.kind != ItemKind::Food || d.healAmount == 0) return;
+  if (pe->hp >= pe->maxHp) {
+    ChatMsg cm;
+    cm.from = "Server";
+    cm.text = "You are already at full health.";
+    sendTo(pl, cm, Channel::ReliableOrdered);
+    return;
+  }
+  pe->hp = uint16_t(std::min<int>(pe->maxHp, int(pe->hp) + int(d.healAmount)));
+  pl.eatReadyTick = tick + Tick(kSimHz * 6 / 10);
+  removeFromSlot(pl, slot, 1);
+  startAction(*pe, action::Place);
 }
 
 void ServerState::refreshAppearance(Player &pl) {
   for (int i = 0; i < atm::model::kEquipSlotCount; ++i) {
-    const ItemId it = pl.equipped[size_t(i)];
+    const ItemId it = i == int(EquipSlot::MainHand) ? heldWeapon(pl) : pl.equipped[size_t(i)];
     pl.appearance.pieces[size_t(i)] = it < itemPiece.size() ? itemPiece[it] : atm::model::kNoPiece;
   }
   ++pl.appearanceVersion;
@@ -228,7 +264,7 @@ void ServerState::giveStartingKit(Player &pl) {
 
 uint16_t ServerState::rollDamage(const Player &pl, WeaponType weapon, Skill style, bool &critical) {
   (void)style;
-  const ItemId wi = pl.equipped[size_t(EquipSlot::MainHand)];
+  const ItemId wi = heldWeapon(pl);
   const double base = wi ? std::max<double>(1.0, itemDef(wi).damage) : 1.0;
   Skill dmgSkill = Skill::Strength, accSkill = Skill::Attack;
   if (weapon == WeaponType::Bow) dmgSkill = accSkill = Skill::Ranged;
@@ -380,7 +416,7 @@ glm::dvec3 ServerState::historicPos(const Entity &e, Tick at) const {
 
 void ServerState::meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skill style, Tick viewTick) {
   startAction(pe, action::Swing);
-  const ItemId wi = pl.equipped[size_t(EquipSlot::MainHand)];
+  const ItemId wi = heldWeapon(pl);
   const WeaponType weapon = wi ? itemDef(wi).weapon : WeaponType::None;
   const glm::dvec3 eye = eyePosition(pe.move);
   const glm::dvec3 aim(dir);

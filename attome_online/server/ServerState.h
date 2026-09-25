@@ -100,6 +100,8 @@ struct Player {
   Tick lastHurtTick = 0, respawnTick = 0, regenTick = 0;
   Tick joinTick = 0;
   Skill lastStyle = Skill::Attack;
+  uint8_t heldSlot = 0xFF;     // selected hotbar slot (0..8), 0xFF = none
+  Tick eatReadyTick = 0;
 
   // Replication
   Tick lastSnapshotAck = 0;
@@ -264,6 +266,8 @@ struct ServerState {
   void damagePlayer(Entity &victim, uint16_t amount, EntityId source);
   void meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skill style, Tick viewTick);
   glm::dvec3 historicPos(const Entity &e, Tick at) const; // lag compensation
+  ItemId heldWeapon(const Player &pl) const; // selected hotbar weapon/tool, else main hand
+  void consumeItem(Player &pl, uint8_t slot);
   void rangedAttack(Player &pl, Entity &pe, const glm::vec3 &dir, WeaponType weapon);
   float randf(); // [0,1)
   int randi(int lo, int hi); // inclusive

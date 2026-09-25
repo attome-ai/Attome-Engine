@@ -13,5 +13,7 @@ void main() {
   vec3 local = cornerPosition(f, quadCorner(k, f.dir, f.ao));
   ivec3 origin = ivec3(ch.originX, ch.originY, ch.originZ);
   vec3 rel = vec3(origin - frame.camBlock.xyz) - frame.camFrac.xyz + local;
+  if ((materials[f.material].flags & MATERIAL_FOLIAGE) != 0u)
+    rel += foliageSway(vec3(origin) + local, frame.camFrac.w);
   gl_Position = frame.lightViewProj * vec4(rel, 1.0);
 }

@@ -568,7 +568,7 @@ void ServerState::handleAttack(Player &pl, const Attack &m) {
   // Two ticks of grace absorb network jitter; the next ready tick counts from
   // the scheduled one, so early arrivals cannot raise the attack rate.
   if (!pe || pe->dead || tick + 2 < pl.attackReadyTick) return;
-  const ItemId weaponItem = pl.equipped[size_t(atm::model::EquipSlot::MainHand)];
+  const ItemId weaponItem = heldWeapon(pl);
   const WeaponType weapon = weaponItem ? itemDef(weaponItem).weapon : WeaponType::None;
   const float pitch = std::clamp(m.pitch, -1.55f, 1.55f);
   const glm::vec3 dir = aimDirection(m.yaw, pitch);
@@ -587,6 +587,18 @@ void ServerState::handleAttack(Player &pl, const Attack &m) {
 }
 
 void ServerState::handleEquip(Player &pl, const Equip &m) {
+  if (m.equipSlot == kEquipSelectHotbar) { // hold the selected hotbar item
+    const uint8_t slot = m.inventorySlot < 9 ? m.inventorySlot : uint8_t(0xFF);
+    if (slot != pl.heldSlot) {
+      pl.heldSlot = slot;
+      refreshAppearance(pl);
+    }
+    return;
+  }
+  if (m.equipSlot == kEquipConsume) {
+    consumeItem(pl, m.inventorySlot);
+    return;
+  }
   if (m.equipSlot >= atm::model::kEquipSlotCount) return;
   if (m.unequip) {
     ItemId &slotItem = pl.equipped[m.equipSlot];

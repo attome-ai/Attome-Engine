@@ -70,7 +70,8 @@ struct MaterialGpu {             // std430, 32 bytes
   uint32_t top, side, bottom;    // bytes R,G,B,A (0xAABBGGRR)
   float emissive;
   float alpha;
-  uint32_t pad0, pad1, pad2;
+  uint32_t flags;                // kMaterialWater | kMaterialFoliage
+  uint32_t pad1, pad2;
 };
 static_assert(sizeof(MaterialGpu) == 32);
 
@@ -114,7 +115,17 @@ struct TonemapPush {
   float bloomStrength;
   uint32_t bloomEnabled;
   uint32_t srgbOutput;           // 1 = swapchain applies sRGB itself
+  glm::vec2 sunUv;               // sun on screen (0..1, may be outside)
+  float shaftStrength;           // sun shafts, 0 = off
+  float aoStrength;              // SSAO, 0 = off
+  glm::vec4 sunColor;            // linear rgb
 };
-static_assert(sizeof(TonemapPush) == 16);
+static_assert(sizeof(TonemapPush) == 48);
+
+struct SsaoPush {
+  glm::mat4 viewProj;            // camera-relative
+  glm::mat4 invViewProj;
+};
+static_assert(sizeof(SsaoPush) == 128);
 
 } // namespace atm::render::gpu

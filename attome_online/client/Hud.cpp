@@ -437,9 +437,18 @@ void App::drawHud(float dt) {
     }
     // Selected item name above the bar.
     const ItemStack &cur = inventory_[size_t(hotbar_)];
-    if (cur.item)
-      ui::textCentered(fg, F.semibold, 16.0f * sc, screen.x * 0.5f, h0.y - 36.0f * sc,
-                       ui::withAlpha(color::Text, 0.9f), ui::prettyName(itemDef(cur.item).name));
+    if (cur.item) {
+      const ItemDef &cd = itemDef(cur.item);
+      const char *hint = cd.kind == ItemKind::Armour ? "Right-click to wear"
+                         : cd.kind == ItemKind::Food ? "Right-click to eat"
+                         : cd.kind == ItemKind::Block ? "Right-click to place"
+                                                      : nullptr;
+      const float y = h0.y - (hint ? 52.0f : 36.0f) * sc;
+      ui::textCentered(fg, F.semibold, 16.0f * sc, screen.x * 0.5f, y, ui::withAlpha(color::Text, 0.9f),
+                       ui::prettyName(cd.name));
+      if (hint)
+        ui::textCentered(fg, F.body, 13.0f * sc, screen.x * 0.5f, y + 20.0f * sc, color::TextDim, hint, 0.6f);
+    }
   }
 
   // --- XP drops (right of the crosshair, rising) ------------------------------------

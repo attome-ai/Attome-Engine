@@ -28,7 +28,8 @@ namespace {
 // Body palette layout (shared by every body part so skin variants line up).
 enum BodyCol : uint8_t {
   kSkin = 1, kSkinShade, kEyeWhite, kEyeDark, kBlush, kShirt, kShirtDark,
-  kPants, kPantsDark, kShoe, kSole, kBelt, kBuckle, kMouth, kBodyColCount
+  kPants, kPantsDark, kShoe, kSole, kBelt, kBuckle, kMouth, kIris, kBrow, kShirtLight,
+  kBodyColCount
 };
 
 std::vector<uint32_t> bodyPalette(uint32_t skin, uint32_t skinShade) {
@@ -47,6 +48,9 @@ std::vector<uint32_t> bodyPalette(uint32_t skin, uint32_t skinShade) {
   p[kBelt] = rgba(80, 52, 30);
   p[kBuckle] = rgba(250, 205, 70);
   p[kMouth] = rgba(150, 70, 70);
+  p[kIris] = rgba(64, 132, 236);
+  p[kBrow] = rgba(92, 56, 32);
+  p[kShirtLight] = rgba(120, 190, 250);
   return p;
 }
 
@@ -88,27 +92,33 @@ void buildBody(ModelLibrary &lib) {
       lib.setBodyPart(bone, shape, lib.addPart(std::move(p.part)));
     };
 
-    { // Head 9x9x9 (same for both shapes): big eyes, blush, tiny mouth.
+    { // Head 9x9x9 (same for both shapes), Trove style: rounded block, big
+      // glossy eyes (iris + pupil + sparkle), brows, nose, blush, small mouth.
       Painter p = bodyPainter("body_head" + sfx, 9, 9, 9, {4.5f, 0.0f, 4.5f});
       p.box(0, 0, 0, 9, 9, 9, kSkin);
-      p.box(0, 0, 0, 9, 1, 9, kSkinShade);           // jaw shadow row
-      p.box(1, 3, 0, 3, 5, 1, kEyeWhite);            // left eye (x small = left)
-      p.box(6, 3, 0, 8, 5, 1, kEyeWhite);
-      p.set(2, 3, 0, kEyeDark);
-      p.set(2, 4, 0, kEyeDark);
-      p.set(6, 3, 0, kEyeDark);
-      p.set(6, 4, 0, kEyeDark);
-      p.set(1, 2, 0, kBlush);
-      p.set(7, 2, 0, kBlush);
-      p.box(4, 1, 0, 5, 2, 1, kMouth);
-      p.box(0, 4, 3, 1, 6, 5, kSkinShade);           // ears
-      p.box(8, 4, 3, 9, 6, 5, kSkinShade);
+      p.roundEdges();
+      p.box(1, 0, 1, 8, 1, 8, kSkinShade);           // jaw shadow
+      for (int side = 0; side < 2; ++side) {         // eyes: 2 wide, 3 tall
+        const int x0 = side ? 5 : 2;
+        p.box(x0, 3, 0, x0 + 2, 6, 1, kIris);
+        p.set(side ? x0 + 1 : x0, 3, 0, kEyeDark);   // pupil, lower inner corner
+        p.set(side ? x0 + 1 : x0, 4, 0, kEyeDark);
+        p.set(side ? x0 : x0 + 1, 5, 0, kEyeWhite);  // sparkle, upper outer corner
+        p.box(x0 - (side ? 0 : 1), 6, 0, x0 + 2 + (side ? 1 : 0), 7, 1, kBrow);
+        p.set(side ? 7 : 1, 2, 0, kBlush);
+      }
+      p.set(4, 3, 0, kSkinShade);                    // nose
+      p.set(4, 1, 0, kMouth);
+      p.box(0, 3, 3, 1, 6, 6, kSkinShade);           // ears
+      p.box(8, 3, 3, 9, 6, 6, kSkinShade);
       add(Bone::Head, p);
     }
-    { // Torso: shirt with collar and a darker hem.
+    { // Torso: shirt with a lighter chest, collar, darker hem and fabric grain.
       const int w = broad ? 10 : 9, d = broad ? 6 : 5;
       Painter p = bodyPainter("body_torso" + sfx, w, 6, d, {w * 0.5f, 0.0f, d * 0.5f});
       p.box(0, 0, 0, w, 6, d, kShirt);
+      p.box(1, 3, 0, w - 1, 5, 1, kShirtLight);
+      p.speckle(0, 1, 0, w, 6, d, kShirtDark, 0.08f, 11u);
       p.box(0, 0, 0, w, 1, d, kShirtDark);
       p.box(w / 2 - 1, 4, 0, w / 2 + 1 + (w & 1), 6, 1, kSkin); // collar V
       p.box(w / 2, 3, 0, w / 2 + (w & 1), 4, 1, kShirtDark);
@@ -137,10 +147,13 @@ void buildBody(ModelLibrary &lib) {
         p.box(0, 0, 0, aw, 3, aw, kSkin);
         add(side == 0 ? Bone::ArmLowerL : Bone::ArmLowerR, p);
       }
-      { // Hand: a mitten fist with a darker knuckle row.
-        Painter p = bodyPainter("body_hand" + sfx + lr, 3, 3, 3, {1.5f, 3.0f, 1.5f});
-        p.box(0, 0, 0, 3, 3, 3, kSkin);
-        p.box(0, 0, 0, 3, 1, 3, kSkinShade);
+      { // Hand: a chunky Trove fist (bigger than the wrist) with a thumb.
+        Painter p = bodyPainter("body_hand" + sfx + lr, 4, 4, 4, {2.0f, 4.0f, 2.0f});
+        p.box(0, 0, 0, 4, 4, 4, kSkin);
+        p.roundEdges();
+        p.box(0, 0, 0, 4, 1, 4, kSkinShade);
+        p.box(1, 1, 0, 3, 2, 1, kSkinShade);         // knuckle crease
+        p.set(side == 0 ? 3 : 0, 2, 0, kSkinShade);  // thumb
         add(side == 0 ? Bone::HandL : Bone::HandR, p);
       }
       {
@@ -155,11 +168,12 @@ void buildBody(ModelLibrary &lib) {
         p.box(0, 2, 0, 4, 3, 4, kPantsDark);
         add(side == 0 ? Bone::LegLowerL : Bone::LegLowerR, p);
       }
-      { // Foot: shoe with a sole row and a toe cap; toes toward z = 0 (front).
-        Painter p = bodyPainter("body_foot" + sfx + lr, 4, 2, 6, {2.0f, 2.0f, 4.0f});
-        p.box(0, 0, 0, 4, 2, 6, kShoe);
-        p.box(0, 0, 0, 4, 1, 6, kSole);
-        p.box(0, 1, 0, 4, 2, 1, kSole);
+      { // Foot: chunky shoe, rounded toe, sole row; toes toward z = 0 (front).
+        Painter p = bodyPainter("body_foot" + sfx + lr, 5, 2, 7, {2.5f, 2.0f, 4.5f});
+        p.box(0, 0, 0, 5, 2, 7, kShoe);
+        p.box(0, 0, 0, 5, 1, 7, kSole);
+        p.roundEdges();
+        p.box(1, 1, 0, 4, 2, 1, kSole);             // toe cap
         add(side == 0 ? Bone::FootL : Bone::FootR, p);
       }
     }
@@ -179,12 +193,35 @@ const uint32_t kHairColors[ModelLibrary::kHairColorCount][2] = {
     {rgba(214, 88, 44), rgba(170, 60, 30)},   // ginger
 };
 
+// Highlight shade of a hair colour (index 3 in hair palettes that have it).
+uint32_t hairHighlight(uint32_t c) {
+  auto ch = [&](int s) { return std::min(255, int((c >> s) & 255u) + 42); };
+  return rgba(ch(0), ch(8), ch(16));
+}
+
 void addHairVariants(VoxelPart &p) {
   for (int c = 1; c < ModelLibrary::kHairColorCount; ++c) {
     std::vector<uint32_t> v = p.palette;
     v[1] = kHairColors[c][0];
     v[2] = kHairColors[c][1];
+    if (v.size() > 3) v[3] = hairHighlight(kHairColors[c][0]);
     p.variantPalettes.insert(p.variantPalettes.end(), v.begin(), v.end());
+  }
+}
+
+// Tapered hair spike: a chain of shrinking squares from (x, y, z) along d.
+void hairSpike(Painter &p, int x, int y, int z, int dx, int dy, int dz, int len, int idx, int tip) {
+  // Rises one row per step but leans sideways only every other step, and the
+  // root is 2x2: consecutive steps always share a face (no floating voxels).
+  for (int i = 0; i < len; ++i) {
+    const int s = i < (len + 1) / 2 ? 2 : 1;
+    const int lean = (i + 1) / 2, prevLean = i / 2;
+    const int cx = x + dx * lean, cy = y + dy * i, cz = z + dz * lean;
+    const int col = i == len - 1 ? tip : idx;
+    p.box(cx, cy, cz, cx + s, cy + 1, cz + s, col);
+    // Also fill above the previous step so each layer rests on the one below.
+    const int px = x + dx * prevLean, pz = z + dz * prevLean;
+    p.box(std::min(px, cx), cy, std::min(pz, cz), std::max(px, cx) + 1, cy + 1, std::max(pz, cz) + 1, col);
   }
 }
 
@@ -206,10 +243,36 @@ void buildHair(ModelLibrary &lib, std::vector<int16_t> &hair) {
     addHairVariants(p.part);
     hair.push_back(int16_t(lib.addPart(std::move(p.part))));
   };
-  { // 0: short
-    Painter p("hair_short", 11, 5, 11, {5.5f, 3.0f, 5.5f});
-    p.part.palette = {0, kHairColors[0][0], kHairColors[0][1]};
-    hairCap(p, 3);
+  { // 0: Trove hero mop: voluminous cap, heavy bangs hanging over the brow,
+    // full sides and back, and tapered spikes flaring up and out.
+    // Part 17x13x17; the 9^3 head spans x,z 4..13 and y < 6 (crown at 6).
+    Painter p("hair_short", 17, 13, 17, {8.5f, 6.0f, 8.5f});
+    p.part.palette = {0, kHairColors[0][0], kHairColors[0][1], hairHighlight(kHairColors[0][0])};
+    p.box(3, 5, 3, 14, 8, 15, 1);                   // cap, 1 voxel proud of the head
+    p.box(4, 8, 4, 13, 9, 14, 3);                   // domed top, highlighted
+    p.box(3, 2, 13, 14, 8, 15, 1);                  // back
+    p.box(3, 2, 14, 14, 7, 15, 2);                  // layered: darker under-layer
+    for (int x = 3; x < 14; x += 2)                 // strand tips at the nape
+      p.box(x, (x / 2) % 2 ? 0 : 1, 13, x + 1, 2, 14, 2);
+    p.box(3, 1, 4, 4, 7, 13, 1);                    // sides
+    p.box(13, 1, 4, 14, 7, 13, 1);
+    p.box(3, 1, 4, 4, 3, 7, 2);                     // sideburn tips
+    p.box(13, 1, 4, 14, 3, 7, 2);
+    p.box(4, 4, 3, 13, 7, 4, 1);                    // bangs over the forehead
+    p.box(4, 6, 3, 13, 7, 4, 3);
+    p.box(5, 3, 3, 7, 4, 4, 1);                     // bang tips hanging over the brows
+    p.box(9, 2, 3, 10, 4, 4, 2);
+    p.box(11, 3, 3, 13, 4, 4, 1);
+    // Spikes: up and outward, highlighted tips.
+    hairSpike(p, 5, 8, 5, -1, 1, -1, 4, 1, 3);      // roots start inside the cap
+    hairSpike(p, 10, 8, 5, 1, 1, -1, 4, 1, 3);
+    hairSpike(p, 7, 8, 8, 0, 1, 0, 4, 1, 3);
+    hairSpike(p, 5, 7, 10, -1, 1, 1, 4, 1, 3);
+    hairSpike(p, 10, 7, 10, 1, 1, 1, 4, 1, 3);
+    hairSpike(p, 7, 6, 13, 0, 1, 1, 4, 1, 1);
+    hairSpike(p, 3, 5, 7, -1, 1, 0, 3, 1, 1);
+    hairSpike(p, 12, 5, 7, 1, 1, 0, 3, 1, 1);
+    p.clearBox(4, 0, 4, 13, 6, 13);                 // never inside the head
     finish(p);
   }
   { // 1: long with a ponytail
@@ -341,19 +404,37 @@ void armourTorso(ModelLibrary &lib, const char *name, const Tier &t, bool plate,
       body.set(6, y, 0, tr);
     body.box(0, 1, 0, 12, 2, 8, a);                         // belt
   }
+  if (!plate) // leather / cloth grain
+    body.speckle(0, 1, 0, 12, 5 + base, 8, d, 0.1f, uint32_t(name[0]) * 31u);
+  // Soften the four vertical corners (less box-like silhouette).
+  for (int y = 0; y < 6 + base; ++y) {
+    body.set(0, y, 0, 0);
+    body.set(11, y, 0, 0);
+    body.set(0, y, 7, 0);
+    body.set(11, y, 7, 0);
+  }
+  body.box(3, 5 + base, 1, 9, 6 + base, 7, tr);             // collar ring
   body.clearBox(4, 5 + base, 2, 8, 6 + base, 6);            // neck hole
   const int torsoPart = lib.addPart(std::move(body.part));
 
+  // Shoulder pads: wide, overhanging, rounded Trove pauldrons over a sleeve.
   int arms[2];
   for (int side = 0; side < 2; ++side) {
-    Painter p(std::string(name) + (side ? "_arm_R" : "_arm_L"), 5, 5, 5, {2.5f, 4.0f, 2.5f});
-    const int pm = p.c(t.main), pd = p.c(t.dark), ptr = p.c(t.trim);
-    p.box(0, 0, 0, 5, 5, 5, pm);
-    p.box(0, 0, 0, 5, 1, 5, pd);
-    if (plate)
-      p.box(0, 3, 0, 5, 5, 5, ptr);                         // pauldron
-    else
-      p.box(0, 4, 0, 5, 5, 5, ptr);
+    Painter p(std::string(name) + (side ? "_arm_R" : "_arm_L"), 7, 6, 7, {3.5f, 5.0f, 3.5f});
+    const int pm = p.c(t.main), pd = p.c(t.dark), ptr = p.c(t.trim), pa = p.c(t.accent);
+    p.box(1, 0, 1, 6, 4, 6, pm);                             // sleeve
+    p.box(1, 0, 1, 6, 1, 6, pd);                             // cuff
+    Painter pad("pad", 7, 3, 7, {0, 0, 0});
+    pad.box(0, 0, 0, 7, 3, 7, 1);
+    pad.roundEdges();
+    for (int y = 0; y < 3; ++y)
+      for (int z = 0; z < 7; ++z)
+        for (int x = 0; x < 7; ++x)
+          if (pad.part.at(x, y, z))
+            p.set(x, 3 + y, z, y == 0 ? pd : (plate ? ptr : pm));
+    if (!plate)
+      p.speckle(0, 3, 0, 7, 6, 7, pd, 0.12f, 77u + uint32_t(side));
+    p.set(side ? 1 : 5, 5, 3, pa);                           // rivet / stud
     arms[side] = lib.addPart(std::move(p.part));
   }
   replacePiece(lib, name, EquipSlot::Torso,

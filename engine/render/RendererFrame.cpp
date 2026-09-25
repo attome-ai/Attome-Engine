@@ -157,6 +157,9 @@ void Renderer::Impl::buildFrameUniforms(FrameData &f) {
   std::memcpy(f.ubo.mapped, &u, sizeof(u));
   vk::flushBuffer(ctx.allocator, f.ubo, 0, sizeof(u));
   fogColorLinear = glm::vec3(u.fogColor);
+  sunDirWorld = sun;
+  sunColorLinear = sunColor;
+  sunIntensity = sunI;
 }
 
 void Renderer::Impl::cullAndBuildLists(FrameData &f) {
@@ -421,11 +424,21 @@ void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT);
   const VkPipelineStageFlags2 depthStages =
       VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+  // Previous frame: depth test, and SSAO / tonemap sampling the scene depth.
+  const VkPipelineStageFlags2 depthPrev = depthStages | prevReaders;
   vk::imageBarrier(cmd, depth.image, depthAspect, VK_IMAGE_LAYOUT_UNDEFINED,
-                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, depthStages,
+                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, depthPrev,
                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, depthStages,
                    VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+  // Resolve writes happen at the end of the pass (depth/colour output stages).
+  const VkPipelineStageFlags2 resolveStages = depthStages | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+  const VkAccessFlags2 resolveAccess =
+      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+  if (msaa)
+    vk::imageBarrier(cmd, depthResolve.image, depthAspect, VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, prevReaders, VK_ACCESS_2_NONE,
+                     resolveStages, resolveAccess);
 
   VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
   color.imageView = msaa ? hdrMsaa.view : hdr.view;
@@ -442,8 +455,13 @@ void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32
   depthAtt.imageView = depth.view;
   depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
   depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-  depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  depthAtt.storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
   depthAtt.clearValue.depthStencil = {0.0f, 0}; // reverse-Z: 0 = infinitely far
+  if (msaa) {
+    depthAtt.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT; // always supported
+    depthAtt.resolveImageView = depthResolve.view;
+    depthAtt.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  }
 
   VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
   ri.renderArea = {{0, 0}, extent};
@@ -506,6 +524,28 @@ void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32
                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
+  vk::imageBarrier(cmd, sceneDepthImage, depthAspect, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, resolveStages, resolveAccess,
+                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
+  // --- SSAO (half res) --------------------------------------------------------------
+  {
+    // The previous frame's tonemap read the AO image: finish before overwriting.
+    vk::memoryBarrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_NONE,
+                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_NONE);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, ssaoPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, ssaoPipelineLayout, 0, 1, &ssaoSet, 0,
+                            nullptr);
+    gpu::SsaoPush sp{};
+    sp.viewProj = viewProj;
+    sp.invViewProj = glm::inverse(viewProj);
+    vkCmdPushConstants(cmd, ssaoPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(sp), &sp);
+    vkCmdDispatch(cmd, (ao.extent.width + 7) / 8, (ao.extent.height + 7) / 8, 1);
+    vk::memoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+  }
+
   // --- bloom -----------------------------------------------------------------------
   if (config.bloom && bloomMips > 0) recordBloom(cmd);
 
@@ -537,9 +577,22 @@ void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32
                           &tonemapSet, 0, nullptr);
   gpu::TonemapPush tp{};
   tp.exposure = 1.0f;
-  tp.bloomStrength = 0.5f;
+  tp.bloomStrength = 0.6f;
   tp.bloomEnabled = (config.bloom && bloomMips > 0) ? 1u : 0u;
   tp.srgbOutput = swapchain.srgb() ? 1u : 0u;
+  tp.aoStrength = 0.85f;
+  // Sun shafts: project the sun direction; fade out as it leaves the screen,
+  // goes behind the camera, or sets.
+  {
+    const glm::vec4 c = viewProj * glm::vec4(sunDirWorld, 0.0f);
+    if (c.w > 1e-4f) {
+      tp.sunUv = glm::vec2(c.x / c.w, c.y / c.w) * 0.5f + 0.5f;
+      const glm::vec2 outside = glm::max(glm::abs(tp.sunUv - 0.5f) - 0.5f, glm::vec2(0.0f));
+      const float onScreen = 1.0f - glm::clamp(glm::length(outside) / 0.35f, 0.0f, 1.0f);
+      tp.shaftStrength = 0.55f * onScreen * glm::clamp(sunIntensity, 0.0f, 1.0f);
+    }
+    tp.sunColor = glm::vec4(sunColorLinear, 0.0f);
+  }
   vkCmdPushConstants(cmd, tonemapPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(tp), &tp);
   vkCmdDraw(cmd, 3, 1, 0, 0);
   imgui.render(cmd);

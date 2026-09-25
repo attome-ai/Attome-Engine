@@ -36,7 +36,8 @@ struct MaterialGpu {
   uint top, side, bottom;
   float emissive;
   float alpha;
-  uint pad0, pad1, pad2;
+  uint flags;         // MATERIAL_WATER | MATERIAL_FOLIAGE
+  uint pad1, pad2;
 };
 
 #ifndef NO_SCENE_BUFFERS
@@ -107,6 +108,18 @@ vec3 cornerPosition(Face f, uint c) {
 vec4 unpackRGBA(uint c) { return unpackUnorm4x8(c); }
 
 vec3 srgbToLinear(vec3 c) { return pow(c, vec3(2.2)); }
+
+#define MATERIAL_WATER 1u
+#define MATERIAL_FOLIAGE 2u
+
+// Wind offset for foliage vertices. A function of the world position only,
+// so vertices shared by neighbouring faces move together (no cracks).
+vec3 foliageSway(vec3 worldPos, float time) {
+  float ph = time * 1.6 + worldPos.x * 0.37 + worldPos.z * 0.29 + worldPos.y * 0.21;
+  float gust = 0.75 + 0.25 * sin(time * 0.35 + worldPos.x * 0.02);
+  return vec3(sin(ph) + 0.35 * sin(ph * 2.7 + 0.8), 0.25 * sin(ph * 1.3 + 2.1), cos(ph * 0.8 + 1.3)) *
+         (0.06 * gust);
+}
 
 uint materialColor(MaterialGpu m, uint dir) {
   return dir == 2u ? m.top : (dir == 3u ? m.bottom : m.side);

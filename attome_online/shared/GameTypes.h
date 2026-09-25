@@ -50,6 +50,15 @@ uint32_t combatLevel(const std::array<uint32_t, kSkillCount> &levels); // levels
 enum class ItemKind : uint8_t { None, Block, Weapon, Tool, Armour, Resource, Food };
 enum class WeaponType : uint8_t { None = 0, Sword = 1, Bow = 2, Staff = 3, Pickaxe = 4 };
 
+// Special Equip.equipSlot values (real slots are 0..kEquipSlotCount-1):
+// select the held hotbar slot (inventorySlot = 0..8), or eat/use an item.
+inline constexpr uint8_t kEquipSelectHotbar = 15;
+inline constexpr uint8_t kEquipConsume = 14;
+
+// The item a player attacks / mines with: the selected hotbar slot when it
+// holds a weapon or tool, otherwise the equipped main hand.
+inline constexpr bool isHoldable(ItemKind k) { return k == ItemKind::Weapon || k == ItemKind::Tool; }
+
 // Seconds between attacks per weapon. Shared so the client never swings
 // faster than the server accepts (a mismatch = animations with no damage).
 inline constexpr float weaponCooldown(WeaponType w) {

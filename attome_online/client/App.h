@@ -5,6 +5,7 @@
 
 #include "NetClient.h"
 #include "Prediction.h"
+#include "Particles.h"
 
 #include "shared/GameTypes.h"
 #include "shared/Protocol.h"
@@ -219,6 +220,9 @@ private:
   float chatIdle_ = 0.0f;                // seconds since the last chat line (fade out)
   float hpTrail_ = 1.0f;                 // lagging health fraction (damage trail)
   float shake_ = 0.0f;                   // camera impact shake (0..1)
+  int sentHotbar_ = -1;                  // hotbar slot last reported to the server
+  Particles particles_;                  // voxel VFX (hits, slashes, debris, motes)
+  float bodyYaw_ = 0.0f;                 // rendered facing of the local character
   char chatInput_[200] = {};
   std::string status_ = "Connecting...";
 

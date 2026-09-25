@@ -176,15 +176,16 @@ void Renderer::Impl::shutdown() {
 
   for (VkPipeline *p : {&opaquePipeline, &translucentPipeline, &modelPipeline, &skyPipeline,
                         &highlightPipeline, &cullPipeline, &bloomPipeline, &tonemapPipeline,
-                        &shadowPipeline, &shadowModelPipeline}) {
+                        &shadowPipeline, &shadowModelPipeline, &ssaoPipeline}) {
     if (*p) vkDestroyPipeline(d, *p, nullptr);
     *p = VK_NULL_HANDLE;
   }
-  for (VkPipelineLayout *l : {&scenePipelineLayout, &bloomPipelineLayout, &tonemapPipelineLayout}) {
+  for (VkPipelineLayout *l : {&scenePipelineLayout, &bloomPipelineLayout, &tonemapPipelineLayout,
+                              &ssaoPipelineLayout}) {
     if (*l) vkDestroyPipelineLayout(d, *l, nullptr);
     *l = VK_NULL_HANDLE;
   }
-  for (VkDescriptorSetLayout *l : {&sceneSetLayout, &bloomSetLayout, &tonemapSetLayout}) {
+  for (VkDescriptorSetLayout *l : {&sceneSetLayout, &bloomSetLayout, &tonemapSetLayout, &ssaoSetLayout}) {
     if (*l) vkDestroyDescriptorSetLayout(d, *l, nullptr);
     *l = VK_NULL_HANDLE;
   }
@@ -194,6 +195,8 @@ void Renderer::Impl::shutdown() {
   linearSampler = VK_NULL_HANDLE;
   if (shadowSampler) vkDestroySampler(d, shadowSampler, nullptr);
   shadowSampler = VK_NULL_HANDLE;
+  if (nearestSampler) vkDestroySampler(d, nearestSampler, nullptr);
+  nearestSampler = VK_NULL_HANDLE;
   vk::destroyImage(d, a, shadowMap);
   if (pipelineCache) vkDestroyPipelineCache(d, pipelineCache, nullptr);
   pipelineCache = VK_NULL_HANDLE;
@@ -425,24 +428,31 @@ bool Renderer::Impl::createDescriptors() {
   lci.pBindings = bb;
   if (!ATM_VK_OK(vkCreateDescriptorSetLayout(d, &lci, nullptr, &bloomSetLayout))) return false;
 
-  VkDescriptorSetLayoutBinding tb[2]{};
-  for (uint32_t i = 0; i < 2; ++i) {
+  // Tonemap: hdr, bloom, scene depth (sun shafts), SSAO.
+  VkDescriptorSetLayoutBinding tb[4]{};
+  for (uint32_t i = 0; i < 4; ++i) {
     tb[i].binding = i;
     tb[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     tb[i].descriptorCount = 1;
     tb[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
   }
+  lci.bindingCount = 4;
   lci.pBindings = tb;
   if (!ATM_VK_OK(vkCreateDescriptorSetLayout(d, &lci, nullptr, &tonemapSetLayout))) return false;
+
+  // SSAO: scene depth in, AO storage image out (same shape as bloom's set).
+  lci.bindingCount = 2;
+  lci.pBindings = bb;
+  if (!ATM_VK_OK(vkCreateDescriptorSetLayout(d, &lci, nullptr, &ssaoSetLayout))) return false;
 
   const VkDescriptorPoolSize sizes[] = {
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxFramesInFlight},
       {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxFramesInFlight * (gpu::kSceneBindingCount - 2)},
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kMaxBloomMips + 2 + kMaxFramesInFlight},
-      {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * kMaxBloomMips},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kMaxBloomMips + 4 + 1 + kMaxFramesInFlight},
+      {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * kMaxBloomMips + 1},
   };
   VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-  pci.maxSets = kMaxFramesInFlight + 2 * kMaxBloomMips + 1;
+  pci.maxSets = kMaxFramesInFlight + 2 * kMaxBloomMips + 2;
   pci.poolSizeCount = uint32_t(std::size(sizes));
   pci.pPoolSizes = sizes;
   if (!ATM_VK_OK(vkCreateDescriptorPool(d, &pci, nullptr, &descriptorPool))) return false;
@@ -460,6 +470,8 @@ bool Renderer::Impl::createDescriptors() {
   }
   ai.pSetLayouts = &tonemapSetLayout;
   if (!ATM_VK_OK(vkAllocateDescriptorSets(d, &ai, &tonemapSet))) return false;
+  ai.pSetLayouts = &ssaoSetLayout;
+  if (!ATM_VK_OK(vkAllocateDescriptorSets(d, &ai, &ssaoSet))) return false;
 
   VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
   sci.magFilter = VK_FILTER_LINEAR;
@@ -470,6 +482,10 @@ bool Renderer::Impl::createDescriptors() {
   sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   sci.maxLod = 0.0f;
   if (!ATM_VK_OK(vkCreateSampler(d, &sci, nullptr, &linearSampler))) return false;
+  VkSamplerCreateInfo nsci = sci; // depth reads: no filtering across edges
+  nsci.magFilter = VK_FILTER_NEAREST;
+  nsci.minFilter = VK_FILTER_NEAREST;
+  if (!ATM_VK_OK(vkCreateSampler(d, &nsci, nullptr, &nearestSampler))) return false;
 
   // Shadow compare sampler: bilinear PCF in hardware; outside the map = lit.
   VkSamplerCreateInfo ssci = sci;
@@ -525,6 +541,11 @@ bool Renderer::Impl::createPipelines() {
   plci.pSetLayouts = &bloomSetLayout;
   plci.pPushConstantRanges = &bloomPush;
   if (!ATM_VK_OK(vkCreatePipelineLayout(d, &plci, nullptr, &bloomPipelineLayout))) return false;
+
+  VkPushConstantRange ssaoPush{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(gpu::SsaoPush)};
+  plci.pSetLayouts = &ssaoSetLayout;
+  plci.pPushConstantRanges = &ssaoPush;
+  if (!ATM_VK_OK(vkCreatePipelineLayout(d, &plci, nullptr, &ssaoPipelineLayout))) return false;
 
   VkPushConstantRange tonePush{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(gpu::TonemapPush)};
   plci.pSetLayouts = &tonemapSetLayout;
@@ -598,12 +619,14 @@ bool Renderer::Impl::createPipelines() {
                                              scenePipelineLayout);
     bloomPipeline = vk::createComputePipeline(d, pipelineCache, mod(vk::ShaderId::BloomComp),
                                               bloomPipelineLayout);
+    ssaoPipeline = vk::createComputePipeline(d, pipelineCache, mod(vk::ShaderId::SsaoComp),
+                                             ssaoPipelineLayout);
   }
   for (VkShaderModule m : mods)
     if (m) vkDestroyShaderModule(d, m, nullptr);
   if (!ok || !opaquePipeline || !translucentPipeline || !modelPipeline || !skyPipeline ||
       !highlightPipeline || !cullPipeline || !bloomPipeline || !shadowPipeline ||
-      !shadowModelPipeline)
+      !shadowModelPipeline || !ssaoPipeline)
     return false;
   return createTonemapPipeline();
 }
@@ -655,10 +678,24 @@ bool Renderer::Impl::createTargets(uint32_t width, uint32_t height) {
                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                          VK_IMAGE_ASPECT_COLOR_BIT, hdr))
     return false;
+  // Scene depth is sampled after the scene pass (SSAO, sun shafts): with MSAA
+  // it is resolved (sample 0) into a single-sample image, else read directly.
+  const bool msaa = samples != VK_SAMPLE_COUNT_1_BIT;
   if (!vk::createImage2D(d, a, ctx.caps.depthFormat, extent, 1, samples,
                          VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                             (msaa ? VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT : VK_IMAGE_USAGE_SAMPLED_BIT),
                          depthAspect, depth))
+    return false;
+  if (msaa && !vk::createImage2D(d, a, ctx.caps.depthFormat, extent, 1, VK_SAMPLE_COUNT_1_BIT,
+                                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                 depthAspect, depthResolve))
+    return false;
+  sceneDepthImage = msaa ? depthResolve.image : depth.image;
+  sceneDepthView = msaa ? depthResolve.view : depth.view;
+  if (!vk::createImage2D(d, a, VK_FORMAT_R32_SFLOAT, {std::max(1u, width / 2), std::max(1u, height / 2)}, 1,
+                         VK_SAMPLE_COUNT_1_BIT,
+                         VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                         VK_IMAGE_ASPECT_COLOR_BIT, ao))
     return false;
 
   // Bloom chain starts at half resolution.
@@ -685,6 +722,14 @@ bool Renderer::Impl::createTargets(uint32_t width, uint32_t height) {
         VkClearColorValue black{};
         VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, 1};
         vkCmdClearColorImage(cmd, I.bloom.image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &range);
+        // SSAO target lives in GENERAL; start fully unoccluded.
+        vk::imageBarrier(cmd, I.ao.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
+                         VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        VkClearColorValue white{};
+        white.float32[0] = 1.0f;
+        VkImageSubresourceRange aoRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cmd, I.ao.image, VK_IMAGE_LAYOUT_GENERAL, &white, 1, &aoRange);
         vk::memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
                               VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -696,7 +741,7 @@ bool Renderer::Impl::createTargets(uint32_t width, uint32_t height) {
 void Renderer::Impl::writeTargetDescriptors() {
   // Bloom: set i (i < mips) = downsample into mip i; set mips + j = upsample into mip j.
   VkDescriptorImageInfo img[2 * kMaxBloomMips][2]{};
-  VkWriteDescriptorSet w[2 * kMaxBloomMips * 2 + 2]{};
+  VkWriteDescriptorSet w[2 * kMaxBloomMips * 2 + 6]{};
   uint32_t n = 0;
   auto add = [&](VkDescriptorSet set, uint32_t binding, VkDescriptorType type,
                  const VkDescriptorImageInfo *info) {
@@ -722,11 +767,18 @@ void Renderer::Impl::writeTargetDescriptors() {
     add(bloomSets[s], 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &img[s][0]);
     add(bloomSets[s], 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &img[s][1]);
   }
-  VkDescriptorImageInfo tone[2] = {
+  VkDescriptorImageInfo tone[4] = {
       {linearSampler, hdr.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-      {linearSampler, bloomMipViews[0], VK_IMAGE_LAYOUT_GENERAL}};
-  add(tonemapSet, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &tone[0]);
-  add(tonemapSet, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &tone[1]);
+      {linearSampler, bloomMipViews[0], VK_IMAGE_LAYOUT_GENERAL},
+      {nearestSampler, sceneDepthView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+      {linearSampler, ao.view, VK_IMAGE_LAYOUT_GENERAL}};
+  for (uint32_t i = 0; i < 4; ++i)
+    add(tonemapSet, i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &tone[i]);
+  VkDescriptorImageInfo ssaoImg[2] = {
+      {nearestSampler, sceneDepthView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+      {VK_NULL_HANDLE, ao.view, VK_IMAGE_LAYOUT_GENERAL}};
+  add(ssaoSet, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &ssaoImg[0]);
+  add(ssaoSet, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &ssaoImg[1]);
   vkUpdateDescriptorSets(ctx.device, n, w, 0, nullptr);
 }
 
@@ -739,7 +791,11 @@ void Renderer::Impl::destroyTargets() {
     v = VK_NULL_HANDLE;
   }
   vk::destroyImage(d, a, bloom);
+  vk::destroyImage(d, a, ao);
+  vk::destroyImage(d, a, depthResolve);
   vk::destroyImage(d, a, depth);
+  sceneDepthImage = VK_NULL_HANDLE;
+  sceneDepthView = VK_NULL_HANDLE;
   vk::destroyImage(d, a, hdr);
   vk::destroyImage(d, a, hdrMsaa);
   bloomMips = 0;

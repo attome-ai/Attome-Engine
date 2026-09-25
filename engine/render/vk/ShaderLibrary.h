@@ -20,6 +20,7 @@ enum class ShaderId {
   TonemapFrag,
   ShadowVert,
   ShadowModelVert,
+  SsaoComp,
   Count
 };
 

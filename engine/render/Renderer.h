@@ -60,7 +60,11 @@ struct Material {
   uint32_t top = 0xFFFFFFFF, side = 0xFFFFFFFF, bottom = 0xFFFFFFFF; // RGBA8
   float emissive = 0.0f;   // > 0 glows and feeds bloom
   float alpha = 1.0f;      // < 1 for translucent blocks
+  uint32_t flags = 0;      // kMaterialWater / kMaterialFoliage (shader effects)
 };
+
+inline constexpr uint32_t kMaterialWater = 1u;   // animated waves, reflections
+inline constexpr uint32_t kMaterialFoliage = 2u; // sways in the wind
 
 // Material ids >= this are reserved for setModelMaterials().
 inline constexpr uint32_t kModelMaterialBase = 16384;

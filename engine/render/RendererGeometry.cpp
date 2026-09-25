@@ -66,6 +66,7 @@ void Renderer::Impl::setMaterials(std::span<const Material> m, uint32_t base) {
     dst.bottom = src.bottom;
     dst.emissive = src.emissive;
     dst.alpha = src.alpha;
+    dst.flags = src.flags;
   }
   if (materialsDirtyBegin == materialsDirtyEnd) {
     materialsDirtyBegin = base;

@@ -14,6 +14,7 @@ layout(location = 3) in float vAo;
 layout(location = 4) in vec3 vViewPos;
 layout(location = 5) in vec3 vLocal;
 layout(location = 6) flat in ivec3 vOrigin;
+layout(location = 7) flat in uint vFlags;
 
 layout(location = 0) out vec4 outColor;
 
@@ -57,6 +58,11 @@ float valueNoise(vec3 p) {
   float b = mix(mix(hashF(i + ivec3(0, 0, 1)), hashF(i + ivec3(1, 0, 1)), f.x),
                 mix(hashF(i + ivec3(0, 1, 1)), hashF(i + ivec3(1, 1, 1)), f.x), f.y);
   return mix(a, b, f.z);
+}
+
+// Gradient of one travelling sine wave a*sin(dot(p, dir)*k + t*speed).
+vec2 waveGrad(vec2 p, vec2 dir, float k, float speed, float a, float t) {
+  return dir * (k * a * cos(dot(p, dir) * k + t * speed));
 }
 
 void main() {
@@ -112,6 +118,31 @@ void main() {
 
   col += base * (vLight.z * 3.0);
 
+  float alpha = vColor.a;
+  if ((vFlags & MATERIAL_WATER) != 0u && n.y > 0.5) {
+    // Water surface: animated wave normals (sum of travelling sines), sky
+    // reflection weighted by Fresnel, and a sharp sun glint that blooms.
+    vec2 p = (vec3(vOrigin) + vLocal).xz;
+    float t = frame.camFrac.w;
+    vec2 g = vec2(0.0);
+    g += waveGrad(p, normalize(vec2(0.8, 0.6)), 0.55, 1.1, 0.10, t);
+    g += waveGrad(p, normalize(vec2(-0.5, 0.9)), 1.05, 1.7, 0.05, t);
+    g += waveGrad(p, normalize(vec2(0.2, -1.0)), 2.3, 2.6, 0.022, t);
+    g += waveGrad(p, normalize(vec2(-0.9, -0.3)), 4.1, 3.3, 0.010, t);
+    vec3 wn = normalize(vec3(-g.x, 1.0, -g.y));
+    float cosV = max(dot(wn, -viewDir), 0.0);
+    float fresnel = 0.03 + 0.97 * pow(1.0 - cosV, 5.0);
+    vec3 r = reflect(viewDir, wn);
+    vec3 horizon = frame.fogColor.rgb + frame.sunColor.rgb * (sunI * 0.25 * pow(max(dot(r, L), 0.0), 6.0));
+    vec3 zenith = frame.skyColor.rgb * vec3(0.75, 0.85, 1.0);
+    vec3 refl = mix(horizon, zenith, pow(smoothstep(0.0, 0.7, max(r.y, 0.0)), 0.7)) * skyL;
+    vec3 body = col * vec3(0.55, 0.72, 0.85);
+    col = mix(body, refl, clamp(fresnel * 0.9 + 0.08, 0.0, 1.0));
+    float spec = pow(max(dot(r, L), 0.0), 350.0) * 9.0 + pow(max(dot(r, L), 0.0), 40.0) * 0.25;
+    col += frame.sunColor.rgb * (sunI * spec * shadow);
+    alpha = mix(0.62, 0.96, fresnel);
+  }
+
   float fog = clamp((dist - frame.fogColor.w) * frame.fogParams.y, 0.0, 1.0);
   fog = fog * fog * (3.0 - 2.0 * fog);
   // Aerial perspective: fog glows warm towards the sun (matches sky.frag).
@@ -119,5 +150,5 @@ void main() {
   vec3 fogCol = frame.fogColor.rgb + frame.sunColor.rgb * (sunI * 0.25 * sunGlow);
   col = mix(col, fogCol, fog);
 
-  outColor = vec4(col, vColor.a);
+  outColor = vec4(col, alpha);
 }

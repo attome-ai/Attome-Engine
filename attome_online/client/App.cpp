@@ -253,6 +253,10 @@ void App::uploadMaterials() {
     m.bottom = b.colorBottom;
     m.emissive = float(b.emission) / 15.0f;
     m.alpha = b.render == atm::voxel::BlockRender::Translucent ? 0.6f : 1.0f;
+    if (b.liquid)
+      m.flags |= atm::render::kMaterialWater;
+    if (b.name.find("leaves") != std::string::npos)
+      m.flags |= atm::render::kMaterialFoliage;
     mats.push_back(m);
   }
   // Model palettes follow the block materials (ModelLibrary material bases
@@ -631,7 +635,15 @@ bool App::worldToScreen(const glm::dvec3 &p, float &sx, float &sy) const {
 // Interaction: mining, placing, attacking
 // ---------------------------------------------------------------------------
 
+// The item in hand: the selected hotbar slot when it is a weapon or tool we
+// may use (same rule as ServerState::heldWeapon), else the equipped main hand.
 ItemId App::equippedMainHand() const {
+  const ItemStack &s = inventory_[size_t(hotbar_)];
+  if (s.item && s.count > 0) {
+    const ItemDef &d = itemDef(s.item);
+    if (isHoldable(d.kind) && levelForXp(skillXp_[size_t(d.skill)]) >= d.levelReq)
+      return s.item;
+  }
   return equipped_.size() > size_t(atm::model::EquipSlot::MainHand)
              ? ItemId(equipped_[size_t(atm::model::EquipSlot::MainHand)])
              : ItemId(0);
@@ -641,6 +653,23 @@ void App::updateInteraction(float dt) {
   attackCooldown_ = std::max(0.0f, attackCooldown_ - dt);
   placeCooldown_ = std::max(0.0f, placeCooldown_ - dt);
   hasTarget_ = false;
+
+  // Tell the server which hotbar slot we hold (weapon / tool in hand), and
+  // show it in our own hand immediately.
+  if (welcomed_ && hotbar_ != sentHotbar_) {
+    proto::Equip e;
+    e.inventorySlot = uint8_t(hotbar_);
+    e.equipSlot = kEquipSelectHotbar;
+    e.unequip = false;
+    net_.send(e, atm::net2::Channel::ReliableOrdered);
+    sentHotbar_ = hotbar_;
+  }
+  {
+    const size_t mh = size_t(atm::model::EquipSlot::MainHand);
+    const ItemDef &hd = itemDef(equippedMainHand());
+    if (mh < selfAppearance_.pieces.size())
+      selfAppearance_.pieces[mh] = hd.piece ? models_.findPiece(hd.piece) : atm::model::kNoPiece;
+  }
   if (!world_ || !welcomed_ || !mouseCaptured_ || chatOpen_) {
     mineProgress_ = 0.0f;
     return;
@@ -690,6 +719,19 @@ void App::updateInteraction(float dt) {
       playActionAnim(selfAnim_, act::Mine, mainDef.weapon);
       if (sfx_)
         sfx_->playBlockHit(world_->blockAt(targetBlock_));
+      // Chips fly off the struck face.
+      static const glm::dvec3 kN[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+      const glm::dvec3 fn = kN[std::min(5, int(targetFace_))];
+      Particles::Burst chip;
+      chip.count = 5;
+      chip.block = world_->blockAt(targetBlock_);
+      chip.speed = 2.5f;
+      chip.up = 2.5f;
+      chip.size = 0.09f;
+      chip.life = 0.5f;
+      chip.spread = 0.3f;
+      particles_.burst(glm::dvec3(targetBlock_.x + 0.5, targetBlock_.y + 0.5, targetBlock_.z + 0.5) + fn * 0.55,
+                       chip);
     }
     if (mineProgress_ >= 1.0f) {
       proto::BlockAction a;
@@ -725,10 +767,35 @@ void App::updateInteraction(float dt) {
       playActionAnim(selfAnim_, act::Cast, mainDef.weapon);
       if (sfx_) sfx_->play(GameSound::SwordSwing);
       break;
-    default:
+    default: {
+      // Glowing slash arc in front of the player, tinted by the blade.
+      const std::string_view wn = mainDef.name;
+      const uint32_t arcTint = wn.find("crystal") != std::string_view::npos ? rgba(120, 230, 255)
+                               : wn.find("iron") != std::string_view::npos  ? rgba(235, 240, 255)
+                                                                            : rgba(255, 220, 130);
+      particles_.slashArc(prediction_.current().pos + glm::dvec3(0.0, 1.05, 0.0), camYaw_, arcTint);
+    }
       playActionAnim(selfAnim_, act::Swing, mainDef.weapon);
       if (sfx_) sfx_->play(GameSound::SwordSwing);
       break;
+    }
+  }
+
+  // Secondary on armour / food in the selected slot: wear it / eat it.
+  if (input_.held("secondary") && placeCooldown_ <= 0.0f) {
+    const ItemStack &stack = inventory_[size_t(hotbar_)];
+    if (stack.item && stack.count > 0) {
+      const ItemDef &d = itemDef(stack.item);
+      if (d.kind == ItemKind::Armour || d.kind == ItemKind::Food) {
+        proto::Equip e;
+        e.inventorySlot = uint8_t(hotbar_);
+        e.equipSlot = d.kind == ItemKind::Food ? kEquipConsume : uint8_t(d.slot);
+        e.unequip = false;
+        net_.send(e, atm::net2::Channel::ReliableOrdered);
+        placeCooldown_ = 0.6f;
+        playActionAnim(selfAnim_, act::Place, mainDef.weapon);
+        if (sfx_) sfx_->play(GameSound::UiClick);
+      }
     }
   }
 
@@ -780,6 +847,10 @@ void App::updateEntities(float dt) {
     }
   }
 
+  particles_.update(dt);
+  if (welcomed_)
+    particles_.ambient(me.pos, dt);
+
   // Floating texts, XP drops, banners age out.
   for (auto &f : floating_) f.age += dt;
   floating_.erase(std::remove_if(floating_.begin(), floating_.end(),
@@ -817,7 +888,22 @@ void App::render(float alpha, float dt) {
   if (welcomed_ && world_) {
     // Local player.
     const MoveState &me = prediction_.current();
-    drawCharacter(selfAppearance_, selfAnim_, prediction_.renderPosition(alpha), me.yaw,
+    // Visual body yaw (Trove-style): turn toward the movement direction; face
+    // the aim while attacking / mining; keep the last facing when idle, so
+    // the camera can orbit around to the character's face.
+    {
+      const float hs = std::sqrt(me.vel.x * me.vel.x + me.vel.z * me.vel.z);
+      float target = bodyYaw_;
+      if (attackCooldown_ > 0.05f || mineProgress_ > 0.0f)
+        target = camYaw_;
+      else if (hs > 0.6f)
+        target = std::atan2(-me.vel.x, -me.vel.z);
+      float d = std::fmod(target - bodyYaw_ + 3.14159265f, 6.28318531f);
+      if (d < 0.0f) d += 6.28318531f;
+      d -= 3.14159265f;
+      bodyYaw_ += d * std::min(1.0f, dt * 14.0f);
+    }
+    drawCharacter(selfAppearance_, selfAnim_, prediction_.renderPosition(alpha), bodyYaw_,
                   hp_ == 0 ? rgba(120, 120, 120) : 0xFFFFFFFFu);
 
     // Remote entities.
@@ -842,6 +928,8 @@ void App::render(float alpha, float dt) {
         break;
       }
     }
+
+    particles_.draw(renderer_, blockItemMeshes_);
 
     if (hasTarget_)
       renderer_.drawBlockHighlight(targetBlock_);
@@ -935,6 +1023,19 @@ void App::onBlockChanged(const proto::BlockChanged &m) {
   const BlockPos p{m.x, m.y, m.z};
   const auto old = world_->blockAt(p);
   world_->setBlock(p, m.block);
+  if (m.block == atm::voxel::kAir && old != atm::voxel::kAir) {
+    // The block shatters into chunks of itself.
+    Particles::Burst deb;
+    deb.count = 18;
+    deb.block = old;
+    deb.speed = 3.5f;
+    deb.up = 3.5f;
+    deb.size = 0.17f;
+    deb.life = 0.9f;
+    deb.gravity = 20.0f;
+    deb.spread = 0.45f;
+    particles_.burst(glm::dvec3(p.x + 0.5, p.y + 0.5, p.z + 0.5), deb);
+  }
   if (sfx_) {
     const glm::dvec3 d = glm::dvec3(p.x + 0.5, p.y + 0.5, p.z + 0.5) - prediction_.current().pos;
     const float dist = float(std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z));
@@ -1035,6 +1136,63 @@ void App::onDamage(const proto::DamageEvent &m) {
   addFloatingText(at, (m.critical ? std::to_string(m.amount) + "!" : std::to_string(m.amount)), color);
   if (sfx_ && m.source == selfId_)
     sfx_->play(GameSound::MonsterHit);
+  // Impact VFX: glowing sparks + chunks in the victim's colour, a big burst
+  // on kills, red sparks when we are the one getting hit.
+  {
+    const bool self = m.target == selfId_;
+    uint32_t body = rgba(200, 200, 205);
+    if (!self) {
+      auto it = remotes_.find(m.target);
+      if (it != remotes_.end() && it->second.last.kind == EntityKind::Monster) {
+        switch (it->second.last.type) {
+        case monsters::Slime: body = rgba(110, 220, 110); break;
+        case monsters::Wolf: body = rgba(150, 150, 160); break;
+        case monsters::Golem: body = rgba(150, 140, 128); break;
+        default: break;
+        }
+      }
+    }
+    const glm::dvec3 c = at - glm::dvec3(0.0, self ? 1.2 : 1.0, 0.0);
+    Particles::Burst sp;
+    sp.block = atm::voxel::blocks::Lamp;
+    sp.tint = self ? rgba(255, 70, 60) : (m.critical ? rgba(255, 190, 60) : rgba(255, 240, 200));
+    sp.count = m.critical ? 26 : 14;
+    sp.speed = m.critical ? 9.0f : 6.0f;
+    sp.up = 1.5f;
+    sp.size = 0.08f;
+    sp.life = 0.35f;
+    sp.gravity = 8.0f;
+    sp.drag = 3.0f;
+    particles_.burst(c, sp);
+    if (!self) {
+      Particles::Burst ch;
+      ch.block = atm::voxel::blocks::Snow;
+      ch.tint = body;
+      ch.count = m.killed ? 40 : 7;
+      ch.speed = m.killed ? 6.0f : 3.5f;
+      ch.up = m.killed ? 5.0f : 3.0f;
+      ch.size = m.killed ? 0.2f : 0.13f;
+      ch.life = m.killed ? 1.1f : 0.6f;
+      ch.gravity = 20.0f;
+      ch.spread = m.killed ? 0.6f : 0.3f;
+      particles_.burst(c, ch);
+      if (m.killed) { // poof
+        Particles::Burst poof;
+        poof.block = atm::voxel::blocks::Snow;
+        poof.tint = rgba(240, 240, 240);
+        poof.count = 24;
+        poof.speed = 2.0f;
+        poof.up = 1.5f;
+        poof.size = 0.28f;
+        poof.life = 0.7f;
+        poof.gravity = -1.0f;
+        poof.drag = 2.5f;
+        poof.spread = 0.5f;
+        particles_.burst(c, poof);
+      }
+    }
+  }
+
   // Feel: a small kick when our hit lands, more on crits and when we get hit.
   if (m.source == selfId_)
     shake_ = std::max(shake_, m.critical ? 0.9f : 0.45f);
@@ -1062,6 +1220,18 @@ void App::onXpGain(const proto::XpGain &m) {
   const uint32_t after = levelForXp(m.totalXp);
   xpDrops_.push_back({Skill(m.skill), m.amount, 0.0f});
   if (after > before) {
+    // Golden level-up fountain around the player.
+    Particles::Burst lb;
+    lb.count = 60;
+    lb.block = atm::voxel::blocks::Lamp;
+    lb.tint = rgba(255, 214, 90);
+    lb.speed = 3.0f;
+    lb.up = 7.0f;
+    lb.size = 0.1f;
+    lb.life = 1.3f;
+    lb.gravity = 6.0f;
+    lb.spread = 0.8f;
+    particles_.burst(prediction_.current().pos + glm::dvec3(0.0, 0.3, 0.0), lb);
     banners_.push_back({"Congratulations! " + std::string(skillName(Skill(m.skill))) +
                             " level " + std::to_string(after),
                         0.0f});
