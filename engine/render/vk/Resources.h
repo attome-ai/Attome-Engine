@@ -69,6 +69,9 @@ struct GraphicsPipelineDesc {
   bool depthTest = true, depthWrite = true;
   VkCompareOp depthCompare = VK_COMPARE_OP_GREATER; // reverse-Z
   bool alphaBlend = false;
+  // Depth-only passes (shadow map): frag may be null and colorFormat UNDEFINED.
+  bool depthBias = false;
+  float depthBiasConstant = 0.0f, depthBiasSlope = 0.0f;
 };
 VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache cache,
                                   const GraphicsPipelineDesc &desc);

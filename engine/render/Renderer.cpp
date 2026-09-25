@@ -166,7 +166,7 @@ void Renderer::Impl::shutdown() {
     if (f.imageAvailable) vkDestroySemaphore(d, f.imageAvailable, nullptr);
     if (f.queries) vkDestroyQueryPool(d, f.queries, nullptr);
     for (vk::Buffer *b : {&f.ubo, &f.visible, &f.draws, &f.drawCount, &f.translucentDraws,
-                          &f.instances, &f.staging})
+                          &f.shadowDraws, &f.instances, &f.staging})
       vk::destroyBuffer(a, *b);
     f = FrameData{};
   }
@@ -175,7 +175,8 @@ void Renderer::Impl::shutdown() {
     vk::destroyBuffer(a, *b);
 
   for (VkPipeline *p : {&opaquePipeline, &translucentPipeline, &modelPipeline, &skyPipeline,
-                        &highlightPipeline, &cullPipeline, &bloomPipeline, &tonemapPipeline}) {
+                        &highlightPipeline, &cullPipeline, &bloomPipeline, &tonemapPipeline,
+                        &shadowPipeline, &shadowModelPipeline}) {
     if (*p) vkDestroyPipeline(d, *p, nullptr);
     *p = VK_NULL_HANDLE;
   }
@@ -191,6 +192,9 @@ void Renderer::Impl::shutdown() {
   descriptorPool = VK_NULL_HANDLE;
   if (linearSampler) vkDestroySampler(d, linearSampler, nullptr);
   linearSampler = VK_NULL_HANDLE;
+  if (shadowSampler) vkDestroySampler(d, shadowSampler, nullptr);
+  shadowSampler = VK_NULL_HANDLE;
+  vk::destroyImage(d, a, shadowMap);
   if (pipelineCache) vkDestroyPipelineCache(d, pipelineCache, nullptr);
   pipelineCache = VK_NULL_HANDLE;
 
@@ -257,13 +261,16 @@ bool Renderer::Impl::createFrames() {
     ok = ok && vk::createBuffer(a, sizeof(gpu::DrawIndexedIndirect) * kMaxChunkSlots,
                                 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, MemoryKind::Upload,
                                 f.translucentDraws, "translucent draws");
+    ok = ok && vk::createBuffer(a, sizeof(gpu::DrawIndexedIndirect) * kMaxChunkSlots,
+                                VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, MemoryKind::Upload,
+                                f.shadowDraws, "shadow draws");
     ok = ok && vk::createBuffer(a, sizeof(gpu::ModelInstanceGpu) * kMaxModelInstances,
                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, MemoryKind::Upload, f.instances,
                                 "model instances");
     ok = ok && vk::createBuffer(a, stagingBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                 MemoryKind::Upload, f.staging, "upload ring slot");
     if (!ok) return false;
-    if (!f.ubo.mapped || !f.visible.mapped || !f.translucentDraws.mapped ||
+    if (!f.ubo.mapped || !f.visible.mapped || !f.translucentDraws.mapped || !f.shadowDraws.mapped ||
         !f.instances.mapped || !f.staging.mapped)
       return false;
     f.deferred.reserve(1024);
@@ -297,6 +304,13 @@ bool Renderer::Impl::createStaticBuffers() {
                         "model faces"))
     return false;
   modelAlloc.reset(kModelFaceBytes / 8);
+
+  // Sun shadow map (size independent of the window).
+  if (!vk::createImage2D(ctx.device, a, VK_FORMAT_D32_SFLOAT, {kShadowMapSize, kShadowMapSize}, 1,
+                         VK_SAMPLE_COUNT_1_BIT,
+                         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                         VK_IMAGE_ASPECT_DEPTH_BIT, shadowMap))
+    return false;
 
   const VkDeviceSize indexBytes = VkDeviceSize(kMaxFacesPerDraw) * 6 * sizeof(uint32_t);
   if (!vk::createBuffer(a, indexBytes, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -342,6 +356,12 @@ bool Renderer::Impl::createStaticBuffers() {
         VkBufferCopy m{st.indexBytes, 0, st.materialBytes};
         vkCmdCopyBuffer(cmd, st.staging->buffer, I.materials.buffer, 1, &m);
         vkCmdFillBuffer(cmd, I.chunkMeta.buffer, 0, VK_WHOLE_SIZE, 0u);
+        // Every frame renders the shadow map before sampling it; start in the
+        // layout the scene descriptor expects.
+        vk::imageBarrier(cmd, I.shadowMap.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE,
+                         VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         vk::memoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                           VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                           VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT);
@@ -381,8 +401,9 @@ bool Renderer::Impl::createDescriptors() {
   VkDescriptorSetLayoutBinding sb[gpu::kSceneBindingCount]{};
   for (uint32_t i = 0; i < gpu::kSceneBindingCount; ++i) {
     sb[i].binding = i;
-    sb[i].descriptorType = i == gpu::kBindFrame ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-                                                : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    sb[i].descriptorType = i == gpu::kBindFrame       ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                           : i == gpu::kBindShadowMap ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                                      : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     sb[i].descriptorCount = 1;
     sb[i].stageFlags = VK_SHADER_STAGE_ALL;
   }
@@ -416,8 +437,8 @@ bool Renderer::Impl::createDescriptors() {
 
   const VkDescriptorPoolSize sizes[] = {
       {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kMaxFramesInFlight},
-      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxFramesInFlight * (gpu::kSceneBindingCount - 1)},
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kMaxBloomMips + 2},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxFramesInFlight * (gpu::kSceneBindingCount - 2)},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kMaxBloomMips + 2 + kMaxFramesInFlight},
       {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * kMaxBloomMips},
   };
   VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -440,27 +461,6 @@ bool Renderer::Impl::createDescriptors() {
   ai.pSetLayouts = &tonemapSetLayout;
   if (!ATM_VK_OK(vkAllocateDescriptorSets(d, &ai, &tonemapSet))) return false;
 
-  // Scene sets never change: all buffers are fixed-size.
-  for (uint32_t i = 0; i < framesInFlight; ++i) {
-    FrameData &f = frames[i];
-    const VkBuffer bufs[gpu::kSceneBindingCount] = {
-        f.ubo.buffer,     faceArena.buffer,  chunkMeta.buffer,
-        materials.buffer, f.visible.buffer,  f.draws.buffer,
-        f.drawCount.buffer, modelFaces.buffer, f.instances.buffer};
-    VkDescriptorBufferInfo infos[gpu::kSceneBindingCount]{};
-    VkWriteDescriptorSet writes[gpu::kSceneBindingCount]{};
-    for (uint32_t b = 0; b < gpu::kSceneBindingCount; ++b) {
-      infos[b] = {bufs[b], 0, VK_WHOLE_SIZE};
-      writes[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-      writes[b].dstSet = f.sceneSet;
-      writes[b].dstBinding = b;
-      writes[b].descriptorCount = 1;
-      writes[b].descriptorType = sb[b].descriptorType;
-      writes[b].pBufferInfo = &infos[b];
-    }
-    vkUpdateDescriptorSets(d, gpu::kSceneBindingCount, writes, 0, nullptr);
-  }
-
   VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
   sci.magFilter = VK_FILTER_LINEAR;
   sci.minFilter = VK_FILTER_LINEAR;
@@ -470,6 +470,43 @@ bool Renderer::Impl::createDescriptors() {
   sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
   sci.maxLod = 0.0f;
   if (!ATM_VK_OK(vkCreateSampler(d, &sci, nullptr, &linearSampler))) return false;
+
+  // Shadow compare sampler: bilinear PCF in hardware; outside the map = lit.
+  VkSamplerCreateInfo ssci = sci;
+  ssci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+  ssci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+  ssci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+  ssci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+  ssci.compareEnable = VK_TRUE;
+  ssci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+  if (!ATM_VK_OK(vkCreateSampler(d, &ssci, nullptr, &shadowSampler))) return false;
+
+  // Scene sets never change: all buffers are fixed-size, the shadow map too.
+  for (uint32_t i = 0; i < framesInFlight; ++i) {
+    FrameData &f = frames[i];
+    const VkBuffer bufs[gpu::kSceneBindingCount] = {
+        f.ubo.buffer,     faceArena.buffer,  chunkMeta.buffer,
+        materials.buffer, f.visible.buffer,  f.draws.buffer,
+        f.drawCount.buffer, modelFaces.buffer, f.instances.buffer, VK_NULL_HANDLE};
+    VkDescriptorBufferInfo infos[gpu::kSceneBindingCount]{};
+    VkWriteDescriptorSet writes[gpu::kSceneBindingCount]{};
+    const VkDescriptorImageInfo shadowInfo{shadowSampler, shadowMap.view,
+                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    for (uint32_t b = 0; b < gpu::kSceneBindingCount; ++b) {
+      writes[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      writes[b].dstSet = f.sceneSet;
+      writes[b].dstBinding = b;
+      writes[b].descriptorCount = 1;
+      writes[b].descriptorType = sb[b].descriptorType;
+      if (b == gpu::kBindShadowMap) {
+        writes[b].pImageInfo = &shadowInfo;
+      } else {
+        infos[b] = {bufs[b], 0, VK_WHOLE_SIZE};
+        writes[b].pBufferInfo = &infos[b];
+      }
+    }
+    vkUpdateDescriptorSets(d, gpu::kSceneBindingCount, writes, 0, nullptr);
+  }
   return true;
 }
 
@@ -541,6 +578,22 @@ bool Renderer::Impl::createPipelines() {
     h.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
     highlightPipeline = vk::createGraphicsPipeline(d, pipelineCache, h);
 
+    // Shadow map: depth only, standard depth (0 = nearest the sun), both
+    // face sides (voxel meshes are closed), slope-scaled bias against acne.
+    vk::GraphicsPipelineDesc sh{};
+    sh.layout = scenePipelineLayout;
+    sh.vert = mod(vk::ShaderId::ShadowVert);
+    sh.colorFormat = VK_FORMAT_UNDEFINED;
+    sh.depthFormat = VK_FORMAT_D32_SFLOAT;
+    sh.cull = VK_CULL_MODE_NONE;
+    sh.depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL;
+    sh.depthBias = true;
+    sh.depthBiasConstant = 1.25f;
+    sh.depthBiasSlope = 1.75f;
+    shadowPipeline = vk::createGraphicsPipeline(d, pipelineCache, sh);
+    sh.vert = mod(vk::ShaderId::ShadowModelVert);
+    shadowModelPipeline = vk::createGraphicsPipeline(d, pipelineCache, sh);
+
     cullPipeline = vk::createComputePipeline(d, pipelineCache, mod(vk::ShaderId::CullComp),
                                              scenePipelineLayout);
     bloomPipeline = vk::createComputePipeline(d, pipelineCache, mod(vk::ShaderId::BloomComp),
@@ -549,7 +602,8 @@ bool Renderer::Impl::createPipelines() {
   for (VkShaderModule m : mods)
     if (m) vkDestroyShaderModule(d, m, nullptr);
   if (!ok || !opaquePipeline || !translucentPipeline || !modelPipeline || !skyPipeline ||
-      !highlightPipeline || !cullPipeline || !bloomPipeline)
+      !highlightPipeline || !cullPipeline || !bloomPipeline || !shadowPipeline ||
+      !shadowModelPipeline)
     return false;
   return createTonemapPipeline();
 }

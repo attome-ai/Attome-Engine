@@ -4,7 +4,7 @@
 #ifndef VOXEL_COMMON_GLSL
 #define VOXEL_COMMON_GLSL
 
-#define GPU_LAYOUT_VERSION 1
+#define GPU_LAYOUT_VERSION 2
 
 layout(std140, set = 0, binding = 0) uniform FrameUBO {
   mat4 viewProj;      // camera-relative
@@ -17,6 +17,8 @@ layout(std140, set = 0, binding = 0) uniform FrameUBO {
   vec4 fogParams;     // x = fog end, y = 1/(end-start), z = sun intensity
   vec4 sunColor;
   uvec4 counts;       // x = visible chunks, y = max draws
+  mat4 lightViewProj; // camera-relative -> shadow map clip space
+  vec4 shadowParams;  // x = texel size (blocks), y = strength (0 = off)
 } frame;
 
 struct ChunkGpu {

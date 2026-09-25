@@ -114,6 +114,33 @@ void Renderer::Impl::buildFrameUniforms(FrameData &f) {
   const float fogEnd = std::max(config.viewDistanceBlocks * 0.95f, 16.0f);
   const float fogStart = fogEnd * 0.6f;
 
+  // Sun shadow map: orthographic, centred a little ahead of the camera, its
+  // texel grid snapped in world space so shadows do not shimmer when moving.
+  // Maps camera-relative positions (like every other matrix here).
+  const double shadowTexel = 2.0 * double(kShadowRadius) / double(kShadowMapSize);
+  {
+    const glm::dvec3 L(sun);
+    const glm::dvec3 up = std::abs(L.y) > 0.99 ? glm::dvec3(0.0, 0.0, 1.0) : glm::dvec3(0.0, 1.0, 0.0);
+    const glm::dmat3 R(glm::lookAt(glm::dvec3(0.0), -L, up));
+    glm::dvec3 fwd(dir.x, 0.0, dir.z);
+    const double fl = glm::length(fwd);
+    fwd = fl > 1e-4 ? fwd / fl : glm::dvec3(0.0);
+    const glm::dvec3 centre = camera.position + fwd * (double(kShadowRadius) * 0.45);
+    const glm::dvec3 lc = R * centre;
+    const glm::dvec2 snapped = glm::floor(glm::dvec2(lc) / shadowTexel) * shadowTexel;
+    // Light space of camera-relative p: R * p + off.
+    const glm::dvec3 off = R * camera.position - glm::dvec3(snapped, lc.z);
+    const double r = kShadowRadius, zr = kShadowDepthRange;
+    glm::dmat4 P(1.0);
+    P[0][0] = 1.0 / r;
+    P[1][1] = 1.0 / r;
+    P[2][2] = -0.5 / zr; // depth 0 = towards the sun
+    P[3][0] = off.x / r;
+    P[3][1] = off.y / r;
+    P[3][2] = 0.5 - 0.5 * off.z / zr;
+    lightViewProj = glm::mat4(P * glm::dmat4(R));
+  }
+
   gpu::FrameUniforms u{};
   u.viewProj = viewProj;
   u.invViewProj = glm::inverse(viewProj);
@@ -125,6 +152,8 @@ void Renderer::Impl::buildFrameUniforms(FrameData &f) {
   u.fogParams = glm::vec4(fogEnd, 1.0f / (fogEnd - fogStart), sunI, 0.0f);
   u.sunColor = glm::vec4(sunColor, 0.0f);
   u.counts = glm::uvec4(visibleCount, kMaxDraws, 0u, 0u);
+  u.lightViewProj = lightViewProj;
+  u.shadowParams = glm::vec4(float(shadowTexel), 1.0f, 0.0f, 0.0f);
   std::memcpy(f.ubo.mapped, &u, sizeof(u));
   vk::flushBuffer(ctx.allocator, f.ubo, 0, sizeof(u));
   fogColorLinear = glm::vec3(u.fogColor);
@@ -187,6 +216,39 @@ void Renderer::Impl::cullAndBuildLists(FrameData &f) {
   if (translucentCount > 0)
     vk::flushBuffer(ctx.allocator, f.translucentDraws, 0,
                     VkDeviceSize(translucentCount) * sizeof(gpu::DrawIndexedIndirect));
+}
+
+void Renderer::Impl::buildShadowList(FrameData &f) {
+  // Every resident chunk inside the light's box casts, including ones outside
+  // the camera frustum (a tree behind the camera still shades the ground in
+  // front of it). One draw per chunk covers all its opaque direction groups.
+  auto *cmds = static_cast<gpu::DrawIndexedIndirect *>(f.shadowDraws.mapped);
+  shadowDrawCount = 0;
+  const float margin = 28.0f / kShadowRadius;           // chunk half-diagonal in NDC
+  const float zMargin = 28.0f / (2.0f * kShadowDepthRange);
+  for (const auto &entry : slotOf) {
+    const uint32_t slot = entry.second;
+    const ChunkRecord &r = chunks[slot];
+    const ChunkMeshState &s = r.live;
+    if (!r.used || s.units == 0 || s.base == FaceAllocator::kInvalid) continue;
+    const uint32_t n = s.dirOffset[6] - s.dirOffset[0];
+    if (n == 0) continue;
+    const voxel::BlockPos o = voxel::chunkOrigin(r.coord);
+    const glm::vec3 c = glm::vec3(glm::ivec3(o.x, o.y, o.z) - camBlock) - camFrac + glm::vec3(16.0f);
+    const glm::vec4 lc = lightViewProj * glm::vec4(c, 1.0f);
+    if (std::abs(lc.x) > 1.0f + margin || std::abs(lc.y) > 1.0f + margin || lc.z < -zMargin ||
+        lc.z > 1.0f + zMargin)
+      continue;
+    gpu::DrawIndexedIndirect &d = cmds[shadowDrawCount++];
+    d.indexCount = std::min(n, kMaxFacesPerDraw) * 6u;
+    d.instanceCount = 1;
+    d.firstIndex = 0;
+    d.vertexOffset = int32_t((s.base + s.dirOffset[0]) * 4u);
+    d.firstInstance = slot;
+  }
+  if (shadowDrawCount > 0)
+    vk::flushBuffer(ctx.allocator, f.shadowDraws, 0,
+                    VkDeviceSize(shadowDrawCount) * sizeof(gpu::DrawIndexedIndirect));
 }
 
 uint32_t Renderer::Impl::writeModelInstances(FrameData &f) {
@@ -260,6 +322,56 @@ void Renderer::Impl::recordBloom(VkCommandBuffer cmd) {
     step(bloomSets[kMaxBloomMips + j], mipSize(j + 1), mipSize(j), 2u);
 }
 
+void Renderer::Impl::recordShadowPass(FrameData &f, uint32_t instanceCount) {
+  VkCommandBuffer cmd = f.cmd;
+  const VkPipelineStageFlags2 depthStages =
+      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+  // The previous frame's scene pass sampled it: wait, then discard.
+  vk::imageBarrier(cmd, shadowMap.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_NONE, depthStages,
+                   VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                       VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+
+  VkRenderingAttachmentInfo da{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+  da.imageView = shadowMap.view;
+  da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  da.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  da.clearValue.depthStencil = {1.0f, 0}; // standard depth: 1 = far from the sun
+  VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+  ri.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
+  ri.layerCount = 1;
+  ri.pDepthAttachment = &da;
+  vkCmdBeginRendering(cmd, &ri);
+
+  const VkViewport vp{0.0f, 0.0f, float(kShadowMapSize), float(kShadowMapSize), 0.0f, 1.0f};
+  const VkRect2D sc{{0, 0}, {kShadowMapSize, kShadowMapSize}};
+  vkCmdSetViewport(cmd, 0, 1, &vp);
+  vkCmdSetScissor(cmd, 0, 1, &sc);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, scenePipelineLayout, 0, 1,
+                          &f.sceneSet, 0, nullptr);
+  vkCmdBindIndexBuffer(cmd, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+  if (shadowDrawCount > 0) {
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipeline);
+    vkCmdDrawIndexedIndirect(cmd, f.shadowDraws.buffer, 0, shadowDrawCount,
+                             sizeof(gpu::DrawIndexedIndirect));
+  }
+  if (instanceCount > 0) {
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowModelPipeline);
+    for (const ModelDraw &md : modelDraws)
+      vkCmdDrawIndexed(cmd, md.faceCount * 6u, md.instanceCount, 0, int32_t(md.faceBase * 4u),
+                       md.firstInstance);
+  }
+  vkCmdEndRendering(cmd);
+
+  vk::imageBarrier(cmd, shadowMap.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, depthStages,
+                   VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                   VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+}
+
 void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32_t instanceCount) {
   VkCommandBuffer cmd = f.cmd;
   vkResetCommandBuffer(cmd, 0);
@@ -288,6 +400,9 @@ void Renderer::Impl::recordFrame(FrameData &f, uint32_t translucentDraws, uint32
   vk::memoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
                     VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+
+  // --- sun shadow map ----------------------------------------------------------------
+  recordShadowPass(f, instanceCount);
 
   // --- scene pass (HDR, MSAA, reverse-Z) ----------------------------------------
   const bool msaa = ctx.caps.msaa != VK_SAMPLE_COUNT_1_BIT;
@@ -492,6 +607,7 @@ void Renderer::Impl::endFrame() {
   buildFrameUniforms(f);
   cullAndBuildLists(f);
   buildFrameUniforms(f); // rewrite with the final visible count
+  buildShadowList(f);
   const uint32_t instanceCount = writeModelInstances(f);
   recordFrame(f, translucentCount, instanceCount);
 

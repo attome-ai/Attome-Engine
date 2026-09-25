@@ -12,7 +12,7 @@
 
 namespace atm::render::gpu {
 
-inline constexpr uint32_t kGpuLayoutVersion = 1;
+inline constexpr uint32_t kGpuLayoutVersion = 2;
 
 // Descriptor bindings of the scene set (set 0), shared by every 3D pipeline.
 enum SceneBinding : uint32_t {
@@ -25,10 +25,11 @@ enum SceneBinding : uint32_t {
   kBindDrawCount = 6,   // SSBO   uint count       (per frame)
   kBindModelFaces = 7,  // SSBO   uvec2 modelFaces[]
   kBindInstances = 8,   // SSBO   ModelInstanceGpu[] (per frame)
-  kSceneBindingCount = 9
+  kBindShadowMap = 9,   // sampler2DShadow  sun shadow map (depth compare)
+  kSceneBindingCount = 10
 };
 
-struct FrameUniforms {           // std140, 256 bytes
+struct FrameUniforms {           // std140, 336 bytes
   glm::mat4 viewProj;            // camera-relative (no translation)
   glm::mat4 invViewProj;
   glm::ivec4 camBlock;           // floor(camera position)
@@ -39,8 +40,11 @@ struct FrameUniforms {           // std140, 256 bytes
   glm::vec4 fogParams;           // x = fog end, y = 1/(end-start), z = sun intensity, w = unused
   glm::vec4 sunColor;            // rgb, w = unused
   glm::uvec4 counts;             // x = visible chunks, y = max draws, z = unused, w = unused
+  glm::mat4 lightViewProj;       // camera-relative position -> shadow map clip space
+  glm::vec4 shadowParams;        // x = texel size (blocks), y = strength (0 = off), zw = unused
 };
-static_assert(sizeof(FrameUniforms) == 256);
+static_assert(sizeof(FrameUniforms) == 336);
+static_assert(offsetof(FrameUniforms, lightViewProj) == 256);
 static_assert(offsetof(FrameUniforms, camBlock) == 128);
 static_assert(offsetof(FrameUniforms, counts) == 240);
 

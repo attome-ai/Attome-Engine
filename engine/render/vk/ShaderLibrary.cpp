@@ -11,6 +11,8 @@
 #include "highlight_frag.spv.h"
 #include "bloom_comp.spv.h"
 #include "tonemap_frag.spv.h"
+#include "shadow_vert.spv.h"
+#include "shadow_model_vert.spv.h"
 
 namespace atm::render::vk {
 
@@ -26,6 +28,8 @@ SpirvBlob shaderSpirv(ShaderId id) {
   case ShaderId::HighlightFrag: return {kSpv_highlight_frag, kSpv_highlight_frag_size};
   case ShaderId::BloomComp: return {kSpv_bloom_comp, kSpv_bloom_comp_size};
   case ShaderId::TonemapFrag: return {kSpv_tonemap_frag, kSpv_tonemap_frag_size};
+  case ShaderId::ShadowVert: return {kSpv_shadow_vert, kSpv_shadow_vert_size};
+  case ShaderId::ShadowModelVert: return {kSpv_shadow_model_vert, kSpv_shadow_model_vert_size};
   case ShaderId::Count: break;
   }
   return {nullptr, 0};

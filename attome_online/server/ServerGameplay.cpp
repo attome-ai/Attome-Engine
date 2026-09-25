@@ -262,6 +262,24 @@ void ServerState::damageMonster(Entity &m, Player &attacker, uint16_t amount, bo
 
   if (m.target == kNoEntity) m.target = attacker.entity;
   startAction(m, action::Hit);
+
+  // Hit reaction: knockback away from the attacker (light monsters fly
+  // further), a short stagger, and critical hits interrupt a wind-up.
+  if (m.hp > 0) {
+    if (const Entity *ae = findEntity(attacker.entity)) {
+      glm::dvec3 away = m.move.pos - ae->move.pos;
+      away.y = 0.0;
+      const double len = glm::length(away);
+      away = len > 1e-3 ? away / len : glm::dvec3(0.0, 0.0, 1.0);
+      const float weight = std::clamp(40.0f / float(std::max<uint16_t>(m.maxHp, 1)), 0.3f, 1.3f);
+      const float push = (critical ? 9.0f : 5.5f) * weight;
+      m.move.vel.x += float(away.x) * push;
+      m.move.vel.z += float(away.z) * push;
+      if (m.move.onGround) m.move.vel.y = std::max(m.move.vel.y, (critical ? 5.0f : 3.5f) * weight);
+    }
+    m.staggerUntil = tick + Tick(critical ? kSimHz / 2 : kSimHz / 5);
+    if (critical) m.pendingHitTick = 0;
+  }
   DamageEvent ev;
   ev.source = attacker.entity;
   ev.target = m.id;
@@ -353,17 +371,30 @@ void ServerState::damagePlayer(Entity &victim, uint16_t amount, EntityId source)
   }
 }
 
-void ServerState::meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skill style) {
+glm::dvec3 ServerState::historicPos(const Entity &e, Tick at) const {
+  if (!e.historyValid || at >= tick) return e.move.pos;
+  if (at < e.historySince) at = e.historySince;
+  if (tick - at >= Entity::kPosHistory) return e.posHistory[(tick - Entity::kPosHistory + 1) % Entity::kPosHistory];
+  return e.posHistory[at % Entity::kPosHistory];
+}
+
+void ServerState::meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skill style, Tick viewTick) {
   startAction(pe, action::Swing);
   const ItemId wi = pl.equipped[size_t(EquipSlot::MainHand)];
   const WeaponType weapon = wi ? itemDef(wi).weapon : WeaponType::None;
   const glm::dvec3 eye = eyePosition(pe.move);
   const glm::dvec3 aim(dir);
-  constexpr double kRange = 3.0, kMonsterRadius = 0.6, kCosHalfCone = 0.70710678; // 90 degree cone
+  // Slightly generous reach and a 100 degree cone: the third-person camera
+  // aims from over the shoulder, not from the eye.
+  constexpr double kRange = 3.2, kMonsterRadius = 0.7, kCosHalfCone = 0.64278761;
+  // Lag compensation: judge the hit against where the player saw monsters
+  // (their interpolated view), at most ~300 ms back.
+  const Tick rewind = viewTick < tick ? std::min<Tick>(tick - viewTick, 9) : 0;
+  const Tick seen = tick - rewind;
   candidates.clear();
   for (auto &[id, m] : entities) {
     if (m.kind != EntityKind::Monster || m.dead) continue;
-    const glm::dvec3 d = (m.move.pos + glm::dvec3(0.0, 0.8, 0.0)) - eye;
+    const glm::dvec3 d = (historicPos(m, seen) + glm::dvec3(0.0, 0.8, 0.0)) - eye;
     const double dist = glm::length(d);
     if (dist > kRange + kMonsterRadius) continue;
     if (dist > 0.5 && glm::dot(d / dist, aim) < kCosHalfCone) continue;
@@ -565,15 +596,29 @@ void ServerState::simulateMonsters() {
     in.tick = tick;
     float want = 0.0f;
     glm::dvec3 goal = m.wanderTarget;
+    const bool staggered = tick < m.staggerUntil;
+    // Telegraphed attacks: the swing starts, the hit lands ~0.35 s later if
+    // the target is still in reach, so players can dash out of it.
+    constexpr Tick kWindup = Tick(kSimHz * 35 / 100);
+    if (m.pendingHitTick != 0 && tick >= m.pendingHitTick) {
+      m.pendingHitTick = 0;
+      if (t && !t->dead) {
+        const glm::dvec3 d = t->move.pos - m.move.pos;
+        const double dist = std::sqrt(d.x * d.x + d.z * d.z);
+        if (dist <= def.attackRange * 1.3 && std::fabs(d.y) < 2.5) damagePlayer(*t, def.damage, m.id);
+      }
+    }
     if (t) {
       goal = t->move.pos;
       const glm::dvec3 d = t->move.pos - m.move.pos;
       const double dist = std::sqrt(d.x * d.x + d.z * d.z);
-      if (dist > def.attackRange) {
+      if (staggered || m.pendingHitTick != 0) {
+        want = 0.0f; // committed to the swing / reeling from a hit
+      } else if (dist > def.attackRange) {
         want = std::min(1.0f, def.speed / moveTuning().walkSpeed);
       } else if (tick >= m.attackReadyTick && std::fabs(d.y) < 2.5) {
         startAction(m, action::Swing);
-        damagePlayer(*t, def.damage, m.id);
+        m.pendingHitTick = tick + kWindup;
         m.attackReadyTick = tick + Tick(std::lround(def.attackCooldown * kSimHz));
       }
     } else {
@@ -595,8 +640,17 @@ void ServerState::simulateMonsters() {
     else m.stuckTime = 0.0f;
     if (m.stuckTime > 0.25f && (tick & 1u)) in.buttons = button::Jump;
 
+    if (staggered) in.yaw = m.move.yaw; // don't snap around while reeling
     stepMovement(m.move, in, *world, blocks, kSimDt);
     if (m.move.pos.y < -32.0) m.remove = true;
+
+    // Position history for lag-compensated hits.
+    if (!m.historyValid) {
+      m.posHistory.fill(m.move.pos);
+      m.historySince = tick;
+      m.historyValid = true;
+    }
+    m.posHistory[tick % Entity::kPosHistory] = m.move.pos;
   }
 }
 

@@ -216,6 +216,9 @@ private:
   std::vector<Banner> banners_;
   bool showInventory_ = false, showSkills_ = false, showDebug_ = false;
   bool chatOpen_ = false;
+  float chatIdle_ = 0.0f;                // seconds since the last chat line (fade out)
+  float hpTrail_ = 1.0f;                 // lagging health fraction (damage trail)
+  float shake_ = 0.0f;                   // camera impact shake (0..1)
   char chatInput_[200] = {};
   std::string status_ = "Connecting...";
 

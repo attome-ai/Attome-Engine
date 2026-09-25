@@ -172,6 +172,11 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache cache,
   rs.cullMode = d.cull;
   rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
   rs.lineWidth = 1.0f;
+  if (d.depthBias) {
+    rs.depthBiasEnable = VK_TRUE;
+    rs.depthBiasConstantFactor = d.depthBiasConstant;
+    rs.depthBiasSlopeFactor = d.depthBiasSlope;
+  }
   VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
   ms.rasterizationSamples = d.samples;
   VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
@@ -191,7 +196,7 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache cache,
     att.alphaBlendOp = VK_BLEND_OP_ADD;
   }
   VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-  cb.attachmentCount = 1;
+  cb.attachmentCount = d.colorFormat != VK_FORMAT_UNDEFINED ? 1u : 0u;
   cb.pAttachments = &att;
   const VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
   VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
@@ -199,13 +204,13 @@ VkPipeline createGraphicsPipeline(VkDevice device, VkPipelineCache cache,
   dy.pDynamicStates = dyn;
 
   VkPipelineRenderingCreateInfo ri{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-  ri.colorAttachmentCount = 1;
+  ri.colorAttachmentCount = d.colorFormat != VK_FORMAT_UNDEFINED ? 1u : 0u;
   ri.pColorAttachmentFormats = &d.colorFormat;
   ri.depthAttachmentFormat = d.depthFormat;
 
   VkGraphicsPipelineCreateInfo pci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
   pci.pNext = &ri;
-  pci.stageCount = 2;
+  pci.stageCount = d.frag ? 2u : 1u; // no fragment shader: depth-only pass
   pci.pStages = stages;
   pci.pVertexInputState = &vi;
   pci.pInputAssemblyState = &ia;

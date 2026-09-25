@@ -30,6 +30,10 @@ inline constexpr uint32_t kMaxModelInstances = 16384;
 inline constexpr uint32_t kModelFaceBytes = 16u << 20;          // 2M model faces
 inline constexpr uint32_t kMetaStagingBytes = 512u << 10;       // metadata + materials / frame
 inline constexpr uint32_t kMaxBloomMips = 6;
+// Sun shadow map: one stable cascade centred ahead of the camera.
+inline constexpr uint32_t kShadowMapSize = 4096;
+inline constexpr float kShadowRadius = 72.0f;      // half extent in blocks (144 x 144 area)
+inline constexpr float kShadowDepthRange = 256.0f; // +- blocks along the light direction
 
 // Deferred release of a face range (after the frame's fence signals).
 struct DeferredFree {
@@ -49,6 +53,7 @@ struct FrameData {
   vk::Buffer draws;             // DrawIndexedIndirect[kMaxDraws] (compute output)
   vk::Buffer drawCount;         // uint
   vk::Buffer translucentDraws;  // DrawIndexedIndirect[kMaxChunkSlots] (CPU written)
+  vk::Buffer shadowDraws;       // DrawIndexedIndirect[kMaxChunkSlots] (CPU written)
   vk::Buffer instances;         // ModelInstanceGpu[kMaxModelInstances]
   vk::Buffer staging;           // upload ring slot
   VkDescriptorSet sceneSet = VK_NULL_HANDLE;
@@ -142,7 +147,11 @@ struct Renderer::Impl {
   VkPipeline cullPipeline = VK_NULL_HANDLE;
   VkPipeline bloomPipeline = VK_NULL_HANDLE;
   VkPipeline tonemapPipeline = VK_NULL_HANDLE;
+  VkPipeline shadowPipeline = VK_NULL_HANDLE;
+  VkPipeline shadowModelPipeline = VK_NULL_HANDLE;
   VkSampler linearSampler = VK_NULL_HANDLE;
+  VkSampler shadowSampler = VK_NULL_HANDLE;   // depth compare, white border
+  vk::Image shadowMap;                         // D32, kShadowMapSize^2
 
   // --- persistent GPU buffers ---------------------------------------------------
   vk::Buffer indexBuffer;       // shared quad indices
@@ -189,6 +198,8 @@ struct Renderer::Impl {
   uint64_t uploadBytesThisFrame = 0;
   uint32_t visibleCount = 0;
   uint32_t translucentCount = 0;
+  uint32_t shadowDrawCount = 0;
+  glm::mat4 lightViewProj{1.0f};
   uint32_t opaqueDrawEstimate = 0;
   uint64_t facesEstimate = 0;
   glm::vec3 fogColorLinear{0.0f};
@@ -236,6 +247,8 @@ struct Renderer::Impl {
   uint32_t writeModelInstances(FrameData &f);
   void recordFrame(FrameData &f, uint32_t translucentCount, uint32_t instanceCount);
   void recordBloom(VkCommandBuffer cmd);
+  void buildShadowList(FrameData &f);
+  void recordShadowPass(FrameData &f, uint32_t instanceCount);
 };
 
 } // namespace atm::render

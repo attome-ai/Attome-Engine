@@ -56,3 +56,6 @@ foreach(t ao_client ao_server ao_bots)
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       "${CMAKE_CURRENT_SOURCE_DIR}/config" "$<TARGET_FILE_DIR:${t}>/config")
 endforeach()
+add_custom_command(TARGET ao_client POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:ao_client>/assets")

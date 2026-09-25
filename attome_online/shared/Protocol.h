@@ -59,7 +59,9 @@ ATM_DEFINE_MESSAGE(InputBatch, 2, AO_MSG_InputBatch)
   F(uint8_t, hotbarSlot, Bits<5>)
 ATM_DEFINE_MESSAGE(BlockAction, 3, AO_MSG_BlockAction)
 
-// Reliable. Attack in the aim direction with the equipped weapon.
+// Reliable. Attack in the aim direction with the equipped weapon. `tick` is
+// the server tick the client was displaying (interpolated view), used by the
+// server to rewind monster positions (lag compensation).
 #define AO_MSG_Attack(F)                                                       \
   F(uint32_t, tick, U32)                                                       \
   F(float, yaw, Angle<12>) F(float, pitch, Angle<12>)                          \

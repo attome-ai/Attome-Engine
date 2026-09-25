@@ -565,21 +565,16 @@ void ServerState::handleBlockAction(Player &pl, const BlockAction &m) {
 
 void ServerState::handleAttack(Player &pl, const Attack &m) {
   Entity *pe = findEntity(pl.entity);
-  if (!pe || pe->dead || tick < pl.attackReadyTick) return;
+  // Two ticks of grace absorb network jitter; the next ready tick counts from
+  // the scheduled one, so early arrivals cannot raise the attack rate.
+  if (!pe || pe->dead || tick + 2 < pl.attackReadyTick) return;
   const ItemId weaponItem = pl.equipped[size_t(atm::model::EquipSlot::MainHand)];
   const WeaponType weapon = weaponItem ? itemDef(weaponItem).weapon : WeaponType::None;
   const float pitch = std::clamp(m.pitch, -1.55f, 1.55f);
   const glm::vec3 dir = aimDirection(m.yaw, pitch);
 
-  float cooldown = 0.6f;
-  switch (weapon) {
-  case WeaponType::Sword: cooldown = 0.5f; break;
-  case WeaponType::Bow: cooldown = 0.8f; break;
-  case WeaponType::Staff: cooldown = 0.9f; break;
-  case WeaponType::Pickaxe: cooldown = 0.7f; break;
-  default: break;
-  }
-  pl.attackReadyTick = tick + Tick(std::lround(cooldown * kSimHz));
+  const Tick cooldownTicks = Tick(std::lround(weaponCooldown(weapon) * kSimHz));
+  pl.attackReadyTick = std::max(tick, pl.attackReadyTick) + cooldownTicks;
 
   if (weapon == WeaponType::Bow || weapon == WeaponType::Staff) {
     rangedAttack(pl, *pe, dir, weapon);
@@ -588,7 +583,7 @@ void ServerState::handleAttack(Player &pl, const Attack &m) {
   Skill style = Skill::Attack;
   if (m.ability == 1) style = Skill::Strength;
   else if (m.ability == 2) style = Skill::Defence;
-  meleeAttack(pl, *pe, dir, style);
+  meleeAttack(pl, *pe, dir, style, Tick(m.tick));
 }
 
 void ServerState::handleEquip(Player &pl, const Equip &m) {

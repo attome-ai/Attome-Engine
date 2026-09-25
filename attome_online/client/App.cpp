@@ -1,6 +1,7 @@
 #include "App.h"
 
 #include "SfxPlayer.h"
+#include "UiTheme.h"
 
 #include "server/ZoneServer.h" // complete type for App's unique_ptr<ZoneServer>
 #include "shared/Movement.h"
@@ -117,10 +118,7 @@ bool App::init(const ClientConfig &cfg, std::string *error) {
   imguiContext_ = true;
   ImGui::GetIO().IniFilename = nullptr;
   ImGui::StyleColorsDark();
-  ImGuiStyle &style = ImGui::GetStyle();
-  style.WindowRounding = 6.0f;
-  style.FrameRounding = 4.0f;
-  style.Colors[ImGuiCol_WindowBg].w = 0.82f;
+  ui::init(); // fonts (assets/fonts) + theme
 
   if (!renderer_.init(window_, cfg_.render, error))
     return false;
@@ -571,7 +569,7 @@ glm::dvec3 App::eyePosition(float alpha) const {
 
 glm::vec3 App::aimDirection() const { return lookDir(camYaw_, camPitch_); }
 
-void App::updateCamera(float) {
+void App::updateCamera(float dt) {
   const float alpha = float(accumulator_ / kSimDt);
   const glm::dvec3 target = eyePosition(alpha) + glm::dvec3(0.0, 0.25, 0.0);
   const glm::vec3 fwd = aimDirection();
@@ -594,6 +592,15 @@ void App::updateCamera(float) {
     }
   }
   camPos_ = shoulder - glm::dvec3(fwd) * double(dist);
+
+  // Impact shake (hits dealt / taken): decaying, smooth pseudo-random jitter.
+  if (shake_ > 0.0f) {
+    const float t = float(SDL_GetTicks()) * 0.001f;
+    const float a = shake_ * shake_ * 0.18f;
+    camPos_ += glm::dvec3(right) * double(a * std::sin(t * 61.0f)) +
+               glm::dvec3(0.0, double(a * std::sin(t * 47.0f + 1.3f)), 0.0);
+    shake_ = std::max(0.0f, shake_ - dt * 3.5f);
+  }
 
   camera_.position = camPos_;
   camera_.yaw = camYaw_;
@@ -702,24 +709,23 @@ void App::updateInteraction(float dt) {
   // Attacking: primary with a weapon (or no block targeted).
   if (primary && (holdingWeapon || !hasTarget_) && attackCooldown_ <= 0.0f) {
     proto::Attack a;
-    a.tick = clientTick_;
+    // The server tick we are displaying monsters at (lag compensation).
+    a.tick = uint32_t(std::max(0.0f, std::round(serverTickEstimate_ - kInterpDelayTicks)));
     a.yaw = camYaw_;
     a.pitch = camPitch_;
     a.ability = 0;
     net_.send(a, atm::net2::Channel::ReliableOrdered);
+    attackCooldown_ = weaponCooldown(mainDef.weapon); // same table as the server
     switch (mainDef.weapon) {
     case WeaponType::Bow:
-      attackCooldown_ = 0.7f;
       playActionAnim(selfAnim_, act::BowShoot, mainDef.weapon);
       if (sfx_) sfx_->play(GameSound::BowShoot);
       break;
     case WeaponType::Staff:
-      attackCooldown_ = 0.6f;
       playActionAnim(selfAnim_, act::Cast, mainDef.weapon);
       if (sfx_) sfx_->play(GameSound::SwordSwing);
       break;
     default:
-      attackCooldown_ = 0.45f;
       playActionAnim(selfAnim_, act::Swing, mainDef.weapon);
       if (sfx_) sfx_->play(GameSound::SwordSwing);
       break;
@@ -795,7 +801,11 @@ void App::updateEntities(float dt) {
 
 void App::render(float alpha, float dt) {
   atm::render::Environment env;
-  env.sunDirection = glm::normalize(glm::vec3(0.35f, 0.85f, 0.25f));
+  // Lower, angled sun so block sides read with strong light/shade contrast;
+  // saturated sky with a paler horizon haze.
+  env.sunDirection = glm::normalize(glm::vec3(0.55f, 0.62f, 0.3f));
+  env.skyColor = glm::vec3(0.30f, 0.58f, 1.0f);
+  env.fogColor = glm::vec3(0.68f, 0.84f, 1.0f);
 
   if (!renderer_.beginFrame(camera_, env)) {
     SDL_Delay(10); // minimised: don't spin; ImGui::NewFrame is skipped too
@@ -849,6 +859,7 @@ void App::addFloatingText(const glm::dvec3 &at, std::string text, uint32_t color
 
 void App::addChatLine(std::string line) {
   chat_.push_back(std::move(line));
+  chatIdle_ = 0.0f;
   while (chat_.size() > 50)
     chat_.pop_front();
 }
@@ -1017,9 +1028,18 @@ void App::onDamage(const proto::DamageEvent &m) {
   const uint32_t color = m.target == selfId_ ? rgba(255, 80, 80)
                          : m.critical        ? rgba(255, 200, 40)
                                              : rgba(255, 255, 255);
+  // Spread numbers so rapid hits do not stack on top of each other.
+  const float jx = float(int(m.amount * 7919u + floating_.size() * 104729u) % 100) / 100.0f - 0.5f;
+  const float jz = float(int(m.amount * 104729u + floating_.size() * 7919u) % 100) / 100.0f - 0.5f;
+  at += glm::dvec3(jx * 0.7, 0.0, jz * 0.7);
   addFloatingText(at, (m.critical ? std::to_string(m.amount) + "!" : std::to_string(m.amount)), color);
   if (sfx_ && m.source == selfId_)
     sfx_->play(GameSound::MonsterHit);
+  // Feel: a small kick when our hit lands, more on crits and when we get hit.
+  if (m.source == selfId_)
+    shake_ = std::max(shake_, m.critical ? 0.9f : 0.45f);
+  if (m.target == selfId_)
+    shake_ = std::max(shake_, 1.0f);
 }
 
 void App::onInventory(const proto::InventoryMsg &m) {

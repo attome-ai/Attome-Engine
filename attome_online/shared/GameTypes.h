@@ -50,6 +50,18 @@ uint32_t combatLevel(const std::array<uint32_t, kSkillCount> &levels); // levels
 enum class ItemKind : uint8_t { None, Block, Weapon, Tool, Armour, Resource, Food };
 enum class WeaponType : uint8_t { None = 0, Sword = 1, Bow = 2, Staff = 3, Pickaxe = 4 };
 
+// Seconds between attacks per weapon. Shared so the client never swings
+// faster than the server accepts (a mismatch = animations with no damage).
+inline constexpr float weaponCooldown(WeaponType w) {
+  switch (w) {
+  case WeaponType::Sword: return 0.5f;
+  case WeaponType::Bow: return 0.8f;
+  case WeaponType::Staff: return 0.9f;
+  case WeaponType::Pickaxe: return 0.7f;
+  default: return 0.6f;
+  }
+}
+
 struct ItemDef {
   std::string_view name;
   ItemKind kind = ItemKind::None;

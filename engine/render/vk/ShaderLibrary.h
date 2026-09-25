@@ -18,6 +18,8 @@ enum class ShaderId {
   HighlightFrag,
   BloomComp,
   TonemapFrag,
+  ShadowVert,
+  ShadowModelVert,
   Count
 };
 

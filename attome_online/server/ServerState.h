@@ -133,6 +133,13 @@ struct Entity {
   glm::dvec3 wanderTarget{0.0};
   float stuckTime = 0.0f;
   std::vector<std::pair<EntityId, uint32_t>> damageBy; // player entity -> damage dealt
+  Tick pendingHitTick = 0;  // telegraphed attack lands at this tick (0 = none)
+  Tick staggerUntil = 0;    // hit reaction: no moving / attacking until then
+  // Lag compensation: position at tick t is posHistory[t % kPosHistory].
+  static constexpr Tick kPosHistory = 32;
+  std::array<glm::dvec3, kPosHistory> posHistory{};
+  Tick historySince = 0;    // first tick recorded (older ticks use the oldest)
+  bool historyValid = false;
 
   // Projectiles / dropped items
   EntityId owner = kNoEntity;
@@ -255,7 +262,8 @@ struct ServerState {
   void damageMonster(Entity &m, Player &attacker, uint16_t amount, bool critical, Skill style);
   void killMonster(Entity &m);
   void damagePlayer(Entity &victim, uint16_t amount, EntityId source);
-  void meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skill style);
+  void meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skill style, Tick viewTick);
+  glm::dvec3 historicPos(const Entity &e, Tick at) const; // lag compensation
   void rangedAttack(Player &pl, Entity &pe, const glm::vec3 &dir, WeaponType weapon);
   float randf(); // [0,1)
   int randi(int lo, int hi); // inclusive
