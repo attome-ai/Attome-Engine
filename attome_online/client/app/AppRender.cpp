@@ -2,6 +2,8 @@
 
 #include "app/AppInternal.h"
 
+#include <chrono>
+
 namespace ao::client {
 
 // ---------------------------------------------------------------------------
@@ -60,6 +62,8 @@ void App::render(float alpha, float dt) {
     if (glm::length(camPos_ - (selfFeet + glm::dvec3(0.0, 1.1, 0.0))) > 1.2)
       drawCharacter(selfAppearance_, selfAnim_, selfFeet, bodyYaw_,
                     hp_ == 0 ? rgba(120, 120, 120) : 0xFFFFFFFFu);
+    drawStructures();
+    drawWorldProps();
 
     ATM_PROFILE_SCOPE("Entities draw");
     // Remote entities.
@@ -176,7 +180,7 @@ void App::render(float alpha, float dt) {
 
     // Block outline; skipped when the block nearly touches the camera (its
     // edges would stretch across the whole screen as long diagonal lines).
-    if (hasTarget_) {
+    if (hasTarget_ && resourceForBlock(world_->blockAt(targetBlock_))) { // RuneScape-style: only gatherables
       const glm::dvec3 bc(targetBlock_.x + 0.5, targetBlock_.y + 0.5, targetBlock_.z + 0.5);
       if (glm::length(bc - camPos_) > 1.6)
         renderer_.drawBlockHighlight(targetBlock_);
@@ -206,5 +210,143 @@ void App::addChatLine(std::string line) {
     chat_.pop_front();
 }
 
+
+} // namespace ao::client
+
+namespace ao::client {
+
+// ---------------------------------------------------------------------------
+// Decoration props
+// ---------------------------------------------------------------------------
+
+void App::buildWorldProps() {
+  worldProps_.clear();
+  clearStructures();
+  if (!world_) return;
+  const auto &town = ao::world::homeTown(world_->generator());
+  // Queue every 32^3 tile of every structure, nearest to the spawn first.
+  const auto &models = ao::world::townStructures(town);
+  for (size_t i = 0; i < models.size(); ++i) {
+    const auto &m = models[i];
+    for (int ty = 0; ty * 32 < m.sy; ++ty)
+      for (int tz = 0; tz * 32 < m.sz; ++tz)
+        for (int tx = 0; tx * 32 < m.sx; ++tx) pendingTiles_.push_back({int(i), tx, ty, tz});
+  }
+  std::stable_sort(pendingTiles_.begin(), pendingTiles_.end(), [&](const PendingTile &a, const PendingTile &b) {
+    auto d = [&](const PendingTile &p) {
+      const auto &m = models[size_t(p.model)];
+      const double x = m.bx + p.tx * 8 + 4, z = m.bz + p.tz * 8 + 4;
+      return x * x + z * z;
+    };
+    return d(a) < d(b);
+  });
+  for (const ao::world::TownProp &p : ao::world::townProps(town)) {
+    const int part = models_.findPart(std::string("prop_") + p.name);
+    if (part < 0) continue;
+    PlacedProp w;
+    w.part = part;
+    w.pos = glm::dvec3(town.centerX + double(p.x), town.groundY + double(p.y), town.centerZ + double(p.z));
+    w.yaw = p.yaw;
+    worldProps_.push_back(w);
+  }
+}
+
+void App::drawWorldProps() {
+  ATM_PROFILE_SCOPE("Props draw");
+  constexpr double kRange = 110.0; // blocks; small props, same idea as Decor's radius
+  for (const PlacedProp &p : worldProps_) {
+    const glm::dvec3 d = p.pos - camPos_;
+    if (d.x * d.x + d.z * d.z > kRange * kRange) continue;
+    if (size_t(p.part) >= partMeshes_.size() || partMeshes_[size_t(p.part)] == atm::render::kInvalidModelMesh)
+      continue;
+    atm::render::ModelInstance inst;
+    inst.mesh = partMeshes_[size_t(p.part)];
+    inst.origin = p.pos;
+    inst.pivot = models_.parts()[size_t(p.part)].pivot;
+    inst.rotation = glm::angleAxis(p.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+    inst.voxelScale = 1.0f / 16.0f;
+    inst.flags = atm::render::kInstanceNoRim;
+    renderer_.drawModel(inst);
+  }
+}
+
+} // namespace ao::client
+
+namespace ao::client {
+
+// ---------------------------------------------------------------------------
+// Fine-voxel structures
+// ---------------------------------------------------------------------------
+
+void App::clearStructures() {
+  for (const StructureTile &t : structureTiles_)
+    if (t.mesh != atm::render::kInvalidModelMesh) renderer_.destroyModelMesh(t.mesh);
+  structureTiles_.clear();
+  pendingTiles_.clear();
+  pendingTileCursor_ = 0;
+}
+
+void App::buildStructureMeshes(float budgetMs) {
+  if (pendingTileCursor_ >= pendingTiles_.size() || !world_) return;
+  ATM_PROFILE_SCOPE("Structure meshing");
+  const auto t0 = std::chrono::steady_clock::now();
+  const auto &town = ao::world::homeTown(world_->generator());
+  const auto &models = ao::world::townStructures(town);
+  constexpr int T = 32; // voxels per tile side (mesher limit)
+  atm::model::VoxelPart part;
+  part.palette = ao::world::microPalette();
+  part.emissiveFrom = ao::world::kMicroGlowFrom;
+  atm::voxel::ChunkMeshData mesh;
+  while (pendingTileCursor_ < pendingTiles_.size()) {
+    const PendingTile p = pendingTiles_[pendingTileCursor_++];
+    const ao::world::MicroModel &m = models[size_t(p.model)];
+    const int x0 = p.tx * T, y0 = p.ty * T, z0 = p.tz * T;
+    part.sx = std::min(T, m.sx - x0), part.sy = std::min(T, m.sy - y0), part.sz = std::min(T, m.sz - z0);
+    part.voxels.assign(size_t(part.sx) * part.sy * part.sz, 0);
+    bool any = false;
+    for (int y = 0; y < part.sy; ++y)
+      for (int z = 0; z < part.sz; ++z)
+        for (int x = 0; x < part.sx; ++x) {
+          const uint8_t c = m.at(x0 + x, y0 + y, z0 + z);
+          part.at(x, y, z) = c;
+          any |= c != 0;
+        }
+    if (any) {
+      mesh.clear();
+      atm::model::meshPart(part, uint16_t(microMaterialBase_), mesh);
+      if (!mesh.empty()) {
+        StructureTile t;
+        t.mesh = renderer_.createModelMesh(mesh);
+        const double s = 1.0 / ao::world::kMicro;
+        t.origin = glm::dvec3(town.centerX + m.bx + x0 * s, town.groundY + m.by + y0 * s, town.centerZ + m.bz + z0 * s);
+        t.center = t.origin + glm::dvec3(part.sx, part.sy, part.sz) * (0.5 * s);
+        t.radius = 0.5 * s * std::sqrt(double(part.sx * part.sx + part.sy * part.sy + part.sz * part.sz));
+        structureTiles_.push_back(t);
+      }
+    }
+    const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (ms > budgetMs) break;
+  }
+}
+
+void App::drawStructures() {
+  buildStructureMeshes(3.0f);
+  ATM_PROFILE_SCOPE("Structures draw");
+  const glm::dvec3 fwd = glm::dvec3(aimDirection());
+  constexpr double kRange = 280.0;
+  for (const StructureTile &t : structureTiles_) {
+    const glm::dvec3 d = t.center - camPos_;
+    const double dist2 = glm::dot(d, d);
+    if (dist2 > (kRange + t.radius) * (kRange + t.radius)) continue;
+    if (glm::dot(d, fwd) < -t.radius) continue; // behind the camera
+    atm::render::ModelInstance inst;
+    inst.mesh = t.mesh;
+    inst.origin = t.origin;
+    inst.pivot = glm::vec3(0.0f);
+    inst.voxelScale = 1.0f / float(ao::world::kMicro);
+    inst.flags = atm::render::kInstanceNoRim;
+    renderer_.drawModel(inst);
+  }
+}
 
 } // namespace ao::client

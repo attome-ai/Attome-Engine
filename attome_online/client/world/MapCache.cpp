@@ -1,5 +1,7 @@
 #include "MapCache.h"
 
+#include "../../shared/world/Town.h"
+
 #include <algorithm>
 #include <cmath>
 #include <chrono>
@@ -19,7 +21,12 @@ uint32_t scale(uint32_t c, float k) {
 
 uint32_t MapCache::scanColumn(const atm::voxel::VoxelWorld &world, const atm::voxel::BlockRegistry &blocks,
                               int32_t x, int32_t z) const {
-  const int h = world.generator().surfaceHeight(x, z);
+  const int h = ao::world::groundHeight(world.generator(), x, z);
+  // Town columns: the colour of the fine-voxel roof / paving on top.
+  if (uint32_t tc; ao::world::townMapColor(ao::world::homeTown(world.generator()), x, z, tc)) {
+    const int hn = ao::world::groundHeight(world.generator(), x - 1, z - 1);
+    return scale(tc, std::clamp(1.0f + float(h - hn) * 0.08f, 0.75f, 1.2f));
+  }
   // Top non-air block near the generated surface (catches trees and edits).
   int top = -1;
   atm::voxel::BlockId b = atm::voxel::kAir;
@@ -39,7 +46,7 @@ uint32_t MapCache::scanColumn(const atm::voxel::VoxelWorld &world, const atm::vo
     return scale(c, std::clamp(1.1f - depth * 0.06f, 0.55f, 1.1f));
   }
   // Hill shading from the slope toward the north-west (light from there).
-  const int hn = world.generator().surfaceHeight(x - 1, z - 1);
+  const int hn = ao::world::groundHeight(world.generator(), x - 1, z - 1);
   const float k = std::clamp(1.0f + float(h - hn) * 0.12f, 0.72f, 1.25f);
   return scale(c, k);
 }

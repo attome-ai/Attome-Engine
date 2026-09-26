@@ -22,7 +22,20 @@ struct MapRegion {
   float totalWeight = 0.0f;
 };
 
+// A fixed NPC spawn point (RuneScape-style): keeps `count` of one NPC alive
+// within `radius` of (x, z). A killed NPC comes back after `respawnSeconds`;
+// NPCs never wander or chase further than `leash` from the spawner.
+struct MapSpawner {
+  uint8_t npc = 0;
+  double x = 0.0, z = 0.0;
+  float radius = 6.0f;
+  uint8_t count = 1;
+  float respawnSeconds = 20.0f;
+  float leash = 20.0f;
+};
+
 std::string_view mapName();
+const std::vector<MapSpawner> &mapSpawners();
 const std::vector<MapRegion> &mapRegions();
 // The first region containing (x, z); the fallback region if none. Never null
 // once data is loaded (nullptr only if the map has no regions at all).

@@ -218,6 +218,9 @@ private:
   atm::voxel::FaceDir targetFace_ = atm::voxel::FaceDir::PosY;
   float mineProgress_ = 0.0f;
   BlockPos miningBlock_{};
+  BlockPos gatherWarnBlock_{};        // last "you need an axe" message (no spam)
+  float gatherWarnCooldown_ = 0.0f;
+  bool worldEditable_ = false;        // overworld: gather only; instances / plots later
   float attackCooldown_ = 0.0f;
   float placeCooldown_ = 0.0f;
 
@@ -233,6 +236,16 @@ private:
   bool showHitboxes_ = false;             // F8: collision / hit volumes
   uint64_t nextPickupMs_ = 0;             // E held: resend Pickup at most every 250 ms
   atm::render::ModelMeshId lootBeamMesh_ = atm::render::kInvalidModelMesh;
+  // Decoration props placed in the world (home town now; homes / clan plots
+  // later): voxel model parts at 16 voxels per block, drawn within range.
+  struct PlacedProp {
+    int part = -1;
+    glm::dvec3 pos{0.0};
+    float yaw = 0.0f;
+  };
+  std::vector<PlacedProp> worldProps_;
+  void buildWorldProps();
+  void drawWorldProps();
   MapCache mapCache_;                    // explored terrain colours (minimap, world map)
   bool showWorldMap_ = false;
   bool showProfiler_ = false;             // F7: frame profiler panel
@@ -250,6 +263,23 @@ private:
   float bodyYaw_ = 0.0f;                 // rendered facing of the local character
   Decor decor_;                          // grass tufts, flowers, pebbles
   uint32_t decorMaterialBase_ = 0;
+  uint32_t microMaterialBase_ = 0;   // fine-voxel structure palette (ao::world::microPalette)
+  // Fine-voxel structures (town buildings): 32^3-voxel tiles meshed a few per
+  // frame after joining, drawn as models at 1/4 block per voxel.
+  struct StructureTile {
+    atm::render::ModelMeshId mesh = atm::render::kInvalidModelMesh;
+    glm::dvec3 origin{0.0}, center{0.0};
+    double radius = 0.0;
+  };
+  struct PendingTile {
+    int model, tx, ty, tz;
+  };
+  std::vector<StructureTile> structureTiles_;
+  std::vector<PendingTile> pendingTiles_;
+  size_t pendingTileCursor_ = 0;
+  void clearStructures();
+  void buildStructureMeshes(float budgetMs);
+  void drawStructures();
   char chatInput_[200] = {};
   std::string status_ = "Connecting...";
 

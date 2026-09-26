@@ -42,7 +42,9 @@ void App::onWelcome(const proto::Welcome &m) {
   wc.seed = m.worldSeed;
   wc.meshing = true;
   wc.viewRadiusChunks = cfg_.viewRadiusChunks;
+  ao::world::installHomeTown(wc);
   world_ = std::make_unique<atm::voxel::VoxelWorld>(wc, blocks_);
+  buildWorldProps();
 
   MoveState s;
   s.pos = m.spawn;
@@ -50,7 +52,7 @@ void App::onWelcome(const proto::Welcome &m) {
   camYaw_ = 0.0f;
   welcomed_ = true;
   status_.clear();
-  addChatLine("Welcome to Attome Online! WASD move, Space jump/glide, Q dash, LMB attack/mine, RMB place/use, E pick up loot, Tab inventory, K skills.");
+  addChatLine("Welcome to Attome Online! WASD move, Space jump/glide, Q dash, LMB attack / chop trees (axe) / mine rocks (pickaxe), RMB eat/wear, E pick up loot, Tab inventory, K skills.");
 }
 
 void App::onChunkData(const proto::ChunkData &m) {

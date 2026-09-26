@@ -2,20 +2,25 @@
   "_doc": [
     "Map definition: named regions of the procedural world. A region is a ring around a centre",
     "(minRadius..maxRadius blocks, x/z). The first region containing a point wins; a region without",
-    "a shape matches everywhere (put it last). spawns: NPC names with relative weights.",
-    "colour: region tint on the world map (r, g, b 0..255). levels: shown on the map and on entry."
+    "a shape matches everywhere (put it last). colour: region tint on the world map (r, g, b 0..255).",
+    "levels: shown on the map and on entry. spawns: NPC names with relative weights, used for ambient",
+    "spawning around players (leave empty for hand-placed areas).",
+    "spawners: fixed RuneScape-style spawn points. pos [x, z], radius (wander area), count (NPCs kept",
+    "alive), respawn (seconds after a kill), leash (max distance from the spawner before giving up)."
   ],
   "name": "Overworld",
   "regions": [
     {
-      "name": "Sunny Meadows", "levels": "1-5", "center": [0, 0], "minRadius": 0, "maxRadius": 140,
-      "colour": [120, 200, 90],
-      "spawns": [{"npc": "slime", "weight": 70}, {"npc": "wolf", "weight": 30}]
+      "name": "Brightwater", "levels": "Safe", "center": [0, 0], "minRadius": 0, "maxRadius": 92,
+      "colour": [214, 196, 150]
     },
     {
-      "name": "Howling Woods", "levels": "5-15", "center": [0, 0], "minRadius": 140, "maxRadius": 320,
-      "colour": [70, 140, 70],
-      "spawns": [{"npc": "wolf", "weight": 60}, {"npc": "slime", "weight": 25}, {"npc": "golem", "weight": 15}]
+      "name": "Sunny Meadows", "levels": "1-5", "center": [0, 0], "minRadius": 92, "maxRadius": 160,
+      "colour": [120, 200, 90]
+    },
+    {
+      "name": "Howling Woods", "levels": "5-15", "center": [0, 0], "minRadius": 160, "maxRadius": 320,
+      "colour": [70, 140, 70]
     },
     {
       "name": "Golem Highlands", "levels": "15-30", "center": [0, 0], "minRadius": 320, "maxRadius": 700,
@@ -27,5 +32,22 @@
       "colour": [120, 90, 90],
       "spawns": [{"npc": "golem", "weight": 50}, {"npc": "wolf", "weight": 50}]
     }
+  ],
+  "spawners": [
+    {"npc": "slime", "pos": [0, 115],    "radius": 8, "count": 4, "respawn": 15},
+    {"npc": "slime", "pos": [115, 20],   "radius": 8, "count": 4, "respawn": 15},
+    {"npc": "slime", "pos": [-115, -10], "radius": 8, "count": 4, "respawn": 15},
+    {"npc": "slime", "pos": [10, -120],  "radius": 7, "count": 3, "respawn": 15},
+    {"npc": "slime", "pos": [100, 100],   "radius": 7, "count": 3, "respawn": 15},
+    {"npc": "wolf",  "pos": [-105, 105],  "radius": 7, "count": 2, "respawn": 25},
+    {"npc": "wolf",  "pos": [105, -105],  "radius": 7, "count": 2, "respawn": 25},
+
+    {"npc": "wolf",  "pos": [0, 190],    "radius": 10, "count": 4, "respawn": 25},
+    {"npc": "wolf",  "pos": [180, 60],   "radius": 10, "count": 4, "respawn": 25},
+    {"npc": "wolf",  "pos": [-170, -90], "radius": 10, "count": 4, "respawn": 25},
+    {"npc": "wolf",  "pos": [60, -200],  "radius": 10, "count": 3, "respawn": 25},
+    {"npc": "slime", "pos": [-190, 120], "radius": 9,  "count": 4, "respawn": 20},
+    {"npc": "golem", "pos": [230, 210],  "radius": 8,  "count": 2, "respawn": 45},
+    {"npc": "golem", "pos": [-240, -200],"radius": 8,  "count": 2, "respawn": 45}
   ]
 }

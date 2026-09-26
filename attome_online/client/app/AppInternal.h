@@ -13,6 +13,7 @@
 
 #include "server/ZoneServer.h" // complete type for App's unique_ptr<ZoneServer>
 #include "shared/Movement.h"
+#include "shared/world/Town.h"
 
 #include "../../../engine/ATMConfig.h"
 #include "../../../engine/ATMJson.h"

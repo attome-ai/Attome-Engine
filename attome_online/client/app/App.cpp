@@ -186,6 +186,7 @@ void App::shutdown() {
   world_.reset();
   sfx_.reset();
   audio_.shutdown();
+  clearStructures();
   for (auto id : partMeshes_)
     if (id != atm::render::kInvalidModelMesh)
       renderer_.destroyModelMesh(id);
@@ -235,7 +236,7 @@ void App::uploadMaterials() {
     m.alpha = b.render == atm::voxel::BlockRender::Translucent ? 0.6f : 1.0f;
     if (b.liquid)
       m.flags |= atm::render::kMaterialWater;
-    if (b.name.find("leaves") != std::string::npos)
+    if (b.name.find("leaves") != std::string::npos || b.name.find("flowers") != std::string::npos)
       m.flags |= atm::render::kMaterialFoliage;
     if (b.name == "grass")
       m.flags |= atm::render::kMaterialGrassTop;
@@ -256,6 +257,15 @@ void App::uploadMaterials() {
   for (uint32_t c : Decor::palette()) {
     atm::render::Material m;
     m.top = m.side = m.bottom = c;
+    mats.push_back(m);
+  }
+  // Fine-voxel structure palette (town buildings); glow entries are emissive.
+  microMaterialBase_ = uint32_t(mats.size());
+  const auto &micro = ao::world::microPalette();
+  for (size_t k = 0; k < micro.size(); ++k) {
+    atm::render::Material m;
+    m.top = m.side = m.bottom = micro[k];
+    m.emissive = k >= ao::world::kMicroGlowFrom ? 0.85f : 0.0f;
     mats.push_back(m);
   }
   renderer_.setMaterials(mats);

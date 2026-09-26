@@ -1,0 +1,27 @@
+{
+  "_doc": [
+    "Gathering nodes. The overworld can't be edited; these blocks can be harvested with the right tool.",
+    "block: the harvested block. depleted: the block left behind until the node regrows (respawn seconds).",
+    "skill / level: requirement. tool: axe | pickaxe (must be held). item: given per harvest. xp: per harvest.",
+    "depleteChance: chance per harvest that the node runs out (1 = every time, like RuneScape rocks).",
+    "fells: the whole tree (connected logs and their leaves) falls and a stump is left.",
+    "gather: seconds per harvest at the required level (1% faster per level above, down to half)."
+  ],
+  "resources": [
+    {"name": "oak_tree",    "display": "Oak tree",     "block": "oak_log",    "depleted": "stump",
+     "skill": "woodcutting", "level": 1,  "tool": "axe",     "item": "oak_log",       "xp": 25,
+     "depleteChance": 0.2, "fells": true, "respawn": 25, "gather": 1.6},
+    {"name": "copper_rock", "display": "Copper rock",  "block": "copper_ore", "depleted": "depleted_rock",
+     "skill": "mining", "level": 1,  "tool": "pickaxe", "item": "copper_ore",    "xp": 17.5,
+     "depleteChance": 1.0, "respawn": 6, "gather": 1.8},
+    {"name": "iron_rock",   "display": "Iron rock",    "block": "iron_ore",   "depleted": "depleted_rock",
+     "skill": "mining", "level": 15, "tool": "pickaxe", "item": "iron_ore",      "xp": 35,
+     "depleteChance": 1.0, "respawn": 12, "gather": 2.4},
+    {"name": "gold_rock",   "display": "Gold rock",    "block": "gold_ore",   "depleted": "depleted_rock",
+     "skill": "mining", "level": 40, "tool": "pickaxe", "item": "gold_ore",      "xp": 65,
+     "depleteChance": 1.0, "respawn": 60, "gather": 3.0},
+    {"name": "crystal_rock","display": "Crystal rock", "block": "crystal",    "depleted": "depleted_rock",
+     "skill": "mining", "level": 60, "tool": "pickaxe", "item": "crystal_shard", "xp": 90,
+     "depleteChance": 1.0, "respawn": 120, "gather": 3.5}
+  ]
+}

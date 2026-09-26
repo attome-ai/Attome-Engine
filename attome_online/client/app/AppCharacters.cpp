@@ -282,6 +282,18 @@ void App::drawItemEntity(uint16_t item, const glm::dvec3 &pos, float spin) {
     renderer_.drawModel(inst);
     return;
   }
+  // Decorations: the prop model itself, full size (it's already small).
+  if (d.kind == ItemKind::Prop && d.prop) {
+    const int part = models_.findPart(d.prop);
+    if (part >= 0 && size_t(part) < partMeshes_.size() && partMeshes_[size_t(part)] != atm::render::kInvalidModelMesh) {
+      const auto &vp = models_.parts()[size_t(part)];
+      inst.mesh = partMeshes_[size_t(part)];
+      inst.pivot = {vp.sx * 0.5f, vp.sy * 0.5f, vp.sz * 0.5f};
+      inst.voxelScale = std::min(1.0f / 16.0f, 0.6f / float(std::max({vp.sx, vp.sy, vp.sz})));
+      renderer_.drawModel(inst);
+      return;
+    }
+  }
   // Equipment and resources: draw the item's model piece if it has one.
   if (d.piece) {
     const atm::model::PieceId pid = models_.findPiece(d.piece);

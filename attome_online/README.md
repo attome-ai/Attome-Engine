@@ -49,8 +49,8 @@ Useful options: `-DATTOME_RUNTIME_GRID=ON` (runtime-sized 2D grid),
 | Q | Dash |
 | Left Ctrl | Sprint |
 | Mouse | Look · wheel = zoom (Trove style) |
-| Left mouse | Attack (weapon) · mine (pickaxe / hands) |
-| Right mouse | Place the selected block |
+| Left mouse | Attack (weapon) · chop trees (axe) · mine rocks (pickaxe) |
+| Right mouse | Eat / wear the selected item (the overworld can't be built on) |
 | 1–9 / Shift + wheel | Select hotbar slot |
 | Tab / I | Inventory and equipment (click to equip — gear swaps instantly) |
 | K | Skills (21 RuneScape-style skills, total and combat level) |

@@ -46,3 +46,18 @@ int pickSpawn(const MapRegion &region, float r01) {
 }
 
 } // namespace ao
+
+namespace ao {
+
+namespace defs_detail {
+
+std::vector<MapSpawner> &spawnerTable() {
+  static std::vector<MapSpawner> t;
+  return t;
+}
+
+} // namespace defs_detail
+
+const std::vector<MapSpawner> &mapSpawners() { return defs_detail::spawnerTable(); }
+
+} // namespace ao

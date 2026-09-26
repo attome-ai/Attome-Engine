@@ -68,23 +68,41 @@ void App::updateInteraction(float dt) {
   const bool holdingWeapon = mainDef.kind == ItemKind::Weapon;
   const bool primary = input_.held("primary");
 
-  // Mining: primary on a block with a tool or bare hands (not a weapon).
-  // Unbreakable (hardness < 0, e.g. bedrock) or above our Mining level: the
-  // server would refuse it, so don't start mining at all.
+  // Gathering: primary on a resource node (tree, rock) with the right tool
+  // in hand, RuneScape-style. The overworld itself can't be broken. Same
+  // checks as ServerState::harvestNode, so we never start what the server
+  // would refuse; a clear message instead.
+  const ResourceDef *node = hasTarget_ ? resourceForBlock(world_->blockAt(targetBlock_)) : nullptr;
   bool breakable = false;
-  if (hasTarget_) {
-    const auto &tdef = blocks_.get(world_->blockAt(targetBlock_));
-    breakable = tdef.hardness >= 0.0f &&
-                levelForXp(skillXp_[size_t(Skill::Mining)]) >= uint32_t(tdef.miningLevel);
+  if (node && primary && !holdingWeapon) {
+    const uint32_t lvl = levelForXp(skillXp_[size_t(node->skill)]);
+    const char *why = nullptr;
+    std::string msg;
+    if (lvl < node->level) {
+      msg = "You need a " + std::string(skillName(node->skill)) + " level of " + std::to_string(node->level) +
+            " to harvest this " + std::string(node->display) + ".";
+      why = msg.c_str();
+    } else if (node->tool != WeaponType::None && mainDef.weapon != node->tool) {
+      why = node->tool == WeaponType::Axe ? "You need an axe in your hand to chop this tree."
+                                          : "You need a pickaxe in your hand to mine this rock.";
+    }
+    if (why) {
+      if (!(gatherWarnBlock_ == targetBlock_) || gatherWarnCooldown_ <= 0.0f) {
+        addChatLine(why);
+        gatherWarnBlock_ = targetBlock_;
+        gatherWarnCooldown_ = 3.0f;
+      }
+    } else {
+      breakable = true;
+    }
   }
+  gatherWarnCooldown_ = std::max(0.0f, gatherWarnCooldown_ - dt);
   if (primary && breakable && !holdingWeapon) {
     if (!(miningBlock_ == targetBlock_)) {
       miningBlock_ = targetBlock_;
       mineProgress_ = 0.0f;
     }
-    const auto &def = blocks_.get(world_->blockAt(targetBlock_));
-    const bool pick = mainDef.weapon == WeaponType::Pickaxe;
-    const float breakTime = std::max(0.08f, def.hardness * (pick ? 0.3f : 1.0f));
+    const float breakTime = gatherTime(*node, levelForXp(skillXp_[size_t(node->skill)]));
     const float before = mineProgress_;
     mineProgress_ += dt / breakTime;
     // Swing animation + sound about every 0.35 s while mining.
@@ -122,7 +140,7 @@ void App::updateInteraction(float dt) {
   }
 
   // Attacking: primary with a weapon (or no block targeted).
-  if (primary && (holdingWeapon || !hasTarget_) && attackCooldown_ <= 0.0f) {
+  if (primary && (holdingWeapon || !node) && attackCooldown_ <= 0.0f) {
     proto::Attack a;
     // The server tick we are displaying monsters at (lag compensation).
     a.tick = uint32_t(std::max(0.0f, std::round(serverTickEstimate_ - kInterpDelayTicks)));
@@ -195,8 +213,10 @@ void App::updateInteraction(float dt) {
     }
   }
 
-  // Placing: secondary on a block face with a block item selected.
-  if (input_.held("secondary") && hasTarget_ && placeCooldown_ <= 0.0f) {
+  // Placing: secondary on a block face with a block item selected. Only in
+  // editable worlds (future instances / player and clan plots), never the
+  // overworld.
+  if (worldEditable_ && input_.held("secondary") && hasTarget_ && placeCooldown_ <= 0.0f) {
     const ItemStack &stack = inventory_[size_t(hotbar_)];
     if (stack.item != 0 && stack.count > 0 && itemDef(stack.item).kind == ItemKind::Block) {
       proto::BlockAction a;

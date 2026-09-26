@@ -9,8 +9,10 @@
 
 namespace ao {
 
-enum class ItemKind : uint8_t { None, Block, Weapon, Tool, Armour, Resource, Food };
-enum class WeaponType : uint8_t { None = 0, Sword = 1, Bow = 2, Staff = 3, Pickaxe = 4 };
+// Prop: a small decoration (voxel model smaller than a block, Trove-style
+// decor) placed in homes / clan plots.
+enum class ItemKind : uint8_t { None, Block, Weapon, Tool, Armour, Resource, Food, Prop };
+enum class WeaponType : uint8_t { None = 0, Sword = 1, Bow = 2, Staff = 3, Pickaxe = 4, Axe = 5 };
 // Drop-label / tooltip colour tier (RuneLite-style ground items).
 enum class Rarity : uint8_t { Common, Uncommon, Rare, Epic, Legendary };
 
@@ -31,6 +33,7 @@ inline constexpr float weaponCooldown(WeaponType w) {
   case WeaponType::Bow: return 0.8f;
   case WeaponType::Staff: return 0.9f;
   case WeaponType::Pickaxe: return 0.7f;
+  case WeaponType::Axe: return 0.7f;
   default: return 0.6f;
   }
 }
@@ -50,6 +53,7 @@ struct ItemDef {
   Skill skill = Skill::Attack;    // skill used / required
   uint16_t healAmount = 0;        // Food
   const char *piece = nullptr;    // ModelLibrary piece name for equipment
+  const char *prop = nullptr;     // Prop items: ModelLibrary part name ("prop_torch")
   uint16_t maxStack = 1;
   uint32_t value = 0;             // coins (drop labels, shops)
   Rarity rarity = Rarity::Common;
@@ -75,7 +79,9 @@ inline constexpr ItemId Empty = 0,
     // armour
     LeatherCap = 29, IronHelm = 30, CrystalCrown = 31, LeatherTunic = 32, IronChestplate = 33,
     MageRobe = 34, LeatherGloves = 35, IronGauntlets = 36, LeatherPants = 37, IronGreaves = 38,
-    Boots = 39, RedCape = 40, GliderWings = 41;
+    Boots = 39, RedCape = 40, GliderWings = 41,
+    // tools (added later)
+    Axe = 42;
 } // namespace items
 
 // Item dropped when a block is broken (0 = nothing), from items.json

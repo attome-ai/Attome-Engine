@@ -12,6 +12,7 @@
 #include "../shared/Movement.h"
 #include "../shared/Protocol.h"
 #include "../shared/Snapshot.h"
+#include "../shared/world/Town.h"
 
 #include "../../engine/model/Character.h"
 #include "../../engine/net2/Net.h"
@@ -137,6 +138,9 @@ struct Entity {
   std::vector<std::pair<EntityId, uint32_t>> damageBy; // player entity -> damage dealt
   Tick pendingHitTick = 0;  // telegraphed attack lands at this tick (0 = none)
   Tick staggerUntil = 0;    // hit reaction: no moving / attacking until then
+  int16_t spawner = -1;     // index into mapSpawners() (-1 = ambient spawn)
+  glm::dvec3 home{0.0};     // spawner monsters: centre of their area (leash)
+  float leash = 0.0f;       // spawner monsters: max distance from home
   // Lag compensation: position at tick t is posHistory[t % kPosHistory].
   static constexpr Tick kPosHistory = 32;
   std::array<glm::dvec3, kPosHistory> posHistory{};
@@ -154,9 +158,26 @@ struct Entity {
   Tick publicTick = 0;    // dropped items: anyone may pick up after this tick
 };
 
+// Resource-node regrowth: the blocks a depleted node changed, restored at `at`.
+struct Regrowth {
+  Tick at = 0;
+  std::vector<std::pair<atm::voxel::BlockPos, atm::voxel::BlockId>> blocks;
+};
+
+// One NPC slot of a fixed spawner (mapSpawners()).
+struct SpawnerSlot {
+  EntityId id = kNoEntity; // alive (or queued) NPC
+  Tick readyTick = 0;      // empty slot respawns from this tick
+};
+
 struct ServerState {
   ServerConfig cfg;
   bool running = false;
+  // Overworld rules: players can't break or place blocks, only harvest
+  // resource nodes. True for future instances / player and clan plots.
+  bool editableWorld = false;
+  std::vector<Regrowth> regrowths;
+  std::vector<std::vector<SpawnerSlot>> spawnerSlots; // per mapSpawners() entry
   std::unique_ptr<atm::net2::Host> host;
   atm::voxel::BlockRegistry blocks;
   std::unique_ptr<atm::voxel::VoxelWorld> world;
@@ -274,6 +295,13 @@ struct ServerState {
   void rangedAttack(Player &pl, Entity &pe, const glm::vec3 &dir, WeaponType weapon);
   float randf(); // [0,1)
   int randi(int lo, int hi); // inclusive
+
+  // ---- ServerWorld.cpp ----
+  // Harvests a resource node (tool, level, gather speed checked); false if refused.
+  bool harvestNode(Player &pl, Entity &pe, atm::voxel::BlockPos p, atm::voxel::BlockId block);
+  void depleteNode(const ResourceDef &r, atm::voxel::BlockPos p);
+  void regrowNodes();
+  void updateSpawners();
 
   // ---- ServerReplication.cpp ----
   void buildGrid();

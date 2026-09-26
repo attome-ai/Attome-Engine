@@ -51,6 +51,7 @@ ImU32 kindAccent(ItemKind k) {
   case ItemKind::Food: return IM_COL32(236, 196, 104, 255);
   case ItemKind::Resource: return IM_COL32(120, 214, 150, 255);
   case ItemKind::Block: return IM_COL32(200, 190, 170, 255);
+  case ItemKind::Prop: return IM_COL32(236, 200, 120, 255);
   default: return IM_COL32(200, 200, 200, 255);
   }
 }
@@ -63,6 +64,7 @@ const char *kindLabel(ItemKind k) {
   case ItemKind::Food: return "Food";
   case ItemKind::Resource: return "Material";
   case ItemKind::Block: return "Block";
+  case ItemKind::Prop: return "Decoration";
   default: return "Item";
   }
 }
@@ -161,6 +163,18 @@ void itemIcon(ImDrawList *dl, ImVec2 c, float s, const ItemDef &d,
     dl->AddCircleFilled(ImVec2(c.x - r * 0.12f, c.y - r * 0.12f), r * 0.58f, IM_COL32(150, 70, 40, 255));
     dl->AddCircleFilled(ImVec2(c.x - r * 0.24f, c.y - r * 0.26f), r * 0.28f, IM_COL32(196, 110, 64, 255));
     dl->AddCircle(ImVec2(c.x - r * 0.12f, c.y - r * 0.12f), r * 0.58f, outline, 20, 1.5f);
+    break;
+  }
+  case ItemKind::Prop: { // decoration: a little glowing lantern on a stand
+    const ImU32 iron = IM_COL32(70, 72, 84, 255), glow = IM_COL32(255, 206, 96, 255), gold = IM_COL32(250, 200, 70, 255);
+    dl->AddRectFilled(ImVec2(c.x - r * 0.42f, c.y - r * 0.5f), ImVec2(c.x + r * 0.42f, c.y + r * 0.55f), iron, r * 0.12f);
+    dl->AddRectFilled(ImVec2(c.x - r * 0.3f, c.y - r * 0.38f), ImVec2(c.x + r * 0.3f, c.y + r * 0.42f), glow, r * 0.08f);
+    dl->AddCircleFilled(ImVec2(c.x, c.y), r * 0.14f, IM_COL32(255, 250, 210, 255));
+    dl->AddTriangleFilled(ImVec2(c.x - r * 0.5f, c.y - r * 0.5f), ImVec2(c.x + r * 0.5f, c.y - r * 0.5f),
+                          ImVec2(c.x, c.y - r * 0.85f), gold);
+    dl->AddRectFilled(ImVec2(c.x - r * 0.55f, c.y + r * 0.55f), ImVec2(c.x + r * 0.55f, c.y + r * 0.75f), iron);
+    dl->AddRect(ImVec2(c.x - r * 0.42f, c.y - r * 0.5f), ImVec2(c.x + r * 0.42f, c.y + r * 0.55f), outline, r * 0.12f,
+                0, 1.5f);
     break;
   }
   default: { // resource: faceted gem / nugget
@@ -480,7 +494,8 @@ void App::drawHud(float dt) {
       const ItemDef &cd = itemDef(cur.item);
       const char *hint = cd.kind == ItemKind::Armour ? "Right-click to wear"
                          : cd.kind == ItemKind::Food ? "Right-click to eat"
-                         : cd.kind == ItemKind::Block ? "Right-click to place"
+                         : cd.kind == ItemKind::Prop  ? "Decoration for homes and clan plots"
+                         : cd.kind == ItemKind::Block ? "Building material"
                                                       : nullptr;
       const float y = h0.y - (hint ? 52.0f : 36.0f) * sc;
       ui::textCentered(fg, F.semibold, 16.0f * sc, screen.x * 0.5f, y, ui::withAlpha(color::Text, 0.9f),

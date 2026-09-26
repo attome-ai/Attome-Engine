@@ -622,6 +622,18 @@ void buildWeapons(ModelLibrary &lib) {
     p.set(1, 0, 1, ironL);
     socketPiece(lib, "pickaxe", EquipSlot::MainHand, Socket::MainHand, lib.addPart(std::move(p.part)), kPick);
   }
+  { // Axe: same haft and grip as the pickaxe, a single wide bronze blade.
+    Painter p("axe", 3, 12, 16, {1.5f, 5.5f, 12.5f});
+    const int wood = p.c(rgba(150, 100, 56)), woodD = p.c(rgba(110, 70, 40)),
+              bronze = p.c(rgba(196, 132, 72)), edge = p.c(rgba(236, 196, 140));
+    p.box(1, 5, 2, 2, 6, 16, wood);
+    p.box(1, 5, 14, 2, 6, 16, woodD);
+    p.box(0, 4, 1, 3, 7, 3, bronze);                         // head socket
+    p.box(1, 7, 0, 2, 10, 4, bronze);                        // blade
+    p.box(1, 10, 0, 2, 12, 5, edge);                         // flared cutting edge
+    p.box(1, 3, 1, 2, 4, 3, bronze);                         // poll
+    socketPiece(lib, "axe", EquipSlot::MainHand, Socket::MainHand, lib.addPart(std::move(p.part)), kPick);
+  }
   { // Wooden shield: planks, iron rim and boss, held in front of the left fist.
     Painter p("wooden_shield", 10, 11, 2, {5.0f, 5.5f, 3.0f});
     const int w1 = p.c(rgba(170, 118, 64)), w2 = p.c(rgba(146, 98, 52)),
@@ -640,6 +652,7 @@ void buildWeapons(ModelLibrary &lib) {
 } // namespace
 
 void buildMonsterModels(ModelLibrary &lib); // ModelMonsters.cpp
+void buildProps(ModelLibrary &lib);         // ModelProps.cpp
 
 void ModelLibrary::buildDefaults() {
   parts_.clear();
@@ -667,6 +680,7 @@ void ModelLibrary::buildDefaults() {
   buildBack(*this);
   buildWeapons(*this);
   buildMonsterModels(*this);
+  buildProps(*this);
 }
 
 } // namespace atm::model

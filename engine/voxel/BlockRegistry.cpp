@@ -44,6 +44,43 @@ const DefaultBlock kDefaults[blocks::Count] = {
     {"lamp", BlockRender::Opaque, true, false, C(255, 236, 160), C(255, 228, 140), C(240, 210, 120), 15, 0.3f, 0, 1, 0.0f},
     {"snow", BlockRender::Opaque, true, false, C(248, 252, 255), C(236, 242, 250), C(224, 232, 242), 0, 0.3f, 3, 1, 0.0f},
     {"bedrock", BlockRender::Opaque, true, false, C(52, 52, 60), C(48, 48, 56), C(44, 44, 52), 0, -1.0f, 0, 255, 0.0f},
+    // Town / structures (not player-breakable in the overworld).
+    {"cobblestone", BlockRender::Opaque, true, false, C(150, 150, 146), C(136, 136, 132), C(120, 120, 118), 0, 2.0f, 1, 1, 0.0f},
+    {"stone_bricks", BlockRender::Opaque, true, false, C(176, 172, 164), C(160, 156, 148), C(140, 136, 130), 0, 2.0f, 1, 1, 0.0f},
+    {"roof_red", BlockRender::Opaque, true, false, C(186, 70, 56), C(166, 58, 48), C(140, 50, 42), 0, 1.5f, 0, 1, 0.0f},
+    {"roof_blue", BlockRender::Opaque, true, false, C(70, 110, 180), C(58, 94, 160), C(48, 78, 136), 0, 1.5f, 0, 1, 0.0f},
+    {"plaster", BlockRender::Opaque, true, false, C(240, 232, 212), C(234, 224, 200), C(210, 200, 180), 0, 1.5f, 0, 1, 0.0f},
+    {"dark_planks", BlockRender::Opaque, true, false, C(118, 80, 48), C(104, 70, 42), C(90, 60, 36), 0, 1.5f, 2, 1, 0.0f},
+    {"path", BlockRender::Opaque, true, false, C(186, 160, 116), C(150, 112, 72), C(140, 100, 62), 0, 0.6f, 3, 1, 0.0f},
+    // Depleted resource nodes: a felled tree's stump, a mined-out rock.
+    {"stump", BlockRender::Opaque, true, false, C(160, 124, 80), C(110, 78, 46), C(110, 78, 46), 0, -1.0f, 0, 255, 0.0f},
+    {"depleted_rock", BlockRender::Opaque, true, false, C(112, 112, 118), C(100, 100, 106), C(90, 90, 96), 0, -1.0f, 0, 255, 0.0f},
+    // Town building set (Trove-style hub; placeable later in homes / clan plots).
+    {"white_stone", BlockRender::Opaque, true, false, C(240, 234, 220), C(228, 221, 204), C(200, 194, 180), 0, 2.0f, 1, 1, 0.0f},
+    {"white_stone_trim", BlockRender::Opaque, true, false, C(198, 194, 184), C(184, 180, 170), C(160, 156, 148), 0, 2.0f, 1, 1, 0.0f},
+    {"roof_blue_dark", BlockRender::Opaque, true, false, C(46, 78, 160), C(38, 64, 138), C(30, 52, 116), 0, 1.5f, 0, 1, 0.0f},
+    {"gold_trim", BlockRender::Opaque, true, false, C(252, 204, 72), C(236, 184, 56), C(210, 160, 46), 2, 2.0f, 1, 1, 0.0f},
+    {"banner_blue", BlockRender::Opaque, true, false, C(44, 76, 190), C(40, 70, 178), C(34, 60, 156), 0, 0.5f, 0, 1, 0.0f},
+    {"banner_gold", BlockRender::Opaque, true, false, C(250, 200, 60), C(244, 192, 54), C(220, 170, 46), 0, 0.5f, 0, 1, 0.0f},
+    {"awning_red", BlockRender::Opaque, true, false, C(222, 60, 56), C(206, 52, 50), C(180, 44, 42), 0, 0.5f, 0, 1, 0.0f},
+    {"awning_white", BlockRender::Opaque, true, false, C(246, 242, 232), C(236, 230, 218), C(212, 206, 194), 0, 0.5f, 0, 1, 0.0f},
+    {"paper_lantern", BlockRender::Opaque, true, false, C(255, 214, 120), C(255, 200, 100), C(240, 180, 90), 14, 0.5f, 0, 1, 0.0f},
+    {"glow_crystal", BlockRender::Opaque, true, false, C(120, 214, 255), C(90, 190, 255), C(70, 160, 240), 13, 2.0f, 1, 1, 0.0f},
+    {"plaza_tile", BlockRender::Opaque, true, false, C(222, 216, 202), C(206, 200, 186), C(186, 180, 168), 0, 2.0f, 1, 1, 0.0f},
+    {"plaza_tile_dark", BlockRender::Opaque, true, false, C(176, 170, 160), C(160, 154, 146), C(140, 136, 128), 0, 2.0f, 1, 1, 0.0f},
+    {"hedge_leaves", BlockRender::Cutout, true, false, C(96, 200, 74), C(84, 184, 66), C(70, 160, 58), 0, 0.3f, 0, 1, 0.0f},
+    {"crate", BlockRender::Opaque, true, false, C(196, 146, 84), C(170, 122, 68), C(150, 106, 58), 0, 1.0f, 2, 1, 0.0f},
+    {"flowers_red", BlockRender::Cutout, true, false, C(236, 76, 96), C(96, 190, 72), C(80, 160, 60), 0, 0.2f, 0, 1, 0.0f},
+    {"flowers_yellow", BlockRender::Cutout, true, false, C(252, 216, 72), C(96, 190, 72), C(80, 160, 60), 0, 0.2f, 0, 1, 0.0f},
+    {"mossy_stone", BlockRender::Opaque, true, false, C(122, 158, 104), C(140, 146, 140), C(118, 122, 118), 0, 2.0f, 1, 1, 0.0f},
+    {"light_planks", BlockRender::Opaque, true, false, C(232, 196, 136), C(222, 184, 124), C(204, 166, 110), 0, 1.5f, 2, 1, 0.0f},
+    {"roof_blue_light", BlockRender::Opaque, true, false, C(92, 140, 220), C(80, 124, 204), C(66, 104, 180), 0, 1.5f, 0, 1, 0.0f},
+    {"window_lit", BlockRender::Opaque, true, false, C(255, 222, 140), C(255, 214, 124), C(240, 196, 110), 9, 0.5f, 0, 1, 0.0f},
+    {"town_log", BlockRender::Opaque, true, false, C(190, 150, 96), C(122, 88, 54), C(190, 150, 96), 0, 2.0f, 2, 1, 0.0f},
+    // Invisible collision of a fine-voxel structure (drawn as a model), and an
+    // invisible light source for its lamps and windows.
+    {"barrier", BlockRender::None, true, false, C(214, 208, 196), C(214, 208, 196), C(214, 208, 196), 0, -1.0f, 0, 255, 0.0f},
+    {"light", BlockRender::None, false, false, 0, 0, 0, 14, -1.0f, 0, 255, 0.0f},
 };
 
 bool parseColor(const Json &v, uint32_t &out) {

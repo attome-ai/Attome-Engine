@@ -158,6 +158,7 @@ bool ServerState::start(const ServerConfig &config, std::string *error) {
   wc.unloadMarginChunks = 1;
   wc.verticalChunksBelow = 2;
   wc.verticalChunksAbove = 2;
+  ao::world::installHomeTown(wc); // deterministic home town, same as the clients
   world = std::make_unique<vx::VoxelWorld>(wc, blocks);
 
   models = atm::model::ModelLibrary{};
@@ -168,8 +169,7 @@ bool ServerState::start(const ServerConfig &config, std::string *error) {
     if (d.piece) itemPiece[i] = models.findPiece(d.piece);
   }
 
-  const int h = world->generator().surfaceHeight(0, 0);
-  spawnPoint = glm::dvec3(0.5, double(h) + 1.05, 0.5);
+  ao::world::townSpawnPoint(ao::world::homeTown(world->generator()), spawnPoint.x, spawnPoint.y, spawnPoint.z);
 
   net::HostConfig hc;
   hc.maxPeers = cfg.maxPlayers;
@@ -189,6 +189,8 @@ bool ServerState::start(const ServerConfig &config, std::string *error) {
   spawnQueue.clear();
   editedStore.clear();
   editedOrder.clear();
+  regrowths.clear();
+  spawnerSlots.clear();
   tick = 0;
   nextEntityId = 1;
   nextMonsterSpawnTick = kSimHz * 2;
@@ -238,6 +240,8 @@ void ServerState::step() {
     spawnMonsters();
     nextMonsterSpawnTick = tick + kSimHz;
   }
+  updateSpawners();
+  regrowNodes();
   flushSpawns();
   removeDead();
 
@@ -411,9 +415,9 @@ void ServerState::handleHello(Player &pl, const Hello &m) {
   e.id = id;
   e.kind = EntityKind::Player;
   e.playerKey = pl.peer.value;
-  const int32_t sx = int32_t(std::floor(spawnPoint.x)) + randi(-4, 4);
-  const int32_t sz = int32_t(std::floor(spawnPoint.z)) + randi(-4, 4);
-  const int h = world->generator().surfaceHeight(sx, sz);
+  const int32_t sx = int32_t(std::floor(spawnPoint.x)) + randi(-3, 3);
+  const int32_t sz = int32_t(std::floor(spawnPoint.z)) + randi(-3, 3);
+  const int h = ao::world::groundHeight(world->generator(), sx, sz);
   e.move.pos = glm::dvec3(double(sx) + 0.5, double(h) + 1.05, double(sz) + 0.5);
   e.maxHp = maxHpFor(pl);
   e.hp = e.maxHp;
@@ -512,6 +516,15 @@ void ServerState::handleBlockAction(Player &pl, const BlockAction &m) {
   const glm::dvec3 eye = eyePosition(pe->move);
   const glm::dvec3 centre(dest.x + 0.5, dest.y + 0.5, dest.z + 0.5);
   if (glm::length(centre - eye) > double(kReach)) {
+    revert(dest);
+    return;
+  }
+
+  if (!isPlace && !editableWorld) { // overworld: harvest resource nodes only
+    if (!harvestNode(pl, *pe, target, world->blockAt(target))) revert(target);
+    return;
+  }
+  if (isPlace && !editableWorld) {
     revert(dest);
     return;
   }

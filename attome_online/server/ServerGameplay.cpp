@@ -292,10 +292,10 @@ void ServerState::giveStartingKit(Player &pl) {
   pl.equipped[size_t(EquipSlot::MainHand)] = items::WoodenSword;
   pl.equipped[size_t(EquipSlot::Torso)] = items::LeatherTunic;
   const ItemStack kit[] = {
-      {items::Dirt, 64},        {items::Planks, 64},     {items::Bow, 1},
-      {items::Pickaxe, 1},      {items::Arrows, 200},    {items::LeatherCap, 1},
+      {items::IronSword, 1},    {items::Axe, 1},         {items::Pickaxe, 1},
+      {items::Bow, 1},          {items::Arrows, 200},    {items::LeatherCap, 1},
       {items::LeatherPants, 1}, {items::Boots, 1},       {items::LeatherGloves, 1},
-      {items::CookedMeat, 10},  {items::RedCape, 1},     {items::IronSword, 1},
+      {items::CookedMeat, 10},  {items::RedCape, 1},
   };
   size_t i = 0;
   for (const ItemStack &s : kit)
@@ -554,9 +554,9 @@ void ServerState::simulatePlayers() {
         --pl.inputCount;
       }
       if (tick >= pl.respawnTick) {
-        const int32_t sx = int32_t(std::floor(spawnPoint.x)) + randi(-4, 4);
-        const int32_t sz = int32_t(std::floor(spawnPoint.z)) + randi(-4, 4);
-        const int h = world->generator().surfaceHeight(sx, sz);
+        const int32_t sx = int32_t(std::floor(spawnPoint.x)) + randi(-3, 3);
+        const int32_t sz = int32_t(std::floor(spawnPoint.z)) + randi(-3, 3);
+        const int h = ao::world::groundHeight(world->generator(), sx, sz);
         e->move = MoveState{};
         e->move.pos = glm::dvec3(sx + 0.5, h + 1.05, sz + 0.5);
         e->dead = false;
@@ -599,7 +599,7 @@ void ServerState::simulatePlayers() {
 }
 
 bool ServerState::findGround(int32_t x, int32_t z, int32_t &groundY) const {
-  const int h = world->generator().surfaceHeight(x, z);
+  const int h = ao::world::groundHeight(world->generator(), x, z);
   for (int y = std::min(h + 4, vx::kWorldHeight - 3); y >= std::max(1, h - 8); --y) {
     const vx::BlockPos p{x, y, z};
     if (!world->isLoaded(vx::chunkOf(p)) || !world->isLoaded(vx::chunkOf(vx::BlockPos{x, y + 2, z})))
@@ -628,6 +628,7 @@ void ServerState::spawnMonsters() {
     const int32_t x = int32_t(std::floor(pe->move.pos.x + std::cos(angle) * dist));
     const int32_t z = int32_t(std::floor(pe->move.pos.z + std::sin(angle) * dist));
     int32_t gy = 0;
+    if (ao::world::inTown(ao::world::homeTown(world->generator()), x + 0.5, z + 0.5)) continue; // safe zone
     if (!findGround(x, z, gy) || world->blockAt({x, gy, z}) != vx::blocks::Grass) continue;
     // What spawns here comes from the map region (data/maps/overworld.json).
     const MapRegion *region = regionAt(x + 0.5, z + 0.5);
@@ -676,6 +677,28 @@ void ServerState::simulateMonsters() {
       }
     }
     if (!t) t = findEntity(m.target);
+    // Spawner NPCs stay near their spawner: past the leash they give up the
+    // chase and walk home (RuneScape-style), healing on the way.
+    bool goingHome = false;
+    if (m.spawner >= 0) {
+      const double hx = m.move.pos.x - m.home.x, hz = m.move.pos.z - m.home.z;
+      const double leash = double(m.leash);
+      if (hx * hx + hz * hz > leash * leash) {
+        m.target = kNoEntity;
+        t = nullptr;
+        m.wanderTarget = m.home;
+        m.wanderUntil = tick + Tick(kSimHz * 4);
+        goingHome = true;
+      } else if (t) {
+        // Don't pick a fight with someone standing past the leash.
+        const double tx = t->move.pos.x - m.home.x, tz = t->move.pos.z - m.home.z;
+        if (tx * tx + tz * tz > (leash + 4.0) * (leash + 4.0)) {
+          m.target = kNoEntity;
+          t = nullptr;
+        }
+      }
+    }
+    if (goingHome && m.hp < m.maxHp && tick % Tick(kSimHz / 3) == 0) ++m.hp;
     if (despawnCheck && !anyPlayerNear) {
       m.remove = true;
       continue;
@@ -711,7 +734,13 @@ void ServerState::simulateMonsters() {
         m.attackReadyTick = tick + Tick(std::lround(def.attackCooldown * kSimHz));
       }
     } else {
-      if (tick >= m.wanderUntil) {
+      if (tick >= m.wanderUntil && m.spawner >= 0 && size_t(m.spawner) < mapSpawners().size()) {
+        // Wander inside the spawner's area.
+        const float r = mapSpawners()[size_t(m.spawner)].radius;
+        const double a = double(randf()) * 6.283185307179586, dist = std::sqrt(double(randf())) * r;
+        m.wanderTarget = m.home + glm::dvec3(std::cos(a) * dist, 0.0, std::sin(a) * dist);
+        m.wanderUntil = tick + Tick(randi(90, 180));
+      } else if (tick >= m.wanderUntil) {
         m.wanderTarget = m.move.pos + glm::dvec3(randi(-8, 8), 0, randi(-8, 8));
         m.wanderUntil = tick + Tick(randi(90, 180));
       }

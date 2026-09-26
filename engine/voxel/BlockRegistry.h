@@ -93,8 +93,22 @@ inline constexpr BlockId Air = 0, Stone = 1, Dirt = 2, Grass = 3, Sand = 4,
                          Water = 5, OakLog = 6, OakLeaves = 7, CopperOre = 8,
                          IronOre = 9, GoldOre = 10, Crystal = 11, Planks = 12,
                          Brick = 13, Glass = 14, Lamp = 15, Snow = 16,
-                         Bedrock = 17;
-inline constexpr BlockId Count = 18;
+                         Bedrock = 17,
+                         // town / structures
+                         Cobblestone = 18, StoneBricks = 19, RoofRed = 20, RoofBlue = 21,
+                         Plaster = 22, DarkPlanks = 23, Path = 24,
+                         // depleted resource nodes (regrown by the server's spawners)
+                         Stump = 25, DepletedRock = 26,
+                         // town building set (Trove-style hub)
+                         WhiteStone = 27, WhiteStoneTrim = 28, RoofBlueDark = 29, GoldTrim = 30,
+                         BannerBlue = 31, BannerGold = 32, AwningRed = 33, AwningWhite = 34,
+                         PaperLantern = 35, GlowCrystal = 36, PlazaTile = 37, PlazaTileDark = 38,
+                         HedgeLeaves = 39, Crate = 40, FlowersRed = 41, FlowersYellow = 42,
+                         MossyStone = 43, LightPlanks = 44, RoofBlueLight = 45, WindowLit = 46,
+                         TownLog = 47,
+                         // invisible: collision of fine-voxel structures / light of their lamps
+                         Barrier = 48, Light = 49;
+inline constexpr BlockId Count = 50;
 } // namespace blocks
 
 } // namespace atm::voxel

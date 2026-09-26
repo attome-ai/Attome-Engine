@@ -180,6 +180,8 @@ struct VoxelWorld::Impl {
         const double t0 = nowMicros();
         auto ch = std::make_shared<Chunk>();
         gen.generate(job.coord, *ch);
+        if (cfg.postGenerate)
+          cfg.postGenerate(job.coord, *ch);
         r.chunk = std::move(ch);
         r.micros = nowMicros() - t0;
       } else {

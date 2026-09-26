@@ -33,6 +33,11 @@ struct VoxelWorldConfig {
   int verticalChunksAbove = 4;
   int maxJobsInFlight = 256;
   int maxResultsPerUpdate = 64;  // bounds main-thread work per frame
+  // Optional game hook run on the worker right after a chunk is generated
+  // (towns, roads, placed structures). Must be deterministic and thread-safe
+  // (a pure function of the chunk coordinate), and must be the same on the
+  // server and every client: the server only sends player edits.
+  std::function<void(ChunkCoord, Chunk &)> postGenerate;
 };
 
 struct ChunkMeshResult {

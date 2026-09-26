@@ -76,12 +76,17 @@ bool readFile(const std::string &path, Json &out, std::string *error) {
 
 // --- items ---------------------------------------------------------------------
 
-bool loadItems(const Json &root, Ctx &c) {
-  static atm::voxel::BlockRegistry blocks = [] {
+const atm::voxel::BlockRegistry &defaultBlocks() {
+  static const atm::voxel::BlockRegistry blocks = [] {
     atm::voxel::BlockRegistry r;
     r.registerDefaults();
     return r;
   }();
+  return blocks;
+}
+
+bool loadItems(const Json &root, Ctx &c) {
+  const atm::voxel::BlockRegistry &blocks = defaultBlocks();
   const Json *list = root.find("items");
   if (!list || !list->isArray())
     return c.fail("root", "missing \"items\" array");
@@ -107,6 +112,7 @@ bool loadItems(const Json &root, Ctx &c) {
     else if (kind == "tool") d.kind = ItemKind::Tool;
     else if (kind == "armour" || kind == "armor") d.kind = ItemKind::Armour;
     else if (kind == "food") d.kind = ItemKind::Food;
+    else if (kind == "prop") d.kind = ItemKind::Prop;
     else return c.fail(where, "unknown kind '" + kind + "'");
 
     const std::string skill = lower(str(e, "skill", "attack"));
@@ -137,6 +143,7 @@ bool loadItems(const Json &root, Ctx &c) {
       else if (w == "bow") d.weapon = WeaponType::Bow;
       else if (w == "staff") d.weapon = WeaponType::Staff;
       else if (w == "pickaxe") d.weapon = WeaponType::Pickaxe;
+      else if (w == "axe") d.weapon = WeaponType::Axe;
       else return c.fail(where, "unknown weapon type '" + w + "'");
       d.slot = EquipSlot::MainHand;
     }
@@ -148,6 +155,11 @@ bool loadItems(const Json &root, Ctx &c) {
         if (s == kSlots[i]) si = i;
       if (si < 0) return c.fail(where, "unknown slot '" + s + "'");
       d.slot = EquipSlot(si);
+    }
+    if (d.kind == ItemKind::Prop) {
+      const std::string pr = str(e, "prop", name);
+      if (pr.empty()) return c.fail(where, "missing prop");
+      d.prop = intern("prop_" + pr).c_str();
     }
     const std::string piece = str(e, "piece");
     if (!piece.empty()) d.piece = intern(piece).c_str();
@@ -161,7 +173,7 @@ bool loadItems(const Json &root, Ctx &c) {
       {items::CrystalShard, "crystal_shard"}, {items::RawMeat, "raw_meat"}, {items::CookedMeat, "cooked_meat"},
       {items::Coins, "coins"}, {items::WoodenSword, "wooden_sword"}, {items::Bow, "bow"},
       {items::Arrows, "arrows"}, {items::Staff, "staff"}, {items::Pickaxe, "pickaxe"},
-      {items::LeatherTunic, "leather_tunic"}, {items::GliderWings, "glider_wings"}};
+      {items::LeatherTunic, "leather_tunic"}, {items::GliderWings, "glider_wings"}, {items::Axe, "axe"}};
   for (const auto &[id, nm] : kKnown)
     if (id >= table.size() || table[id].name != nm)
       return c.fail("item " + std::to_string(id), std::string("must be '") + nm + "' (referenced by code)");
@@ -284,8 +296,72 @@ bool loadMap(const Json &root, Ctx &c) {
       }
     regions.push_back(std::move(r));
   }
+  std::vector<MapSpawner> spawners;
+  if (const Json *sp = root.find("spawners"); sp && sp->isArray())
+    for (const Json &s : sp->asArray()) {
+      MapSpawner m;
+      const std::string npc = str(s, "npc");
+      const std::string where = "spawner " + std::to_string(spawners.size()) + " '" + npc + "'";
+      const int id = findNpc(npc);
+      if (id < 0) return c.fail(where, "unknown npc '" + npc + "'");
+      const Json *pos = s.find("pos");
+      if (!pos || !pos->isArray() || pos->size() < 2) return c.fail(where, "missing \"pos\": [x, z]");
+      m.npc = uint8_t(id);
+      m.x = pos->asArray()[0].asNumber(0);
+      m.z = pos->asArray()[1].asNumber(0);
+      m.radius = float(std::clamp(num(s, "radius", 6), 0.0, 64.0));
+      m.count = uint8_t(std::clamp(num(s, "count", 1), 1.0, 32.0));
+      m.respawnSeconds = float(std::clamp(num(s, "respawn", 20), 1.0, 3600.0));
+      m.leash = float(std::clamp(num(s, "leash", m.radius + 14.0), double(m.radius) + 2.0, 128.0));
+      spawners.push_back(m);
+    }
+  spawnerTable() = std::move(spawners);
   regionTable() = std::move(regions);
   mapNameStorage() = str(root, "name", "World");
+  return true;
+}
+
+// --- gathering nodes ---------------------------------------------------------------
+
+bool loadResources(const Json &root, Ctx &c) {
+  const atm::voxel::BlockRegistry &blocks = defaultBlocks();
+  const Json *list = root.find("resources");
+  if (!list || !list->isArray())
+    return c.fail("root", "missing \"resources\" array");
+  std::vector<ResourceDef> table;
+  for (const Json &e : list->asArray()) {
+    ResourceDef r;
+    const std::string name = str(e, "name");
+    const std::string where = "resource '" + name + "'";
+    if (name.empty()) return c.fail(where, "missing name");
+    r.name = intern(name);
+    r.display = intern(str(e, "display", name));
+    const std::string block = str(e, "block"), depleted = str(e, "depleted");
+    r.block = blocks.find(block);
+    if (r.block == atm::voxel::kAir) return c.fail(where, "unknown block '" + block + "'");
+    r.depleted = blocks.find(depleted);
+    if (r.depleted == atm::voxel::kAir) return c.fail(where, "unknown depleted block '" + depleted + "'");
+    for (const ResourceDef &o : table)
+      if (o.block == r.block) return c.fail(where, "block '" + block + "' already used by '" + std::string(o.name) + "'");
+    const std::string skill = lower(str(e, "skill", "mining"));
+    if (!parseSkill(skill, r.skill)) return c.fail(where, "unknown skill '" + skill + "'");
+    r.level = uint8_t(std::clamp(num(e, "level", 1), 1.0, 99.0));
+    const std::string tool = lower(str(e, "tool"));
+    if (tool == "axe") r.tool = WeaponType::Axe;
+    else if (tool == "pickaxe") r.tool = WeaponType::Pickaxe;
+    else if (tool == "none" || tool.empty()) r.tool = WeaponType::None;
+    else return c.fail(where, "unknown tool '" + tool + "'");
+    const std::string item = str(e, "item");
+    r.item = findItem(item);
+    if (!r.item) return c.fail(where, "unknown item '" + item + "'");
+    r.xp = float(std::max(0.0, num(e, "xp", 0)));
+    r.depleteChance = float(std::clamp(num(e, "depleteChance", 1.0), 0.0, 1.0));
+    r.fells = e.find("fells") && e.find("fells")->asBool(false);
+    r.respawnSeconds = float(std::clamp(num(e, "respawn", 30), 1.0, 3600.0));
+    r.gatherSeconds = float(std::clamp(num(e, "gather", 1.5), 0.2, 30.0));
+    table.push_back(r);
+  }
+  resourceTable() = std::move(table);
   return true;
 }
 
@@ -313,7 +389,11 @@ bool loadGameData(const std::string &dataDir, std::string *error) {
     if (!loadNpcs(npcs, cn)) return false;   // maps reference NPCs
     if (!readFile(dir + "maps/overworld.json", map, &g_error)) return false;
     Ctx cm{dir + "maps/overworld.json", &g_error};
-    return loadMap(map, cm);
+    if (!loadMap(map, cm)) return false;
+    Json res;
+    if (!readFile(dir + "resources.json", res, &g_error)) return false;
+    Ctx cr{dir + "resources.json", &g_error};
+    return loadResources(res, cr);
   };
   g_ok = run();
   if (error && !g_ok) *error = g_error;

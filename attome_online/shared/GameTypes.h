@@ -9,3 +9,4 @@
 #include "defs/ItemDefs.h"
 #include "defs/MapDefs.h"
 #include "defs/NpcDefs.h"
+#include "defs/ResourceDefs.h"

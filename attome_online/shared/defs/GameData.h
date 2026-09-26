@@ -1,7 +1,7 @@
 #pragma once
 
 // Loads the game's content definitions from a data directory:
-//   items.json, npcs.json, maps/overworld.json
+//   items.json, npcs.json, maps/overworld.json, resources.json
 // Call once at startup (client, server, bots) before using itemDef(),
 // monsterDef() or mapRegions(). Idempotent: later calls return the first
 // result. Fails with a readable error (file, id, field) on bad data.

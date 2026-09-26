@@ -6,6 +6,7 @@
 #include "ItemDefs.h"
 #include "MapDefs.h"
 #include "NpcDefs.h"
+#include "ResourceDefs.h"
 
 #include <string>
 #include <unordered_map>
@@ -20,6 +21,8 @@ std::vector<ItemDef> &itemTable();
 std::unordered_map<BlockId, ItemId> &blockDropTable();
 std::vector<MonsterDef> &npcTable();
 std::vector<MapRegion> &regionTable();
+std::vector<MapSpawner> &spawnerTable();
+std::vector<ResourceDef> &resourceTable();
 std::string &mapNameStorage();
 
 } // namespace ao::defs_detail
