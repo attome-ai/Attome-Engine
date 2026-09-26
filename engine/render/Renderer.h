@@ -166,6 +166,10 @@ public:
   void endFrame();
 
   const FrameStats &stats() const;
+  // VSync on (FIFO, capped at the display refresh) / off (mailbox or
+  // immediate, uncapped). Takes effect on the next frame (swapchain rebuild).
+  void setVsync(bool on);
+  bool vsync() const;
 
   // Saves the next presented frame as a BMP (SDL_SaveBMP; visual checks and
   // bug reports). The file is written one or two frames later.

@@ -7,7 +7,7 @@
 #   ao_tests    unit tests
 # =============================================================================
 
-file(GLOB AO_SHARED_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shared/*.cpp)
+file(GLOB_RECURSE AO_SHARED_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shared/*.cpp)
 add_library(ao_shared STATIC ${AO_SHARED_SRC})
 target_include_directories(ao_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ao_shared PUBLIC AttomeVoxel AttomeModel AttomeNet2 AttomeCore)
@@ -55,6 +55,9 @@ foreach(t ao_client ao_server ao_bots)
   add_custom_command(TARGET ${t} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
       "${CMAKE_CURRENT_SOURCE_DIR}/config" "$<TARGET_FILE_DIR:${t}>/config")
+  add_custom_command(TARGET ${t} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      "${CMAKE_CURRENT_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:${t}>/data")
 endforeach()
 add_custom_command(TARGET ao_client POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory

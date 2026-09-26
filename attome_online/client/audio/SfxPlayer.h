@@ -5,7 +5,7 @@
 
 #include "audio/Sfx.h"
 
-#include "../../engine/voxel/VoxelTypes.h"
+#include "../../../engine/voxel/VoxelTypes.h"
 
 namespace ao::client {
 

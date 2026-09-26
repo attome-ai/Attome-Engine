@@ -1,6 +1,6 @@
 #include "Decor.h"
 
-#include "../../engine/model/Character.h"
+#include "../../../engine/model/Character.h"
 
 #include <glm/gtc/quaternion.hpp>
 

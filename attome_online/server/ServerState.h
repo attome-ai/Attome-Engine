@@ -206,6 +206,7 @@ struct ServerState {
   void handleBlockAction(Player &pl, const proto::BlockAction &m);
   void handleAttack(Player &pl, const proto::Attack &m);
   void handleEquip(Player &pl, const proto::Equip &m);
+  void handlePickup(Player &pl, const proto::Pickup &m);
   void handleChat(Player &pl, const proto::ChatSend &m);
 
   template <class M> bool sendTo(Player &pl, const M &msg, Channel channel) {
@@ -256,6 +257,8 @@ struct ServerState {
   uint16_t addItem(Player &pl, ItemId item, uint16_t count); // returns leftover
   bool removeFromSlot(Player &pl, int slot, uint16_t count);
   void giveOrDrop(Player &pl, ItemId item, uint16_t count, const glm::dvec3 &at, EntityId from, bool rare);
+  // Monster loot: pops out onto the ground (personal to `pl` for 60 s).
+  void dropLoot(Player &pl, ItemId item, uint16_t count, const glm::dvec3 &at, EntityId from, bool rare);
   void sendInventory(Player &pl);
   void refreshAppearance(Player &pl);
   void giveStartingKit(Player &pl);

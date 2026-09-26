@@ -5,9 +5,9 @@
 // (hash of the block position) around the player and drawn as model
 // instances. Client-side and purely cosmetic.
 
-#include "../../engine/render/Renderer.h"
-#include "../../engine/voxel/BlockRegistry.h"
-#include "../../engine/voxel/VoxelWorld.h"
+#include "../../../engine/render/Renderer.h"
+#include "../../../engine/voxel/BlockRegistry.h"
+#include "../../../engine/voxel/VoxelWorld.h"
 
 #include <glm/glm.hpp>
 

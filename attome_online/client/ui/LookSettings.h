@@ -4,7 +4,7 @@
 // config/graphics.json next to the executable. One field table drives the
 // defaults, the JSON file and the panel, so they never disagree.
 
-#include "../../engine/render/Renderer.h"
+#include "../../../engine/render/Renderer.h"
 
 #include <string>
 #include <vector>
@@ -17,6 +17,7 @@ struct LookSettings {
   float sunElevation = 44.6f;   // degrees above the horizon
   float decorDensity = 1.0f;    // grass tufts / flowers / pebbles multiplier
   float fov = 70.0f;            // vertical field of view (degrees)
+  bool vsync = true;            // cap at the display refresh (off = uncapped FPS)
 
   LookSettings(); // the shipped look
 

@@ -5,7 +5,7 @@
 
 #include "shared/Protocol.h"
 
-#include "../../engine/net2/Net.h"
+#include "../../../engine/net2/Net.h"
 
 #include <cstdint>
 #include <memory>

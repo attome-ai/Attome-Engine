@@ -3,21 +3,22 @@
 // The game client: window, renderer, audio, input, world streaming,
 // networking, prediction, entities, HUD.
 
-#include "NetClient.h"
-#include "Prediction.h"
-#include "Particles.h"
-#include "Decor.h"
-#include "LookSettings.h"
+#include "net/NetClient.h"
+#include "net/Prediction.h"
+#include "fx/Particles.h"
+#include "fx/Decor.h"
+#include "ui/LookSettings.h"
+#include "world/MapCache.h"
 
 #include "shared/GameTypes.h"
 #include "shared/Protocol.h"
 
-#include "../../engine/ATMAudio.h"
-#include "../../engine/ATMInput.h"
-#include "../../engine/model/Character.h"
-#include "../../engine/render/Renderer.h"
-#include "../../engine/voxel/BlockRegistry.h"
-#include "../../engine/voxel/VoxelWorld.h"
+#include "../../../engine/ATMAudio.h"
+#include "../../../engine/ATMInput.h"
+#include "../../../engine/model/Character.h"
+#include "../../../engine/render/Renderer.h"
+#include "../../../engine/voxel/BlockRegistry.h"
+#include "../../../engine/voxel/VoxelWorld.h"
 
 #include <atomic>
 #include <deque>
@@ -45,6 +46,7 @@ struct ClientConfig {
   std::string serverConfigPath = "config/server.json";
   float mouseSensitivity = 0.0025f;
   bool invertY = false;
+  bool profile = false;            // --profile: start with the profiler panel open
   int windowWidth = 1600, windowHeight = 900;
   bool fullscreen = false;
   atm::render::RendererConfig render;
@@ -110,7 +112,10 @@ private:
   void updateEntities(float dt);
   void render(float alpha, float dt);
   void drawHud(float dt);
-  void drawLookPanel();                   // F10 graphics tuning (Hud.cpp)
+  void drawLookPanel();                   // F10 graphics tuning (ui/GraphicsPanel.cpp)
+  void drawMinimap();                     // ui/MapUi.cpp
+  void drawWorldMap();                    // M (ui/MapUi.cpp)
+  void drawProfilerPanel();               // F7 (ui/ProfilerPanel.cpp)
 
   // Helpers
   MoveInput buildInput();
@@ -226,6 +231,14 @@ private:
   bool showInventory_ = false, showSkills_ = false, showDebug_ = false;
   bool showLook_ = false;
   bool showHitboxes_ = false;             // F8: collision / hit volumes
+  uint64_t nextPickupMs_ = 0;             // E held: resend Pickup at most every 250 ms
+  atm::render::ModelMeshId lootBeamMesh_ = atm::render::kInvalidModelMesh;
+  MapCache mapCache_;                    // explored terrain colours (minimap, world map)
+  bool showWorldMap_ = false;
+  bool showProfiler_ = false;             // F7: frame profiler panel
+  float worldMapZoom_ = 1.5f;            // pixels per block
+  glm::dvec2 worldMapPan_{0.0};          // blocks from the player (x, z)
+  const MapRegion *lastRegion_ = nullptr; // region banner on entry
   LookSettings look_;                    // graphics panel values (config/graphics.json)
   std::string lookStatus_;               // last save / load message
   bool chatOpen_ = false;

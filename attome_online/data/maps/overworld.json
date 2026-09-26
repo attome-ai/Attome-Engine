@@ -1,0 +1,31 @@
+{
+  "_doc": [
+    "Map definition: named regions of the procedural world. A region is a ring around a centre",
+    "(minRadius..maxRadius blocks, x/z). The first region containing a point wins; a region without",
+    "a shape matches everywhere (put it last). spawns: NPC names with relative weights.",
+    "colour: region tint on the world map (r, g, b 0..255). levels: shown on the map and on entry."
+  ],
+  "name": "Overworld",
+  "regions": [
+    {
+      "name": "Sunny Meadows", "levels": "1-5", "center": [0, 0], "minRadius": 0, "maxRadius": 140,
+      "colour": [120, 200, 90],
+      "spawns": [{"npc": "slime", "weight": 70}, {"npc": "wolf", "weight": 30}]
+    },
+    {
+      "name": "Howling Woods", "levels": "5-15", "center": [0, 0], "minRadius": 140, "maxRadius": 320,
+      "colour": [70, 140, 70],
+      "spawns": [{"npc": "wolf", "weight": 60}, {"npc": "slime", "weight": 25}, {"npc": "golem", "weight": 15}]
+    },
+    {
+      "name": "Golem Highlands", "levels": "15-30", "center": [0, 0], "minRadius": 320, "maxRadius": 700,
+      "colour": [150, 140, 128],
+      "spawns": [{"npc": "golem", "weight": 55}, {"npc": "wolf", "weight": 45}]
+    },
+    {
+      "name": "The Wilds", "levels": "20+",
+      "colour": [120, 90, 90],
+      "spawns": [{"npc": "golem", "weight": 50}, {"npc": "wolf", "weight": 50}]
+    }
+  ]
+}

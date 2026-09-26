@@ -3,6 +3,8 @@
 
 #include "RendererImpl.h"
 
+#include "../ATMFrameProfiler.h"
+
 #include <SDL3/SDL.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -47,7 +49,10 @@ bool Renderer::Impl::beginFrame(const Camera &cam, const Environment &environmen
 
   VkDevice d = ctx.device;
   FrameData &f = frames[frameIndex];
-  vkWaitForFences(d, 1, &f.fence, VK_TRUE, UINT64_MAX);
+  {
+    ATM_PROFILE_SCOPE("Wait for GPU (fence)");
+    vkWaitForFences(d, 1, &f.fence, VK_TRUE, UINT64_MAX);
+  }
 
   if (f.queriesWritten && f.queries) {
     uint64_t ts[2] = {0, 0};
@@ -679,13 +684,27 @@ void Renderer::Impl::endFrame() {
 
   // Camera matrices first (culling needs them), then the UBO with counts.
   visibleCount = 0;
-  buildFrameUniforms(f);
-  cullAndBuildLists(f);
-  buildFrameUniforms(f); // rewrite with the final visible count
-  buildShadowList(f);
-  const uint32_t instanceCount = writeModelInstances(f);
-  recordFrame(f, translucentCount, instanceCount);
+  {
+    ATM_PROFILE_SCOPE("Uniforms + chunk culling");
+    buildFrameUniforms(f);
+    cullAndBuildLists(f);
+    buildFrameUniforms(f); // rewrite with the final visible count
+  }
+  {
+    ATM_PROFILE_SCOPE("Shadow draw list");
+    buildShadowList(f);
+  }
+  uint32_t instanceCount = 0;
+  {
+    ATM_PROFILE_SCOPE("Model instances (sort + upload)");
+    instanceCount = writeModelInstances(f);
+  }
+  {
+    ATM_PROFILE_SCOPE("Record command buffer");
+    recordFrame(f, translucentCount, instanceCount);
+  }
 
+  ATM_PROFILE_SCOPE("Submit + present");
   VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
   wait.semaphore = f.imageAvailable;
   wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;

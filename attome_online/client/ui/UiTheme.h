@@ -5,6 +5,8 @@
 
 #include <imgui.h>
 
+#include "shared/defs/ItemDefs.h"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -57,6 +59,17 @@ void panel(ImDrawList *dl, ImVec2 a, ImVec2 b, float rounding = 8.0f, float alph
 // Horizontal bar with a trail (damage taken recently) and a glossy highlight.
 void bar(ImDrawList *dl, ImVec2 a, ImVec2 b, float frac, float trailFrac, ImU32 fill, ImU32 fillHi,
          float rounding = 4.0f, float alpha = 1.0f);
+
+// RuneLite-style item rarity colours (drop labels, loot beams, tooltips).
+inline ImU32 rarityColor(Rarity r) {
+  switch (r) {
+  case Rarity::Uncommon: return IM_COL32(110, 230, 120, 255);
+  case Rarity::Rare: return IM_COL32(90, 170, 255, 255);
+  case Rarity::Epic: return IM_COL32(200, 120, 255, 255);
+  case Rarity::Legendary: return IM_COL32(255, 170, 50, 255);
+  default: return IM_COL32(236, 236, 236, 255);
+  }
+}
 
 // "leather_tunic" -> "Leather Tunic".
 std::string prettyName(std::string_view snake);

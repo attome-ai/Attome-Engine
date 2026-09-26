@@ -4,10 +4,10 @@
 // drops, level-up banners, low-health vignette, chat, inventory with
 // equipment, RuneScape-style skills panel, debug overlay.
 
-#include "App.h"
-#include "UiTheme.h"
+#include "app/App.h"
+#include "ui/UiTheme.h"
 
-#include "../../engine/ATMConfig.h"
+#include "../../../engine/ATMConfig.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <unordered_map>
 
 namespace ao::client {
 
@@ -217,7 +218,7 @@ void itemTooltip(const ItemStack &s) {
   ImGui::BeginTooltip();
   ImGui::PushFont(f.bold, 18.0f);
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(kindAccent(d.kind)));
-  ImGui::TextUnformatted(ui::prettyName(d.name).c_str());
+  ImGui::TextUnformatted(std::string(d.display).c_str());
   ImGui::PopStyleColor();
   ImGui::PopFont();
   ImGui::TextDisabled("%s", kindLabel(d.kind));
@@ -298,7 +299,7 @@ void App::drawHud(float dt) {
       continue;
     }
     const MonsterDef &md = monsterDef(r.last.type);
-    const std::string name = ui::prettyName(md.name);
+    const std::string name = std::string(md.display) + "  (level-" + std::to_string(md.level) + ")";
     ui::textCentered(bg, F.semibold, 15.0f * k, sx, sy - 30.0f * k,
                      ui::withAlpha(IM_COL32(255, 206, 150, 255), fade), name);
     const float bw = 92.0f * k, bh = 8.0f * k;
@@ -306,6 +307,42 @@ void App::drawHud(float dt) {
     const ImU32 fill = r.hitFlash > 0.0f ? IM_COL32(255, 240, 220, 255) : color::Health;
     ui::bar(bg, ImVec2(sx - bw * 0.5f, sy - 10.0f * k), ImVec2(sx + bw * 0.5f, sy - 10.0f * k + bh), f, f,
             fill, color::HealthHi, 3.0f, fade);
+  }
+
+  // --- ground items: RuneLite-style labels -------------------------------------------
+  // "Name (qty)" in the rarity colour above each drop; drops sharing a block
+  // stack their labels upward. Personal loot of others is never replicated.
+  {
+    std::unordered_map<uint64_t, int> stackAt; // block column -> labels drawn there
+    for (auto &[id, r] : remotes_) {
+      if (r.last.kind != EntityKind::DroppedItem || r.track.empty())
+        continue;
+      const RemoteSample s = r.track.sample(renderTick);
+      const float dist = float(glm::length(s.pos - me));
+      if (dist > 40.0f)
+        continue;
+      const uint64_t key = (uint64_t(uint32_t(int32_t(std::floor(s.pos.x)))) << 32) |
+                           uint32_t(int32_t(std::floor(s.pos.z)));
+      const int slot = stackAt[key]++;
+      float sx, sy;
+      if (!worldToScreen(s.pos + glm::dvec3(0.0, 0.75, 0.0), sx, sy))
+        continue;
+      const ItemDef &d = itemDef(r.last.item);
+      const unsigned count = r.last.hp;
+      char label[96];
+      if (count > 1)
+        std::snprintf(label, sizeof(label), "%s (%u)", std::string(d.display).c_str(), count);
+      else
+        std::snprintf(label, sizeof(label), "%s", std::string(d.display).c_str());
+      const float fade = std::clamp((40.0f - dist) / 10.0f, 0.0f, 1.0f);
+      const float k = std::clamp(1.2f - dist / 50.0f, 0.75f, 1.1f) * sc;
+      const float fs = 15.0f * k;
+      const ImVec2 m = ui::measure(F.semibold, fs, label);
+      const ImVec2 p(sx - m.x * 0.5f, sy - float(slot) * (fs + 3.0f) - m.y);
+      bg->AddRectFilled(ImVec2(p.x - 5 * k, p.y - 1), ImVec2(p.x + m.x + 5 * k, p.y + m.y + 1),
+                        IM_COL32(0, 0, 0, int(110 * fade)), 4.0f * k);
+      ui::text(bg, F.semibold, fs, p, ui::withAlpha(ui::rarityColor(d.rarity), fade), label, 0.6f);
+    }
   }
 
   // --- floating damage numbers (pop, then rise and fade) -----------------------------
@@ -447,7 +484,7 @@ void App::drawHud(float dt) {
                                                       : nullptr;
       const float y = h0.y - (hint ? 52.0f : 36.0f) * sc;
       ui::textCentered(fg, F.semibold, 16.0f * sc, screen.x * 0.5f, y, ui::withAlpha(color::Text, 0.9f),
-                       ui::prettyName(cd.name));
+                       std::string(cd.display));
       if (hint)
         ui::textCentered(fg, F.body, 13.0f * sc, screen.x * 0.5f, y + 20.0f * sc, color::TextDim, hint, 0.6f);
     }
@@ -578,7 +615,7 @@ void App::drawHud(float dt) {
         drawSlot(dl, p, slot, st, false, hov, blocks_, nullptr, sc);
         ui::text(dl, F.semibold, 13.0f * sc, ImVec2(p.x + slot + 6 * sc, p.y + 8 * sc), color::TextDim, slotNames[i], 0.3f);
         if (it) {
-          const std::string nm = ui::prettyName(itemDef(it).name);
+          const std::string nm = std::string(itemDef(it).display);
           dl->PushClipRect(p, ImVec2(p.x + eqW, p.y + slot), true);
           ui::text(dl, F.body, 12.0f * sc, ImVec2(p.x + slot + 6 * sc, p.y + 28 * sc), color::Text, nm, 0.3f);
           dl->PopClipRect();
@@ -694,12 +731,21 @@ void App::drawHud(float dt) {
     ImGui::End();
   }
 
+  // Minimap (top right) / world map (M).
+  if (showWorldMap_)
+    drawWorldMap();
+  else
+    drawMinimap();
+
+  if (showProfiler_)
+    drawProfilerPanel();
+
   if (showLook_)
     drawLookPanel();
 
   // --- debug overlay (F3, top right) ---------------------------------------------------
   if (showDebug_) {
-    ImGui::SetNextWindowPos(ImVec2(screen.x - 18 * sc, 18 * sc), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowPos(ImVec2(screen.x - 18 * sc, 270 * sc), ImGuiCond_Always, ImVec2(1.0f, 0.0f)); // below the minimap
     ImGui::SetNextWindowBgAlpha(0.75f);
     ImGui::Begin("##debug", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
@@ -732,81 +778,3 @@ void App::drawHud(float dt) {
 
 } // namespace ao::client
 
-namespace ao::client {
-
-// F10: live look tuning. Every change applies immediately; Save writes
-// config/graphics.json (loaded at startup), Defaults restores the shipped look.
-void App::drawLookPanel() {
-  const ImVec2 screen = ImGui::GetIO().DisplaySize;
-  const float sc = std::clamp(screen.y / 900.0f, 0.8f, 2.0f);
-  const ui::Fonts &F = ui::fonts();
-  ImGui::SetNextWindowPos(ImVec2(screen.x - 440 * sc, 70 * sc), ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSize(ImVec2(420 * sc, 640 * sc), ImGuiCond_FirstUseEver);
-  ImGui::PushFont(F.display, 20.0f * sc);
-  const bool open = ImGui::Begin("Graphics", &showLook_, ImGuiWindowFlags_NoCollapse);
-  ImGui::PopFont();
-  if (!showLook_ && !chatOpen_) {
-    SDL_SetWindowRelativeMouseMode(window_, true);
-    mouseCaptured_ = true;
-  }
-  if (!open) {
-    ImGui::End();
-    return;
-  }
-  ImGui::PushFont(F.body, 15.0f * sc);
-  ImGui::TextDisabled("Changes apply live. F10 or Esc closes.");
-
-  const std::string path = atm::resolve_path("config/graphics.json");
-  if (ImGui::Button("Save")) {
-    lookStatus_ = look_.save(path) ? "Saved to config/graphics.json" : "Could not write " + path;
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Defaults")) {
-    look_ = LookSettings{};
-    lookStatus_ = "Defaults restored (not saved yet)";
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Reload")) {
-    std::string err;
-    LookSettings l;
-    lookStatus_ = l.load(path, &err) ? (look_ = l, "Reloaded config/graphics.json") : "No saved file yet";
-  }
-  if (!lookStatus_.empty())
-    ImGui::TextColored(ImVec4(0.93f, 0.77f, 0.41f, 1.0f), "%s", lookStatus_.c_str());
-
-  ImGui::BeginChild("##look", ImVec2(0, 0));
-  ImGui::PushItemWidth(-150 * sc);
-  const char *group = "";
-  for (const LookSettings::Field &f : look_.fields()) {
-    if (std::string_view(group) != f.group) {
-      group = f.group;
-      ImGui::Dummy(ImVec2(0, 2 * sc));
-      ImGui::SeparatorText(group);
-      // Extra controls that are not plain sliders.
-      if (std::string_view(group) == "Light") {
-        ImGui::ColorEdit3("Sky colour", &look_.env.skyColor.x, ImGuiColorEditFlags_Float);
-        ImGui::ColorEdit3("Haze / horizon", &look_.env.fogColor.x, ImGuiColorEditFlags_Float);
-      }
-      if (std::string_view(group) == "Shadows") {
-        int mode = look_.env.contactShadows ? 1 : 0;
-        ImGui::RadioButton("Simple", &mode, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton("Contact-hardening", &mode, 1);
-        if (ImGui::IsItemHovered())
-          ImGui::SetTooltip("Sharp where things touch, softer further away.");
-        look_.env.contactShadows = mode == 1;
-      }
-    }
-    const float range = f.max - f.min;
-    const char *fmt = range <= 0.05f ? "%.4f" : (range >= 50.0f ? "%.0f" : "%.2f");
-    ImGui::SliderFloat(f.label, f.value, f.min, f.max, fmt);
-    if (ImGui::IsItemHovered() && f.help)
-      ImGui::SetTooltip("%s", f.help);
-  }
-  ImGui::PopItemWidth();
-  ImGui::EndChild();
-  ImGui::PopFont();
-  ImGui::End();
-}
-
-} // namespace ao::client

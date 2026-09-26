@@ -1,0 +1,60 @@
+{
+  "_doc": [
+    "Item definitions. 'id' is part of the network protocol and saved inventories: never reuse or renumber.",
+    "kind: block | resource | weapon | tool | armour | food.  rarity: common | uncommon | rare | epic | legendary.",
+    "value: coin value (drop labels, future shops).  skill / level: requirement to equip (weapons, tools, armour).",
+    "block: placed block name (block items).  weapon: sword | bow | staff | pickaxe.  slot: head | torso | hands | legs | feet | back | mainhand | offhand.",
+    "piece: ModelLibrary equipment piece drawn when equipped."
+  ],
+  "items": [
+    {"id": 1,  "name": "stone",      "display": "Stone",      "kind": "block", "block": "stone",      "skill": "construction", "stack": 100, "value": 1,  "rarity": "common", "examine": "A chunk of grey stone."},
+    {"id": 2,  "name": "dirt",       "display": "Dirt",       "kind": "block", "block": "dirt",       "skill": "construction", "stack": 100, "value": 1,  "rarity": "common", "examine": "Good, honest dirt."},
+    {"id": 3,  "name": "grass",      "display": "Grass",      "kind": "block", "block": "grass",      "skill": "construction", "stack": 100, "value": 2,  "rarity": "common", "examine": "A block of turf."},
+    {"id": 4,  "name": "sand",       "display": "Sand",       "kind": "block", "block": "sand",       "skill": "construction", "stack": 100, "value": 1,  "rarity": "common", "examine": "Warm beach sand."},
+    {"id": 5,  "name": "oak_log",    "display": "Oak Log",    "kind": "block", "block": "oak_log",    "skill": "woodcutting",  "stack": 100, "value": 4,  "rarity": "common", "examine": "A sturdy oak log."},
+    {"id": 6,  "name": "oak_leaves", "display": "Oak Leaves", "kind": "block", "block": "oak_leaves", "skill": "construction", "stack": 100, "value": 1,  "rarity": "common", "examine": "Rustling green leaves."},
+    {"id": 7,  "name": "planks",     "display": "Planks",     "kind": "block", "block": "planks",     "skill": "construction", "stack": 100, "value": 3,  "rarity": "common", "examine": "Sawn oak planks."},
+    {"id": 8,  "name": "brick",      "display": "Brick",      "kind": "block", "block": "brick",      "skill": "construction", "stack": 100, "value": 6,  "rarity": "common", "examine": "Fired clay bricks."},
+    {"id": 9,  "name": "glass",      "display": "Glass",      "kind": "block", "block": "glass",      "skill": "construction", "stack": 100, "value": 8,  "rarity": "common", "examine": "Clear as day."},
+    {"id": 10, "name": "lamp",       "display": "Lamp",       "kind": "block", "block": "lamp",       "skill": "construction", "stack": 100, "value": 25, "rarity": "uncommon", "examine": "It glows warmly."},
+    {"id": 11, "name": "snow",       "display": "Snow",       "kind": "block", "block": "snow",       "skill": "construction", "stack": 100, "value": 1,  "rarity": "common", "examine": "Cold to the touch."},
+
+    {"id": 12, "name": "copper_ore",    "display": "Copper Ore",    "kind": "resource", "skill": "mining",   "stack": 100,   "value": 15,  "rarity": "common",   "examine": "Ore with a reddish shine."},
+    {"id": 13, "name": "iron_ore",      "display": "Iron Ore",      "kind": "resource", "skill": "mining",   "stack": 100,   "value": 40,  "rarity": "uncommon", "examine": "Heavy, rust-flecked ore."},
+    {"id": 14, "name": "gold_ore",      "display": "Gold Ore",      "kind": "resource", "skill": "mining",   "stack": 100,   "value": 120, "rarity": "rare",     "examine": "Glittering gold ore."},
+    {"id": 15, "name": "crystal_shard", "display": "Crystal Shard", "kind": "resource", "skill": "mining",   "stack": 100,   "value": 300, "rarity": "rare",     "examine": "It hums with stored light."},
+    {"id": 16, "name": "raw_meat",      "display": "Raw Meat",      "kind": "resource", "skill": "cooking",  "stack": 50,    "value": 8,   "rarity": "common",   "examine": "Needs cooking."},
+    {"id": 17, "name": "cooked_meat",   "display": "Cooked Meat",   "kind": "food",     "skill": "cooking",  "stack": 50,    "value": 20,  "rarity": "common",   "heal": 20, "examine": "Smells delicious. Heals 20."},
+    {"id": 18, "name": "wolf_pelt",     "display": "Wolf Pelt",     "kind": "resource", "skill": "crafting", "stack": 50,    "value": 35,  "rarity": "uncommon", "examine": "Thick grey fur."},
+    {"id": 19, "name": "slime_gel",     "display": "Slime Gel",     "kind": "resource", "skill": "herblore", "stack": 100,   "value": 6,   "rarity": "common",   "examine": "Wobbly and a bit sticky."},
+    {"id": 20, "name": "coins",         "display": "Coins",         "kind": "resource", "skill": "attack",   "stack": 60000, "value": 1,   "rarity": "common",   "examine": "Lovely money!"},
+
+    {"id": 21, "name": "wooden_sword",  "display": "Wooden Sword",  "kind": "weapon", "weapon": "sword",   "damage": 4,  "skill": "attack", "level": 1,  "piece": "wooden_sword",  "value": 20,   "rarity": "common",   "examine": "A training blade."},
+    {"id": 22, "name": "iron_sword",    "display": "Iron Sword",    "kind": "weapon", "weapon": "sword",   "damage": 8,  "skill": "attack", "level": 10, "piece": "iron_sword",    "value": 200,  "rarity": "uncommon", "examine": "Balanced and sharp."},
+    {"id": 23, "name": "crystal_sword", "display": "Crystal Sword", "kind": "weapon", "weapon": "sword",   "damage": 14, "skill": "attack", "level": 30, "piece": "crystal_sword", "value": 5000, "rarity": "epic",     "examine": "Forged from living crystal."},
+    {"id": 24, "name": "bow",           "display": "Bow",           "kind": "weapon", "weapon": "bow",     "damage": 6,  "skill": "ranged", "level": 1,  "piece": "bow",           "value": 60,   "rarity": "common",   "examine": "Needs arrows."},
+    {"id": 25, "name": "arrows",        "display": "Arrows",        "kind": "resource", "skill": "ranged", "stack": 1000, "value": 1, "rarity": "common", "examine": "Pointy end forward."},
+    {"id": 26, "name": "staff",         "display": "Staff",         "kind": "weapon", "weapon": "staff",   "damage": 7,  "skill": "magic",  "level": 1,  "piece": "staff",         "value": 150,  "rarity": "uncommon", "examine": "The orb flickers."},
+    {"id": 27, "name": "pickaxe",       "display": "Pickaxe",       "kind": "tool",   "weapon": "pickaxe", "damage": 2,  "skill": "mining", "level": 1,  "piece": "pickaxe",       "value": 40,   "rarity": "common",   "examine": "For breaking rocks."},
+    {"id": 28, "name": "wooden_shield", "display": "Wooden Shield", "kind": "armour", "slot": "offhand", "armour": 3, "skill": "defence", "level": 1, "piece": "wooden_shield", "value": 30, "rarity": "common", "examine": "Better than nothing."},
+
+    {"id": 29, "name": "leather_cap",     "display": "Leather Cap",     "kind": "armour", "slot": "head",  "armour": 2,  "skill": "defence", "level": 1,  "piece": "leather_cap",     "value": 25,   "rarity": "common",    "examine": "Keeps the sun off."},
+    {"id": 30, "name": "iron_helm",       "display": "Iron Helm",       "kind": "armour", "slot": "head",  "armour": 5,  "skill": "defence", "level": 10, "piece": "iron_helm",       "value": 180,  "rarity": "uncommon",  "examine": "A solid iron helm."},
+    {"id": 31, "name": "crystal_crown",   "display": "Crystal Crown",   "kind": "armour", "slot": "head",  "armour": 8,  "skill": "defence", "level": 30, "piece": "crystal_crown",   "value": 8000, "rarity": "legendary", "examine": "Fit for a golem king."},
+    {"id": 32, "name": "leather_tunic",   "display": "Leather Tunic",   "kind": "armour", "slot": "torso", "armour": 4,  "skill": "defence", "level": 1,  "piece": "leather_tunic",   "value": 40,   "rarity": "common",    "examine": "Supple and hard-wearing."},
+    {"id": 33, "name": "iron_chestplate", "display": "Iron Chestplate", "kind": "armour", "slot": "torso", "armour": 10, "skill": "defence", "level": 10, "piece": "iron_chestplate", "value": 400,  "rarity": "uncommon",  "examine": "Heavy, but it stops a blade."},
+    {"id": 34, "name": "mage_robe",       "display": "Mage Robe",       "kind": "armour", "slot": "torso", "armour": 3,  "skill": "magic",   "level": 5,  "piece": "mage_robe",       "value": 250,  "rarity": "uncommon",  "examine": "Embroidered with runes."},
+    {"id": 35, "name": "leather_gloves",  "display": "Leather Gloves",  "kind": "armour", "slot": "hands", "armour": 1,  "skill": "defence", "level": 1,  "piece": "leather_gloves",  "value": 20,   "rarity": "common",    "examine": "A snug fit."},
+    {"id": 36, "name": "iron_gauntlets",  "display": "Iron Gauntlets",  "kind": "armour", "slot": "hands", "armour": 3,  "skill": "defence", "level": 10, "piece": "iron_gauntlets",  "value": 150,  "rarity": "uncommon",  "examine": "Clanky but strong."},
+    {"id": 37, "name": "leather_pants",   "display": "Leather Pants",   "kind": "armour", "slot": "legs",  "armour": 3,  "skill": "defence", "level": 1,  "piece": "leather_pants",   "value": 35,   "rarity": "common",    "examine": "Built for the trail."},
+    {"id": 38, "name": "iron_greaves",    "display": "Iron Greaves",    "kind": "armour", "slot": "legs",  "armour": 7,  "skill": "defence", "level": 10, "piece": "iron_greaves",    "value": 300,  "rarity": "uncommon",  "examine": "Knees protected."},
+    {"id": 39, "name": "boots",           "display": "Boots",           "kind": "armour", "slot": "feet",  "armour": 2,  "skill": "defence", "level": 1,  "piece": "boots",           "value": 30,   "rarity": "common",    "examine": "Made for walking."},
+    {"id": 40, "name": "red_cape",        "display": "Red Cape",        "kind": "armour", "slot": "back",  "armour": 1,  "skill": "defence", "level": 1,  "piece": "red_cape",        "value": 1500, "rarity": "rare",      "examine": "It billows heroically."},
+    {"id": 41, "name": "glider_wings",    "display": "Glider Wings",    "kind": "armour", "slot": "back",  "armour": 0,  "skill": "agility", "level": 1,  "piece": "glider_wings",    "value": 2500, "rarity": "epic",      "examine": "Hold jump to soar."}
+  ],
+  "blockDrops": {
+    "stone": "stone", "dirt": "dirt", "grass": "dirt", "sand": "sand", "oak_log": "oak_log", "oak_leaves": "oak_leaves",
+    "copper_ore": "copper_ore", "iron_ore": "iron_ore", "gold_ore": "gold_ore", "crystal": "crystal_shard",
+    "planks": "planks", "brick": "brick", "glass": "glass", "lamp": "lamp", "snow": "snow"
+  }
+}

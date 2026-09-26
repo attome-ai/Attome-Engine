@@ -168,7 +168,8 @@ void ServerState::giveOrDrop(Player &pl, ItemId item, uint16_t count, const glm:
     d.publicTick = tick + Tick(kSimHz * 60);
     d.expireTick = tick + Tick(kSimHz * 300);
     d.move.pos = at;
-    d.hp = d.maxHp = 1;
+    d.hp = left; // DroppedItem: hp = stack count (replicated in the Health field)
+    d.maxHp = 1;
   }
   if (from != kNoEntity) {
     LootMsg lm;
@@ -177,6 +178,50 @@ void ServerState::giveOrDrop(Player &pl, ItemId item, uint16_t count, const glm:
     lm.count = count;
     lm.rare = rare;
     sendTo(pl, lm, Channel::ReliableOrdered);
+  }
+}
+
+void ServerState::dropLoot(Player &pl, ItemId item, uint16_t count, const glm::dvec3 &at, EntityId from,
+                           bool rare) {
+  if (item == 0 || count == 0) return;
+  Entity &d = queueSpawn(EntityKind::DroppedItem);
+  d.item = item;
+  d.type = uint8_t(item & 0xFF);
+  d.stack = ItemStack{item, count};
+  d.owner = pl.entity;
+  d.publicTick = tick + Tick(kSimHz * 60);  // personal for a minute, then anyone's
+  d.expireTick = tick + Tick(kSimHz * 180);
+  d.move.pos = at;
+  // Pop out of the body in a little arc, then fall (simulateItems).
+  const float ang = randf() * 6.2831853f, sp = 1.2f + randf() * 1.6f;
+  d.move.vel = glm::vec3(std::cos(ang) * sp, 4.5f + randf() * 1.5f, std::sin(ang) * sp);
+  d.hp = count; // stack count (Health field)
+  d.maxHp = 1;
+  LootMsg lm; // chat line / rare banner on the killer's client
+  lm.fromEntity = from;
+  lm.item = item;
+  lm.count = count;
+  lm.rare = rare;
+  sendTo(pl, lm, Channel::ReliableOrdered);
+}
+
+void ServerState::handlePickup(Player &pl, const Pickup &m) {
+  Entity *pe = findEntity(pl.entity);
+  if (!pe || pe->dead) return;
+  constexpr double kReach = 2.6;
+  for (auto &[id, d] : entities) {
+    if (d.kind != EntityKind::DroppedItem || d.remove) continue;
+    if (m.entity != 0 && id != m.entity) continue;
+    if (d.owner != kNoEntity && d.owner != pe->id && tick < d.publicTick) continue; // someone else's loot
+    const glm::dvec3 diff = pe->move.pos - d.move.pos;
+    if (glm::dot(diff, diff) > kReach * kReach) continue;
+    const uint16_t left = addItem(pl, d.stack.item, d.stack.count);
+    if (left == 0) {
+      d.remove = true;
+    } else {
+      d.stack.count = left; // inventory full: the rest stays on the ground
+      d.hp = left;
+    }
   }
 }
 
@@ -362,7 +407,7 @@ void ServerState::killMonster(Entity &m) {
       if (d.item == 0 || randf() >= d.chance) continue;
       const int q = randi(d.min, std::max(d.min, d.max));
       const uint16_t count = uint16_t(std::max(1L, std::lround(double(q) * elig[i].share)));
-      giveOrDrop(pl, d.item, count, at, m.id, false);
+      dropLoot(pl, d.item, count, at, m.id, false);
     }
   }
   // Rule 3: one rare roll per kill, winner weighted by damage share.
@@ -379,7 +424,7 @@ void ServerState::killMonster(Entity &m) {
       }
       pick -= elig[i].share;
     }
-    giveOrDrop(*elig[winner].pl, def.rare.item, std::max<uint16_t>(1, def.rare.min), at, m.id, true);
+    dropLoot(*elig[winner].pl, def.rare.item, std::max<uint16_t>(1, def.rare.min), at, m.id, true);
   }
 }
 
@@ -584,8 +629,11 @@ void ServerState::spawnMonsters() {
     const int32_t z = int32_t(std::floor(pe->move.pos.z + std::sin(angle) * dist));
     int32_t gy = 0;
     if (!findGround(x, z, gy) || world->blockAt({x, gy, z}) != vx::blocks::Grass) continue;
-    const float r = randf();
-    const uint8_t type = r < 0.5f ? monsters::Slime : (r < 0.85f ? monsters::Wolf : monsters::Golem);
+    // What spawns here comes from the map region (data/maps/overworld.json).
+    const MapRegion *region = regionAt(x + 0.5, z + 0.5);
+    const int picked = region ? pickSpawn(*region, randf()) : -1;
+    if (picked < 0) continue;
+    const uint8_t type = uint8_t(picked);
     const MonsterDef &def = monsterDef(type);
     Entity &m = queueSpawn(EntityKind::Monster);
     m.type = type;
@@ -738,30 +786,33 @@ void ServerState::simulateItems() {
       d.remove = true;
       continue;
     }
-    // Simple fall until resting on a solid block.
-    const vx::BlockPos below{int32_t(std::floor(d.move.pos.x)), int32_t(std::floor(d.move.pos.y - 0.05)),
-                             int32_t(std::floor(d.move.pos.z))};
-    if (below.y >= 0 && world->isLoaded(vx::chunkOf(below)) && !blocks.solid(world->blockAt(below))) {
-      d.move.vel.y = std::max(d.move.vel.y - 20.0f * kSimDt, -20.0f);
-      d.move.pos.y += double(d.move.vel.y) * kSimDt;
+    // Ballistic pop (dropLoot) and fall: gravity, stop against walls, rest
+    // and slide to a halt on the ground. Players pick items up with the
+    // Pickup message (E), RuneScape-style, not by walking over them.
+    auto solidAt = [&](const glm::dvec3 &p) {
+      const vx::BlockPos b{int32_t(std::floor(p.x)), int32_t(std::floor(p.y)), int32_t(std::floor(p.z))};
+      return b.y >= 0 && world->isLoaded(vx::chunkOf(b)) && blocks.solid(world->blockAt(b));
+    };
+    const glm::dvec3 below = d.move.pos - glm::dvec3(0.0, 0.05, 0.0);
+    const bool grounded = solidAt(below) && d.move.vel.y <= 0.0f;
+    if (!grounded) d.move.vel.y = std::max(d.move.vel.y - 20.0f * kSimDt, -20.0f);
+    glm::dvec3 next = d.move.pos;
+    next.x += double(d.move.vel.x) * kSimDt;
+    if (solidAt(next + glm::dvec3(0.0, 0.1, 0.0))) { next.x = d.move.pos.x; d.move.vel.x = 0.0f; }
+    next.z += double(d.move.vel.z) * kSimDt;
+    if (solidAt(next + glm::dvec3(0.0, 0.1, 0.0))) { next.z = d.move.pos.z; d.move.vel.z = 0.0f; }
+    if (!grounded) {
+      next.y += double(d.move.vel.y) * kSimDt;
+      if (d.move.vel.y < 0.0f && solidAt(next)) { // landed: sit on top of the block
+        next.y = std::floor(next.y) + 1.0;
+        d.move.vel.y = 0.0f;
+      }
     } else {
       d.move.vel.y = 0.0f;
+      d.move.vel.x *= 0.7f; // ground friction
+      d.move.vel.z *= 0.7f;
     }
-    // Pickup (personal until publicTick).
-    for (auto &[key, pl] : players) {
-      if (!pl.welcomed) continue;
-      Entity *pe = findEntity(pl.entity);
-      if (!pe || pe->dead) continue;
-      if (d.owner != kNoEntity && d.owner != pe->id && tick < d.publicTick) continue;
-      const glm::dvec3 diff = pe->move.pos - d.move.pos;
-      if (glm::dot(diff, diff) > 1.6 * 1.6) continue;
-      const uint16_t left = addItem(pl, d.stack.item, d.stack.count);
-      if (left == 0) {
-        d.remove = true;
-        break;
-      }
-      d.stack.count = left;
-    }
+    d.move.pos = next;
   }
 }
 

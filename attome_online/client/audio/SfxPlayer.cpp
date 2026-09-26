@@ -1,6 +1,6 @@
 #include "SfxPlayer.h"
 
-#include "../../engine/voxel/BlockRegistry.h"
+#include "../../../engine/voxel/BlockRegistry.h"
 
 #include <algorithm>
 

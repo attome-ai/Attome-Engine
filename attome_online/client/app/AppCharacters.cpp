@@ -3,7 +3,7 @@
 // every body/equipment part is one instanced renderer draw placed at its
 // bone (or socket) transform.
 
-#include "App.h"
+#include "app/App.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>

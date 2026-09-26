@@ -2,11 +2,11 @@
 // its own thread, and the client connects to it over loopback UDP exactly as
 // it would to a remote server (same code path, same protocol).
 
-#include "App.h"
+#include "app/App.h"
 
 #include "server/ZoneServer.h"
 
-#include "../../engine/ATMConfig.h"
+#include "../../../engine/ATMConfig.h"
 
 #include <SDL3/SDL.h>
 

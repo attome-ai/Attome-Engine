@@ -79,6 +79,11 @@ ATM_DEFINE_MESSAGE(Equip, 5, AO_MSG_Equip)
 #define AO_MSG_ChatSend(F) F(std::string, text, Str<200>)
 ATM_DEFINE_MESSAGE(ChatSend, 6, AO_MSG_ChatSend)
 
+// Reliable. Pick up ground items (RuneScape-style loot): entity = a specific
+// dropped item, or 0 = everything visible to this player within reach.
+#define AO_MSG_Pickup(F) F(uint32_t, entity, U32)
+ATM_DEFINE_MESSAGE(Pickup, 7, AO_MSG_Pickup)
+
 // ------------------------------- server -> client ---------------------------
 
 // Reliable. Reply to Hello.
@@ -151,7 +156,7 @@ ATM_DEFINE_MESSAGE(ChatMsg, 74, AO_MSG_ChatMsg)
 
 // Schema hash over every message above (compile time).
 inline constexpr uint64_t kSchemaHash = atm::net2::schemaHash<
-    Hello, InputBatch, BlockAction, Attack, Equip, ChatSend, Welcome, ChunkData,
+    Hello, InputBatch, BlockAction, Attack, Equip, ChatSend, Pickup, Welcome, ChunkData,
     EditedChunks, BlockChanged, SnapshotMsg, AppearanceMsg, DamageEvent,
     InventoryMsg, XpGain, LootMsg, ChatMsg>();
 

@@ -4,8 +4,8 @@
 // per-block item cube meshes (tinted). Glowing sparks use the lamp block's
 // emissive cube, so they bloom. Client-side only, purely cosmetic.
 
-#include "../../engine/render/Renderer.h"
-#include "../../engine/voxel/BlockRegistry.h"
+#include "../../../engine/render/Renderer.h"
+#include "../../../engine/voxel/BlockRegistry.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>

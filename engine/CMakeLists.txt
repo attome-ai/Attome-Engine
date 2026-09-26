@@ -4,6 +4,7 @@
 add_library(AttomeCore STATIC
   ATMEngine.cpp
   ATMJson.cpp
+  ATMFrameProfiler.cpp
   ATMConfig.cpp
   ATMInput.cpp
   ATMAudio.cpp
@@ -18,6 +19,13 @@ target_link_libraries(AttomeCore PUBLIC SDL3::SDL3)
 
 if(WIN32)
   target_compile_definitions(AttomeCore PUBLIC NOMINMAX)
+endif()
+
+# Frame profiler (ATMFrameProfiler.h): compiled in or out everywhere.
+if(ATTOME_PROFILING)
+  target_compile_definitions(AttomeCore PUBLIC ATM_PROFILING=1)
+else()
+  target_compile_definitions(AttomeCore PUBLIC ATM_PROFILING=0)
 endif()
 
 # Size the spatial grid from EngineConfig at runtime instead of the

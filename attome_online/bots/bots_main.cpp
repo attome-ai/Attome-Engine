@@ -15,6 +15,7 @@
 #include "../shared/Protocol.h"
 #include "../shared/Snapshot.h"
 
+#include "../../engine/ATMConfig.h"
 #include "../../engine/net2/Net.h"
 #include "../../engine/net2/Schema.h"
 #include "../../engine/voxel/BlockRegistry.h"
@@ -385,6 +386,11 @@ private:
 } // namespace
 
 int main(int argc, char **argv) {
+  {
+    std::string dataError;
+    if (!ao::loadGameData(atm::resolve_path("data"), &dataError))
+      std::fprintf(stderr, "[bots] %s\n", dataError.c_str());
+  }
   std::string host = "127.0.0.1";
   int port = 27015, count = 200, ramp = 50;
   double duration = 0.0;

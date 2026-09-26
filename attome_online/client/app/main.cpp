@@ -3,9 +3,9 @@
 //   ao_client --local              single player: starts a server in-process
 //   ao_client --host H --port P --name N
 
-#include "App.h"
+#include "app/App.h"
 
-#include "../../engine/ATMConfig.h"
+#include "../../../engine/ATMConfig.h"
 
 #include <SDL3/SDL.h> // SDL_ShowSimpleMessageBox
 #include <SDL3/SDL_main.h>
@@ -35,6 +35,7 @@ int main(int argc, char **argv) {
     else if (std::strcmp(a, "--name") == 0) cfg.name = next();
     else if (std::strcmp(a, "--validation") == 0) cfg.render.validation = true;
     else if (std::strcmp(a, "--no-vsync") == 0) cfg.render.vsync = false;
+    else if (std::strcmp(a, "--profile") == 0) cfg.profile = true;
     else if (std::strcmp(a, "--config") == 0) ++i;
   }
 

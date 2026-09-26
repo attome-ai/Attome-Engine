@@ -61,7 +61,7 @@ struct EntityState {
   float yaw = 0.0f;
   uint8_t locoAnim = 0, actionAnim = 0; // locoAnim unused (client derives it); actionAnim = ao::action code
   uint8_t actionSeq = 0;            // increments when a new action starts (replays one-shots)
-  uint16_t hp = 0, maxHp = 0;
+  uint16_t hp = 0, maxHp = 0;       // DroppedItem: hp = stack count
   uint8_t flags = 0;                // bit0 gliding, bit1 in water, bit2 dead, bit3 onGround
 };
 

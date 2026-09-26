@@ -1,0 +1,45 @@
+{
+  "_doc": [
+    "NPC / monster definitions. 'id' is part of the network protocol (snapshot entity type): never reuse or renumber.",
+    "hp, damage, speed (blocks/s), aggro + attackRange (blocks), attackCooldown (s), xp = combat XP per kill (shared by damage).",
+    "model: ModelLibrary creature.  hit: vertical hit capsule (radius, bottom/top of its axis above the feet), fitted to the model.",
+    "drops: rolled per eligible player (quantity scaled by damage share).  rare: one roll per kill, winner weighted by damage share."
+  ],
+  "npcs": [
+    {
+      "id": 0, "name": "slime", "display": "Slime", "level": 2,
+      "hp": 30, "damage": 3, "speed": 2.5, "aggro": 8, "attackRange": 1.6, "attackCooldown": 1.2, "xp": 40,
+      "model": "slime", "hit": {"radius": 0.6, "bottom": 0.45, "top": 0.45},
+      "drops": [
+        {"item": "slime_gel",  "min": 1, "max": 3, "chance": 1.0},
+        {"item": "coins",      "min": 1, "max": 5, "chance": 0.6},
+        {"item": "copper_ore", "min": 1, "max": 1, "chance": 0.15}
+      ],
+      "rare": {"item": "leather_cap", "min": 1, "max": 1, "chance": 0.02}
+    },
+    {
+      "id": 1, "name": "wolf", "display": "Wolf", "level": 8,
+      "hp": 80, "damage": 8, "speed": 6.0, "aggro": 14, "attackRange": 1.8, "attackCooldown": 1.0, "xp": 120,
+      "model": "wolf", "hit": {"radius": 0.75, "bottom": 0.55, "top": 0.85},
+      "drops": [
+        {"item": "raw_meat",  "min": 1, "max": 2,  "chance": 1.0},
+        {"item": "wolf_pelt", "min": 1, "max": 1,  "chance": 0.5},
+        {"item": "coins",     "min": 5, "max": 15, "chance": 0.7},
+        {"item": "arrows",    "min": 3, "max": 8,  "chance": 0.2}
+      ],
+      "rare": {"item": "red_cape", "min": 1, "max": 1, "chance": 0.03}
+    },
+    {
+      "id": 2, "name": "golem", "display": "Stone Golem", "level": 25,
+      "hp": 300, "damage": 20, "speed": 3.0, "aggro": 12, "attackRange": 2.6, "attackCooldown": 2.0, "xp": 600,
+      "model": "golem", "hit": {"radius": 1.0, "bottom": 1.0, "top": 2.2},
+      "drops": [
+        {"item": "iron_ore",      "min": 2,  "max": 5,  "chance": 1.0},
+        {"item": "crystal_shard", "min": 1,  "max": 3,  "chance": 0.6},
+        {"item": "coins",         "min": 20, "max": 50, "chance": 1.0},
+        {"item": "gold_ore",      "min": 1,  "max": 2,  "chance": 0.3}
+      ],
+      "rare": {"item": "crystal_sword", "min": 1, "max": 1, "chance": 0.05}
+    }
+  ]
+}

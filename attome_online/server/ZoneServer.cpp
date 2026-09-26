@@ -2,6 +2,7 @@
 
 #include "ServerState.h"
 
+#include "../../engine/ATMConfig.h"
 #include "../../engine/ATMJson.h"
 
 #include <algorithm>
@@ -141,6 +142,10 @@ bool ServerState::start(const ServerConfig &config, std::string *error) {
   cfg = config;
   rng.seed(uint64_t(std::random_device{}()) ^ (cfg.seed * 0x9E3779B97F4A7C15ull) ^
            uint64_t(net::nowMs()));
+
+  // Content definitions (items, NPCs, map regions) from data/*.json.
+  if (!loadGameData(atm::resolve_path("data"), error))
+    return false;
 
   blocks = vx::BlockRegistry{};
   blocks.registerDefaults();
@@ -349,6 +354,12 @@ void ServerState::onMessage(Player &pl, std::span<const uint8_t> data) {
     ChatSend m;
     ok = net::decodeMessage(r, m);
     if (ok) handleChat(pl, m);
+    break;
+  }
+  case Pickup::kId: {
+    Pickup m;
+    ok = net::decodeMessage(r, m);
+    if (ok) handlePickup(pl, m);
     break;
   }
   default:

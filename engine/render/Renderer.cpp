@@ -878,3 +878,15 @@ void Renderer::Impl::saveScreenshotIfReady() {
 }
 
 } // namespace atm::render
+
+namespace atm::render {
+
+void Renderer::setVsync(bool on) {
+  if (impl_->config.vsync == on) return;
+  impl_->config.vsync = on;
+  impl_->swapchainDirty = true;
+}
+
+bool Renderer::vsync() const { return impl_->config.vsync; }
+
+} // namespace atm::render

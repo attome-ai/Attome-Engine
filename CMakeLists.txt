@@ -12,6 +12,7 @@ include(AttomeAddGame)
 option(ATTOME_BUILD_NET "Build the AttomeNet networking library (needs asio + libsodium)" ON)
 option(ATTOME_BUILD_TESTS "Build engine unit tests" ON)
 option(ATTOME_BUILD_BENCH "Build engine benchmarks" ON)
+option(ATTOME_PROFILING "Compile the frame profiler (ATM_PROFILE_SCOPE); OFF compiles it out" ON)
 # Declared here (not only in engine/CMakeLists.txt) so the attome_online
 # check below never depends on the subdirectory having run first.
 option(ATTOME_BUILD_VOXEL "Build the voxel engine modules (world, models, net2, Vulkan renderer)" ON)
