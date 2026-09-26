@@ -18,6 +18,7 @@
 // Threading: single-threaded; call update() from one thread. Non-blocking.
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -110,6 +111,13 @@ public:
   // peer's queue is full (caller decides: drop, retry, or disconnect).
   bool send(PeerId peer, Channel channel, std::span<const uint8_t> data);
   void disconnect(PeerId peer);
+
+  // Server: called (from update()) for each new connection request with the
+  // client's salt; returning another port redirects the client there (same
+  // address) before any state is allocated, 0 accepts it here. Used to spread
+  // clients over network shards that listen on neighbouring ports. Clients
+  // follow up to 3 redirects per connect.
+  void setRedirect(std::function<uint16_t(uint64_t clientSalt)> fn);
 
   // Client convenience: the single server peer (invalid until connected).
   PeerId serverPeer() const;

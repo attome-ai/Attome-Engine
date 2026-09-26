@@ -43,6 +43,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <random>
 
@@ -59,7 +60,7 @@ using detail::Address;
 using detail::UdpSocket;
 
 constexpr uint8_t kPktConnectRequest = 1, kPktChallenge = 2, kPktChallengeResponse = 3,
-                  kPktAccept = 4, kPktDenied = 5, kPktData = 6, kPktDisconnect = 7;
+                  kPktAccept = 4, kPktDenied = 5, kPktData = 6, kPktDisconnect = 7, kPktRedirect = 8;
 constexpr uint8_t kFlagHasAck = 0x10;
 constexpr uint8_t kFlagEncrypted = 0x80; // reserved: TODO(N2) ChaCha20-Poly1305 per-direction keys
 
@@ -83,6 +84,7 @@ constexpr uint32_t kMaxUnreliableBlocks = 128;
 constexpr uint64_t kHandshakeResendMs = 250;
 constexpr uint64_t kResponseRestartMs = 4000;
 constexpr int kDisconnectRepeats = 3;
+constexpr int kMaxRedirects = 3; // per connect attempt: a redirect can't loop a client forever
 
 inline int16_t seqDiff(uint16_t a, uint16_t b) { return int16_t(uint16_t(a - b)); }
 
@@ -375,6 +377,8 @@ struct Host::Impl {
   uint32_t chTimestamp = 0;
   uint64_t chCookie = 0;
   uint64_t connectStartMs = 0, responseStartMs = 0, lastHandshakeMs = 0;
+  int redirectsLeft = 0;
+  std::function<uint16_t(uint64_t)> redirect; // server: port for a new connection (0 = here)
 
   // packet under construction
   uint8_t recvBuf[kMaxDatagram + 64];
@@ -875,6 +879,19 @@ struct Host::Impl {
       return;
     }
     if (type == kPktConnectRequest) {
+      // Sharded server: send the client to another port before any state (or
+      // even a cookie) exists here. Bound to the client's salt, like Denied.
+      if (redirect) {
+        if (const uint16_t port = redirect(salt); port != 0 && port != socket.localPort()) {
+          uint8_t rb[16];
+          Wr rw{rb, sizeof(rb)};
+          rw.u8(kPktRedirect);
+          rw.u64(salt);
+          rw.u16(port);
+          sendControl(from, rb, rw.n);
+          return;
+        }
+      }
       const uint32_t ts = nowSec();
       uint8_t buf[32];
       Wr w{buf, sizeof(buf)};
@@ -965,6 +982,13 @@ struct Host::Impl {
       cstate = ClientState::Connected;
       Peer *p = activate(0, serverAddr, connId, salt);
       pushEvent(EventType::Connected, idOf(0, *p));
+    } else if (type == kPktRedirect) {
+      // Same host, another port (a network shard): restart the handshake there.
+      const uint16_t port = rd.u16();
+      if (!rd.ok || port == 0 || cstate != ClientState::SendingRequest || redirectsLeft <= 0) return;
+      --redirectsLeft;
+      serverAddr.port = port;
+      clientSendHandshake();
     } else if (type == kPktDenied) {
       const uint8_t reason = rd.u8();
       if (!rd.ok || cstate == ClientState::Connected || cstate == ClientState::Idle) return;
@@ -1013,7 +1037,8 @@ struct Host::Impl {
     switch (type) {
     case kPktChallenge:
     case kPktAccept:
-    case kPktDenied: clientHandshake(type, data, len); return;
+    case kPktDenied:
+    case kPktRedirect: clientHandshake(type, data, len); return;
     case kPktData: handleData(from, data, len); return;
     case kPktDisconnect: handleDisconnectPacket(from, data, len); return;
     default: ++hs.malformedPackets; return;
@@ -1409,9 +1434,12 @@ bool Host::connect(const std::string &host, uint16_t port, std::string *error) {
   m.clientSalt = splitmix64(m.rng);
   m.cstate = Impl::ClientState::SendingRequest;
   m.connectStartMs = m.now;
+  m.redirectsLeft = kMaxRedirects;
   m.clientSendHandshake();
   return true;
 }
+
+void Host::setRedirect(std::function<uint16_t(uint64_t clientSalt)> fn) { impl_->redirect = std::move(fn); }
 
 void Host::update(uint64_t now) { impl_->update(now); }
 

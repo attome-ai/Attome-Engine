@@ -102,6 +102,8 @@ struct AppearanceCodec {
 // One EntityState as it appears inside a snapshot (exposed so the server can
 // measure entities against the per-snapshot byte budget).
 void encodeEntityState(atm::net2::BitWriter &w, const EntityState &e);
+// Exact size in bits of encodeEntityState(e), without encoding it.
+size_t entityStateBits(const EntityState &e);
 
 struct ItemStackCodec {
   static void encode(atm::net2::BitWriter &w, const ItemStack &s);

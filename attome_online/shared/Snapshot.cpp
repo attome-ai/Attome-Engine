@@ -174,6 +174,24 @@ void encodeEntityState(BitWriter &w, const EntityState &e) {
   if (mask & field::Flags) w.u8(e.flags);
 }
 
+size_t entityStateBits(const EntityState &e) {
+  auto varuBits = [](uint64_t v) {
+    size_t n = 8;
+    for (; v > 0x7F; v >>= 7) n += 8;
+    return n;
+  };
+  const uint16_t mask = uint16_t(e.mask & field::All);
+  size_t n = varuBits(e.id) + 7;
+  if (mask & field::Type) n += 2 + 8 + (e.kind == EntityKind::DroppedItem ? 16 : 0);
+  if (mask & field::Pos) n += 32 + 16 + 32;
+  if (mask & field::Vel) n += 3 * 16;
+  if (mask & field::Yaw) n += kYawBits;
+  if (mask & field::Anim) n += 3 * 8;
+  if (mask & field::Health) n += varuBits(e.hp) + varuBits(e.maxHp);
+  if (mask & field::Flags) n += 8;
+  return n;
+}
+
 namespace {
 
 bool decodeEntity(BitReader &r, EntityState &e) {

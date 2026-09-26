@@ -1,9 +1,13 @@
-// ao_bots: headless bot clients for load tests (NETWORK_PLAN §8).
+// ao_bots: headless bot clients for load tests (NETWORK_PLAN Â§8).
 //
 //   ao_bots --host 127.0.0.1 --port 27015 --count 200 --behaviour wander|mine|fight
-//           [--ramp 50] [--duration 0]
+//           [--ramp 50] [--threads 0] [--ports 1] [--duration 0]
 //
-// All bots run on one thread (no per-bot threads): each bot is an
+// --ports n: the server runs n network shards on ports port..port+n-1
+// (config "netShards"); bot i connects to port + i % n.
+//
+// Bots are split over a few threads (--threads, default ~1 per 1000 bots; no
+// per-bot threads): each bot is an
 // atm::net2::Host client with a small memory footprint. Movement is predicted
 // locally with ao::stepMovement against a flat approximation of the terrain
 // (heightmap from WorldGenerator::surfaceHeight, shared by all bots) and
@@ -31,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <random>
 #include <span>
 #include <string>
@@ -122,14 +127,15 @@ struct Totals {
 
 class BotRunner {
 public:
-  BotRunner(std::string host, uint16_t port, Behaviour b) : host_(std::move(host)), port_(port), behaviour_(b) {
+  BotRunner(std::string host, uint16_t port, Behaviour b, int indexBase = 0, int portSpan = 1)
+      : host_(std::move(host)), port_(port), behaviour_(b), indexBase_(indexBase), portSpan_(portSpan) {
     blocks_.registerDefaults();
     rng_.seed(std::random_device{}());
   }
 
   void addBot() {
     auto bot = std::make_unique<Bot>();
-    bot->index = int(bots_.size());
+    bot->index = indexBase_ + int(bots_.size());
     bot->yaw = randf() * 6.2831853f - 3.1415927f;
     connectBot(*bot);
     bots_.push_back(std::move(bot));
@@ -198,7 +204,9 @@ private:
     b.seen.clear();
     b.recentCount = 0;
     std::string err;
-    if (!b.host->connect(host_, port_, &err)) {
+    // Spread bots over the server's network shard ports (--ports).
+    const uint16_t port = uint16_t(port_ + b.index % std::max(1, portSpan_));
+    if (!b.host->connect(host_, port, &err)) {
       std::fprintf(stderr, "[bots] bot %d: connect failed: %s\n", b.index, err.c_str());
       b.host.reset();
       b.reconnectAtMs = net::nowMs() + 5000;
@@ -372,6 +380,7 @@ private:
   std::string host_;
   uint16_t port_;
   Behaviour behaviour_;
+  int indexBase_ = 0, portSpan_ = 1;
   vx::BlockRegistry blocks_;
   TerrainAccess terrain_;
   std::vector<std::unique_ptr<Bot>> bots_;
@@ -392,7 +401,7 @@ int main(int argc, char **argv) {
       std::fprintf(stderr, "[bots] %s\n", dataError.c_str());
   }
   std::string host = "127.0.0.1";
-  int port = 27015, count = 200, ramp = 50;
+  int port = 27015, count = 200, ramp = 50, threads = 0, ports = 1;
   double duration = 0.0;
   Behaviour behaviour = Behaviour::Wander;
   for (int i = 1; i < argc; ++i) {
@@ -401,6 +410,8 @@ int main(int argc, char **argv) {
     else if (!std::strcmp(argv[i], "--port")) port = std::atoi(next());
     else if (!std::strcmp(argv[i], "--count")) count = std::atoi(next());
     else if (!std::strcmp(argv[i], "--ramp")) ramp = std::atoi(next());
+    else if (!std::strcmp(argv[i], "--threads")) threads = std::atoi(next());
+    else if (!std::strcmp(argv[i], "--ports")) ports = std::max(1, std::atoi(next()));
     else if (!std::strcmp(argv[i], "--duration")) duration = std::atof(next());
     else if (!std::strcmp(argv[i], "--behaviour") || !std::strcmp(argv[i], "--behavior")) {
       const std::string b = next();
@@ -414,7 +425,7 @@ int main(int argc, char **argv) {
     } else {
       std::fprintf(stderr,
                    "usage: ao_bots --host 127.0.0.1 --port 27015 --count 200 --behaviour wander|mine|fight "
-                   "[--ramp bots_per_s] [--duration seconds]\n");
+                   "[--ramp bots_per_s] [--threads n] [--duration seconds]\n");
       return std::strcmp(argv[i], "--help") ? 2 : 0;
     }
   }
@@ -423,52 +434,100 @@ int main(int argc, char **argv) {
     return 2;
   }
   ramp = std::max(1, ramp);
+  // Default: one thread per ~1000 bots, capped by the machine.
+  if (threads <= 0) threads = std::clamp((count + 999) / 1000, 1, int(std::max(1u, std::thread::hardware_concurrency() / 2)));
+  threads = std::clamp(threads, 1, count);
 
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
 
-  BotRunner runner(host, uint16_t(port), behaviour);
-  std::printf("[bots] %d bots -> %s:%d (ramp %d/s)\n", count, host.c_str(), port, ramp);
+  std::printf("[bots] %d bots -> %s:%d (ramp %d/s, %d threads)\n", count, host.c_str(), port, ramp, threads);
 
   using clock = std::chrono::steady_clock;
   const auto start = clock::now();
-  const auto dt = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / kSimHz));
-  auto next = start;
-  auto lastReport = start;
-  double spawnCredit = 0.0;
+  std::mutex totalsMutex;
+  std::vector<Totals> threadTotals(static_cast<size_t>(threads));
+  std::vector<size_t> threadCounts(static_cast<size_t>(threads), 0);
+  std::atomic<bool> done{false};
+
+  // Each thread owns a BotRunner with its share of the bots and ramp.
+  auto worker = [&](int ti) {
+    const int share = count / threads + (ti < count % threads ? 1 : 0);
+    const double shareRamp = std::max(1.0, double(ramp) / threads);
+    int indexBase = 0;
+    for (int j = 0; j < ti; ++j) indexBase += count / threads + (j < count % threads ? 1 : 0);
+    BotRunner runner(host, uint16_t(port), behaviour, indexBase, ports);
+    const auto dt = std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(1.0 / kSimHz));
+    auto next = clock::now();
+    auto lastPublish = next;
+    double spawnCredit = 0.0;
+    while (!g_stop.load() && !done.load()) {
+      const auto now = clock::now();
+      const bool simTick = now >= next;
+      if (simTick) {
+        next += dt;
+        if (now - next > dt * 10) next = now;
+        spawnCredit += shareRamp / kSimHz;
+        while (spawnCredit >= 1.0 && runner.count() < size_t(share)) {
+          runner.addBot();
+          spawnCredit -= 1.0;
+        }
+        if (runner.count() >= size_t(share)) spawnCredit = 0.0;
+      }
+      runner.update(net::nowMs(), simTick);
+      if (now - lastPublish >= std::chrono::seconds(1)) {
+        const Totals t = runner.totals();
+        std::lock_guard<std::mutex> lock(totalsMutex);
+        threadTotals[size_t(ti)] = t;
+        threadCounts[size_t(ti)] = runner.count();
+        lastPublish = now;
+      }
+      // Pump sockets ~250 times/s between sim ticks without burning a core.
+      std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    }
+  };
+  std::vector<std::thread> pool;
+  for (int ti = 0; ti < threads; ++ti) pool.emplace_back(worker, ti);
+
   Totals prev;
+  auto lastReport = start;
   while (!g_stop.load()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     const auto now = clock::now();
     if (duration > 0.0 && std::chrono::duration<double>(now - start).count() >= duration) break;
-    const bool simTick = now >= next;
-    if (simTick) {
-      next += dt;
-      if (now - next > dt * 10) next = now;
-      spawnCredit += double(ramp) / kSimHz;
-      while (spawnCredit >= 1.0 && runner.count() < size_t(count)) {
-        runner.addBot();
-        spawnCredit -= 1.0;
+    if (now - lastReport < std::chrono::seconds(5)) continue;
+    const double secs = std::chrono::duration<double>(now - lastReport).count();
+    Totals t;
+    size_t bots = 0;
+    {
+      std::lock_guard<std::mutex> lock(totalsMutex);
+      for (size_t i = 0; i < threadTotals.size(); ++i) {
+        const Totals &x = threadTotals[i];
+        t.connected += x.connected;
+        t.welcomed += x.welcomed;
+        t.rttSum += x.rttSum;
+        t.rttCount += x.rttCount;
+        t.bytesIn += x.bytesIn;
+        t.bytesOut += x.bytesOut;
+        t.disconnects += x.disconnects;
+        t.snapshots += x.snapshots;
+        t.messages += x.messages;
+        bots += threadCounts[i];
       }
-      if (runner.count() >= size_t(count)) spawnCredit = 0.0;
     }
-    runner.update(net::nowMs(), simTick);
-
-    if (now - lastReport >= std::chrono::seconds(5)) {
-      const double secs = std::chrono::duration<double>(now - lastReport).count();
-      const Totals t = runner.totals();
-      std::printf("[bots] bots %zu | connected %d (in game %d) | rtt avg %.1f ms | in %.1f KB/s out %.1f KB/s | "
-                  "snapshots %llu | disconnects %llu\n",
-                  runner.count(), t.connected, t.welcomed, t.rttCount ? t.rttSum / t.rttCount : 0.0,
-                  double(t.bytesIn - std::min(t.bytesIn, prev.bytesIn)) / 1024.0 / secs,
-                  double(t.bytesOut - std::min(t.bytesOut, prev.bytesOut)) / 1024.0 / secs,
-                  (unsigned long long)t.snapshots, (unsigned long long)t.disconnects);
-      std::fflush(stdout);
-      prev = t;
-      lastReport = now;
-    }
-    // Pump sockets ~250 times/s between sim ticks without burning a core.
-    std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    std::printf("[bots] bots %zu | connected %d (in game %d) | rtt avg %.1f ms | in %.1f KB/s out %.1f KB/s | "
+                "snapshots %.0f/s | disconnects %llu\n",
+                bots, t.connected, t.welcomed, t.rttCount ? t.rttSum / t.rttCount : 0.0,
+                double(t.bytesIn - std::min(t.bytesIn, prev.bytesIn)) / 1024.0 / secs,
+                double(t.bytesOut - std::min(t.bytesOut, prev.bytesOut)) / 1024.0 / secs,
+                double(t.snapshots - std::min(t.snapshots, prev.snapshots)) / secs,
+                (unsigned long long)t.disconnects);
+    std::fflush(stdout);
+    prev = t;
+    lastReport = now;
   }
+  done.store(true);
+  for (auto &th : pool) th.join();
   std::printf("[bots] stopping\n");
   return 0;
 }

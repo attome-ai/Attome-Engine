@@ -49,10 +49,13 @@ ServerConfig ServerConfig::load(const std::string &path, std::string *error) {
   c.viewRadiusChunks = int(num("viewRadiusChunks", 2, 32, c.viewRadiusChunks));
   c.simRadiusChunks = int(num("simRadiusChunks", 1, 16, c.simRadiusChunks));
   c.workerThreads = int(num("workerThreads", 0, 64, c.workerThreads));
+  c.netShards = int(num("netShards", 1, 64, c.netShards));
+  c.jobThreads = int(num("jobThreads", 0, 256, c.jobThreads));
   c.monstersPerPlayer = int(num("monstersPerPlayer", 0, 100, c.monstersPerPlayer));
   c.maxMonsters = int(num("maxMonsters", 0, 100000, c.maxMonsters));
   c.bandwidthBytesPerSec = uint32_t(num("bandwidthKBps", 16, 100000, c.bandwidthBytesPerSec / 1024.0) * 1024.0);
   c.snapshotBudgetBytes = uint32_t(num("snapshotBudgetBytes", 256, 1150, c.snapshotBudgetBytes));
+  c.maxRelevantEntities = int(num("maxRelevantEntities", 16, 1000, c.maxRelevantEntities));
   c.timeoutMs = uint32_t(num("timeoutMs", 1000, 600000, c.timeoutMs));
   if (const atm::Json *v = root.find("verbose"); v && v->isBool()) c.verbose = v->asBool();
   return c;
@@ -99,7 +102,7 @@ void ZoneServer::stop() {
 }
 
 bool ZoneServer::running() const { return s_ && s_->running; }
-uint16_t ZoneServer::port() const { return s_ && s_->host ? s_->host->localPort() : 0; }
+uint16_t ZoneServer::port() const { return s_ && !s_->hosts.empty() ? s_->hosts[0]->localPort() : 0; }
 
 ServerStats ZoneServer::stats() const {
   ServerStats st;
@@ -123,14 +126,20 @@ ServerStats ZoneServer::stats() const {
     st.tickMsP99 = buf[std::min(n - 1, size_t(double(n) * 0.99))];
     st.tickMsMax = buf[n - 1];
   }
-  if (s.host) {
-    const net::HostStats hs = s.host->hostStats();
-    st.bytesSent = hs.bytesSent;
-    st.bytesReceived = hs.bytesReceived;
-    st.malformedPackets = hs.malformedPackets;
+  for (const auto &h : s.hosts) {
+    const net::HostStats hs = h->hostStats();
+    st.bytesSent += hs.bytesSent;
+    st.bytesReceived += hs.bytesReceived;
+    st.malformedPackets += hs.malformedPackets;
   }
   if (s.world) st.loadedChunks = s.world->stats().loadedChunks;
   st.editedChunks = s.editedStore.size();
+  st.phaseMsTotal = s.phaseMs;
+  st.profiledTicks = s.profiledTicks;
+  st.snapScanned = s.snapScanned;
+  st.snapAppearance = s.snapAppearance;
+  st.snapEntities = s.snapEntities;
+  for (const auto &kv : s.players) st.relTracks += kv.second.rel.size();
   return st;
 }
 
@@ -177,11 +186,41 @@ bool ServerState::start(const ServerConfig &config, std::string *error) {
   hc.timeoutMs = cfg.timeoutMs;
   hc.bandwidthBytesPerSec = cfg.bandwidthBytesPerSec;
   hc.maxBulkBytes = 4u << 20;
-  host = std::make_unique<net::Host>(hc);
-  if (!host->listen(cfg.port, error)) {
-    host.reset();
-    world.reset();
-    return false;
+  // Network shards: consecutive ports, the player cap split between them.
+  const int shards = std::clamp(cfg.netShards, 1, 64);
+  shardPeers = uint16_t(std::min<int>((cfg.maxPlayers + shards - 1) / shards, 65534 / shards));
+  hc.maxPeers = shardPeers;
+  hosts.clear();
+  for (int k = 0; k < shards; ++k) {
+    auto h = std::make_unique<net::Host>(hc);
+    const uint16_t port = cfg.port == 0 ? uint16_t(0) : uint16_t(cfg.port + k);
+    if (!h->listen(port, error)) {
+      hosts.clear();
+      world.reset();
+      return false;
+    }
+    hosts.push_back(std::move(h));
+  }
+  const int threads = cfg.jobThreads > 0 ? cfg.jobThreads
+                                         : int(std::clamp(std::thread::hardware_concurrency() / 2, 1u, 16u));
+  jobs.resize(threads);
+  snapWorkers.assign(size_t(jobs.threads()), SnapWorker{});
+  shardPlayers.assign(hosts.size(), {});
+  netScratch.assign(hosts.size(), NetShardScratch{});
+  // New connections arrive on the first port and are redirected to the
+  // least-loaded shard (the callback runs on shard 0's pump thread; the load
+  // figures are refreshed on this thread between pumps).
+  shardLoad.assign(hosts.size(), 0u);
+  shardPending.assign(hosts.size(), 0u);
+  if (hosts.size() > 1) {
+    hosts[0]->setRedirect([this](uint64_t) -> uint16_t {
+      size_t best = 0;
+      for (size_t k = 1; k < hosts.size(); ++k)
+        if (shardLoad[k] + shardPending[k] < shardLoad[best] + shardPending[best]) best = k;
+      if (shardLoad[best] + shardPending[best] >= shardPeers) return 0; // all full: shard 0 answers
+      ++shardPending[best];
+      return best == 0 ? uint16_t(0) : hosts[best]->localPort();
+    });
   }
 
   entities.clear();
@@ -194,17 +233,17 @@ bool ServerState::start(const ServerConfig &config, std::string *error) {
   tick = 0;
   nextEntityId = 1;
   nextMonsterSpawnTick = kSimHz * 2;
-  snapshotAccum = 0.0;
   msgBuf.reserve(1 << 16);
-  measureBuf.reserve(2048);
   running = true;
 
   world->clearFoci();
   world->addFocus(spawnPoint.x, spawnPoint.y, spawnPoint.z);
   world->update();
 
-  std::printf("[server] listening on UDP %u, seed %llu, max players %u, schema %016llx\n",
-              unsigned(host->localPort()), (unsigned long long)cfg.seed, unsigned(cfg.maxPlayers),
+  std::printf("[server] listening on UDP %u (%zu port shards), %d job threads, seed %llu, max players %u, "
+              "schema %016llx\n",
+              unsigned(hosts[0]->localPort()), hosts.size(), jobs.threads(), (unsigned long long)cfg.seed,
+              unsigned(cfg.maxPlayers),
               (unsigned long long)kSchemaHash);
   std::fflush(stdout);
   return true;
@@ -213,29 +252,39 @@ bool ServerState::start(const ServerConfig &config, std::string *error) {
 void ServerState::stop() {
   if (!running) return;
   running = false;
-  if (host) {
-    for (auto &kv : players) host->disconnect(kv.second.peer);
-    host->update(net::nowMs()); // disconnect packets go out now
-  }
+  for (auto &kv : players) netDisconnect(kv.second.peer);
+  for (auto &h : hosts) h->update(net::nowMs()); // disconnect packets go out now
   players.clear();
   entities.clear();
   spawnQueue.clear();
-  host.reset();
+  hosts.clear();
+  jobs.resize(1);
   world.reset();
   std::printf("[server] stopped\n");
   std::fflush(stdout);
 }
 
 void ServerState::step() {
-  const auto t0 = std::chrono::steady_clock::now();
+  using clk = std::chrono::steady_clock;
+  const auto t0 = clk::now();
+  auto mark = t0;
+  auto phase = [&](int i) { // tick profiler: time since the previous mark goes to phase i
+    const auto t = clk::now();
+    phaseMs[size_t(i)] += std::chrono::duration<double, std::milli>(t - mark).count();
+    mark = t;
+  };
   ++tick;
 
   pumpNetwork();
+  phase(0);
 
   simulatePlayers();
+  phase(1);
   simulateMonsters();
+  phase(2);
   simulateProjectiles();
   simulateItems();
+  phase(3);
   if (tick >= nextMonsterSpawnTick) {
     spawnMonsters();
     nextMonsterSpawnTick = tick + kSimHz;
@@ -244,37 +293,56 @@ void ServerState::step() {
   regrowNodes();
   flushSpawns();
   removeDead();
+  phase(4);
+  buildGrid(); // interest grid for proximity queries (next tick) and snapshots
+  phase(7);
 
-  world->clearFoci();
-  world->addFocus(spawnPoint.x, spawnPoint.y, spawnPoint.z); // first joiners never wait
+  // One streaming focus per occupied chunk, in a stable order: VoxelWorld's
+  // cost is O(chunks x foci) and it rescans whenever the list changes, so
+  // 10k players must not mean 10k foci reshuffled every tick.
+  keyScratch.clear();
+  auto chunkKey = [](const glm::dvec3 &p) {
+    const auto c = [](double v) { return uint64_t(uint32_t(int32_t(std::floor(v / vx::kChunkSize))) & 0x1FFFFFu); };
+    return (c(p.x) << 42) | (c(p.y) << 21) | c(p.z);
+  };
+  keyScratch.push_back(chunkKey(spawnPoint)); // first joiners never wait
   for (auto &kv : players) {
-    if (const Entity *e = findEntity(kv.second.entity))
-      world->addFocus(e->move.pos.x, e->move.pos.y, e->move.pos.z);
+    if (const Entity *e = findEntity(kv.second.entity)) keyScratch.push_back(chunkKey(e->move.pos));
+  }
+  std::sort(keyScratch.begin(), keyScratch.end());
+  keyScratch.erase(std::unique(keyScratch.begin(), keyScratch.end()), keyScratch.end());
+  world->clearFoci();
+  for (uint64_t k : keyScratch) {
+    const auto un = [](uint64_t v) { return double(int32_t(uint32_t(v) << 11) >> 11) * vx::kChunkSize + 0.5 * vx::kChunkSize; };
+    world->addFocus(un((k >> 42) & 0x1FFFFFu), un((k >> 21) & 0x1FFFFFu), un(k & 0x1FFFFFu));
   }
   world->update();
+  phase(5);
 
   for (auto &kv : players) {
     Player &pl = kv.second;
     if (!pl.welcomed) {
-      if (tick - pl.joinTick > Tick(kSimHz * 10)) host->disconnect(pl.peer); // no Hello
+      if (tick - pl.joinTick > Tick(kSimHz * 10)) netDisconnect(pl.peer); // no Hello
       continue;
     }
     flushXp(pl);
     if (pl.inventoryDirty) sendInventory(pl);
     if (tick >= pl.nextChunkSyncTick) syncChunks(pl, false);
   }
+  phase(6);
 
-  snapshotAccum += double(kSnapshotHz) / double(kSimHz);
-  if (snapshotAccum >= 1.0) {
-    snapshotAccum -= 1.0;
-    buildGrid();
-    sendSnapshots();
-  }
+  // Every tick, for the players whose snapshot is due (staggered: each
+  // player still gets kSnapshotHz, but the load is spread evenly over ticks).
+  sendSnapshots();
+  phase(8);
 
-  host->update(net::nowMs()); // flush everything queued this tick
+  // Flush everything queued this tick, one thread per network shard.
+  const uint64_t flushMs = net::nowMs();
+  jobs.run(hosts.size(), [&](size_t k, size_t) { hosts[k]->update(flushMs); });
+  phase(9);
+  ++profiledTicks;
 
-  const float ms =
-      std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  const float ms = std::chrono::duration<float, std::milli>(clk::now() - t0).count();
   tickMs[tickMsHead] = ms;
   tickMsHead = (tickMsHead + 1) % tickMs.size();
   tickMsCount = std::min(tickMsCount + 1, tickMs.size());
@@ -285,19 +353,51 @@ void ServerState::step() {
 // ---------------------------------------------------------------------------
 
 void ServerState::pumpNetwork() {
-  host->update(net::nowMs());
-  net::Event ev;
-  while (host->poll(ev)) {
-    switch (ev.type) {
-    case net::EventType::Connected: onConnected(ev.peer); break;
-    case net::EventType::Disconnected: onDisconnected(ev.peer); break;
-    case net::EventType::Message: {
-      auto it = players.find(ev.peer.value);
-      if (it != players.end()) onMessage(it->second, ev.data);
-      break;
+  // Per shard, in parallel: socket reads, acks, reassembly, and the input
+  // messages (the bulk of the traffic: they only touch their own Player).
+  // Everything else is kept in order and handled below on this thread.
+  // Event payloads stay valid until the shard's next update().
+  const uint64_t ms = net::nowMs();
+  jobs.run(hosts.size(), [&](size_t k, size_t) {
+    NetShardScratch &sc = netScratch[k];
+    sc.deferred.clear();
+    hosts[k]->update(ms);
+    net::Event ev;
+    while (hosts[k]->poll(ev)) {
+      if (ev.type == net::EventType::Message) {
+        net::BitReader r(ev.data);
+        uint16_t id = 0;
+        if (net::peekMessageId(ev.data, id, r) && id == InputBatch::kId) {
+          auto it = players.find(toGlobal(k, ev.peer).value);
+          if (it != players.end() && it->second.welcomed) {
+            if (net::decodeMessage(r, sc.batch)) handleInput(it->second, sc.batch);
+            continue;
+          }
+        }
+      }
+      sc.deferred.push_back(ev);
     }
+  });
+  for (size_t k = 0; k < hosts.size(); ++k) { // redirect balancing (see start())
+    shardLoad[k] = uint32_t(hosts[k]->peerCount());
+    shardPending[k] = 0;
+  }
+  const auto tEvents = std::chrono::steady_clock::now();
+  for (size_t k = 0; k < hosts.size(); ++k) {
+    for (const net::Event &ev : netScratch[k].deferred) {
+      const PeerId peer = toGlobal(k, ev.peer);
+      switch (ev.type) {
+      case net::EventType::Connected: onConnected(peer); break;
+      case net::EventType::Disconnected: onDisconnected(peer); break;
+      case net::EventType::Message: {
+        auto it = players.find(peer.value);
+        if (it != players.end()) onMessage(it->second, ev.data);
+        break;
+      }
+      }
     }
   }
+  phaseMs[15] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tEvents).count();
 }
 
 void ServerState::onConnected(PeerId peer) {
@@ -403,7 +503,7 @@ void ServerState::handleHello(Player &pl, const Hello &m) {
   if (pl.welcomed) return;
   if (m.schemaHash != kSchemaHash) {
     std::printf("[server] rejecting client with schema %016llx\n", (unsigned long long)m.schemaHash);
-    host->disconnect(pl.peer);
+    netDisconnect(pl.peer);
     return;
   }
   const EntityId id = nextEntityId++;

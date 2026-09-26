@@ -6,6 +6,7 @@
 //   ServerGameplay.cpp      players, monsters, combat, loot, inventory, skills
 //   ServerReplication.cpp   interest grid, priority, delta snapshots, chunk sync
 
+#include "JobPool.h"
 #include "ZoneServer.h"
 
 #include "../shared/GameTypes.h"
@@ -19,7 +20,9 @@
 #include "../../engine/voxel/BlockRegistry.h"
 #include "../../engine/voxel/VoxelWorld.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <random>
@@ -41,6 +44,8 @@ inline constexpr int kHotbarSlots = 9;         // inventory slots 0..8 are the h
 inline constexpr double kGridCell = 16.0;      // interest grid cell (blocks)
 inline constexpr double kNearRange = 32.0, kMidRange = 96.0, kFarRange = 160.0;
 inline constexpr double kEventRange = 64.0;    // DamageEvent broadcast radius
+inline uint64_t gridCellKey(int32_t cx, int32_t cz) { return (uint64_t(uint32_t(cx)) << 32) | uint32_t(cz); }
+inline int32_t gridCellOf(double v) { return int32_t(std::floor(v / kGridCell)); }
 inline constexpr float kReach = 6.5f;          // block edit reach from the eye
 
 // Quantised replicated state of one entity (what the client ends up with).
@@ -65,6 +70,97 @@ struct RelTrack {
   float priority = 0.0f;
   uint32_t appearanceVersion = 0;            // players: appearance sent to this client
   Tick seenTick = 0;                         // last snapshot pass it was relevant
+};
+
+// Per-client EntityId -> RelTrack map: a small open-addressing index (8-byte
+// slots, backward-shift deletion) over a dense record array with a free
+// list. Contiguous and compact, so the snapshot pass stays in cache instead
+// of chasing unordered_map nodes. A RelTrack pointer stays valid until the
+// next tryEmplace (the record array may grow).
+class RelMap {
+public:
+  size_t size() const { return size_; }
+  RelTrack *find(EntityId id) {
+    if (index_.empty()) return nullptr;
+    for (size_t i = home(id);; i = (i + 1) & mask_) {
+      if (index_[i].first == id) return &items_[index_[i].second];
+      if (index_[i].first == kNoEntity) return nullptr;
+    }
+  }
+  bool contains(EntityId id) const { return const_cast<RelMap *>(this)->find(id) != nullptr; }
+  std::pair<RelTrack *, bool> tryEmplace(EntityId id) {
+    if ((size_ + 1) * 2 > index_.size()) grow();
+    size_t i = home(id);
+    for (;; i = (i + 1) & mask_) {
+      if (index_[i].first == id) return {&items_[index_[i].second], false};
+      if (index_[i].first == kNoEntity) break;
+    }
+    uint32_t slot;
+    if (!free_.empty()) {
+      slot = free_.back();
+      free_.pop_back();
+      items_[slot] = RelTrack{};
+      ids_[slot] = id;
+    } else {
+      slot = uint32_t(items_.size());
+      items_.emplace_back();
+      ids_.push_back(id);
+    }
+    index_[i] = {id, slot};
+    ++size_;
+    return {&items_[slot], true};
+  }
+  template <class F> void forEach(F &&fn) {
+    for (size_t s = 0; s < items_.size(); ++s)
+      if (ids_[s] != kNoEntity) fn(ids_[s], items_[s]);
+  }
+  // Removes entries where pred(id, rt) is true.
+  template <class P> void eraseIf(P &&pred) {
+    for (size_t s = 0; s < items_.size(); ++s)
+      if (ids_[s] != kNoEntity && pred(ids_[s], items_[s])) erase(ids_[s]);
+  }
+
+private:
+  size_t home(EntityId id) const { return size_t((uint64_t(id) * 0x9E3779B97F4A7C15ull) >> 32) & mask_; }
+  void erase(EntityId id) {
+    size_t i = home(id);
+    for (;; i = (i + 1) & mask_) {
+      if (index_[i].first == kNoEntity) return;
+      if (index_[i].first == id) break;
+    }
+    const uint32_t slot = index_[i].second;
+    ids_[slot] = kNoEntity;
+    free_.push_back(slot);
+    --size_;
+    for (size_t j = i;;) { // backward-shift deletion: no tombstones
+      j = (j + 1) & mask_;
+      if (index_[j].first == kNoEntity) break;
+      const size_t h = home(index_[j].first);
+      if ((i <= j) ? (h > i && h <= j) : (h > i || h <= j)) continue; // already on its probe path
+      index_[i] = index_[j];
+      i = j;
+    }
+    index_[i] = {kNoEntity, 0u};
+  }
+  void grow() {
+    const size_t cap = std::max<size_t>(64, index_.size() * 2);
+    index_.assign(cap, {kNoEntity, 0u});
+    mask_ = cap - 1;
+    for (size_t s = 0; s < items_.size(); ++s) {
+      if (ids_[s] == kNoEntity) continue;
+      for (size_t i = home(ids_[s]);; i = (i + 1) & mask_) {
+        if (index_[i].first == kNoEntity) {
+          index_[i] = {ids_[s], uint32_t(s)};
+          break;
+        }
+      }
+    }
+  }
+  std::vector<std::pair<EntityId, uint32_t>> index_;
+  std::vector<RelTrack> items_;
+  std::vector<EntityId> ids_; // per record; kNoEntity = free
+  std::vector<uint32_t> free_;
+  size_t mask_ = 0, size_ = 0;
 };
 
 struct SnapRecord {
@@ -108,7 +204,7 @@ struct Player {
   Tick lastSnapshotAck = 0;
   bool hasSnapshotAck = false;
   uint32_t snapshotsSent = 0;
-  std::unordered_map<EntityId, RelTrack> rel;
+  RelMap rel;
   std::vector<std::pair<EntityId, Tick>> pendingRemoved; // id, first sent
   std::array<SnapRecord, kSnapRecords> records;
 
@@ -116,6 +212,13 @@ struct Player {
   std::unordered_set<uint64_t> announced;                 // told via EditedChunks
   std::unordered_map<uint64_t, uint64_t> chunkSentMs;     // ChunkData queued (ms)
   Tick nextChunkSyncTick = 0;
+
+  // Outbox filled by the parallel snapshot pass, sent per network shard:
+  // the snapshot, and AppearanceMsgs (bytes + the entity/version each one
+  // carries, recorded in `rel` once the send is accepted).
+  std::vector<uint8_t> outSnapshot;
+  std::vector<std::vector<uint8_t>> outAppearance;
+  std::vector<std::pair<EntityId, uint32_t>> outAppearanceFor;
 };
 
 struct Entity {
@@ -129,6 +232,8 @@ struct Entity {
   bool dead = false;
   bool remove = false;    // despawn at the end of the tick
   uint32_t playerKey = 0xFFFFFFFFu; // players: PeerId value
+  uint32_t gridIndex = 0xFFFFFFFFu; // dense index from the last buildGrid() (0xFFFFFFFF = not in it)
+  uint32_t appearanceVersion = 0; // players: mirror of Player::appearanceVersion
 
   // Monsters
   EntityId target = kNoEntity;
@@ -158,6 +263,41 @@ struct Entity {
   Tick publicTick = 0;    // dropped items: anyone may pick up after this tick
 };
 
+// Interest-grid record: what proximity scans need without touching the
+// (large) Entity. Entity pointers are stable: unordered_map nodes don't move,
+// and entities are only erased in removeDead(), before the grid is rebuilt.
+struct GridRef {
+  float x = 0.0f, z = 0.0f;
+  uint32_t index = 0; // dense index (Entity::gridIndex)
+  EntityId id = kNoEntity;
+  uint32_t appearanceVersion = 0; // players (Entity::appearanceVersion)
+  EntityKind kind = EntityKind::Player;
+  Entity *e = nullptr;
+};
+
+struct SnapCandidate {
+  float priority = 0.0f;
+  Entity *e = nullptr;
+};
+
+// Per network shard scratch for the parallel receive pass.
+struct NetShardScratch {
+  std::vector<atm::net2::Event> deferred; // events handled serially, in order
+  proto::InputBatch batch;
+};
+
+// Per-thread scratch and counters for the parallel snapshot pass.
+struct SnapWorker {
+  std::vector<SnapCandidate> candidates;
+  std::vector<std::pair<double, uint32_t>> nearby; // (ranking distance², grid index)
+  std::vector<uint32_t> stamp; // per grid index: == stampGen when tracked by the current client
+  uint32_t stampGen = 0;
+  std::vector<uint8_t> measureBuf, msgBuf;
+  proto::SnapshotMsg snapMsg;
+  uint64_t scanned = 0, appearance = 0, entities = 0;
+  std::array<double, 5> phaseMs{}; // snap.* sub-phases (ServerStats::kPhaseNames[10..14])
+};
+
 // Resource-node regrowth: the blocks a depleted node changed, restored at `at`.
 struct Regrowth {
   Tick at = 0;
@@ -178,7 +318,17 @@ struct ServerState {
   bool editableWorld = false;
   std::vector<Regrowth> regrowths;
   std::vector<std::vector<SpawnerSlot>> spawnerSlots; // per mapSpawners() entry
-  std::unique_ptr<atm::net2::Host> host;
+  // Network shards: hosts[k] listens on cfg.port + k. Player PeerIds are
+  // global: the peer index is offset by k * shardPeers (see toGlobal()).
+  std::vector<std::unique_ptr<atm::net2::Host>> hosts;
+  uint16_t shardPeers = 0;
+  JobPool jobs;
+  std::vector<SnapWorker> snapWorkers;
+  std::vector<std::vector<Player *>> shardPlayers; // scratch: welcomed players per shard
+  std::vector<Player *> snapshotOrder;              // scratch: players to build snapshots for
+  std::vector<Player *> simOrder;                   // scratch: players to simulate
+  std::vector<NetShardScratch> netScratch;       // per shard
+  std::vector<uint32_t> shardLoad, shardPending;  // per shard: peers, redirects since the last pump
   atm::voxel::BlockRegistry blocks;
   std::unique_ptr<atm::voxel::VoxelWorld> world;
   atm::model::ModelLibrary models;
@@ -195,16 +345,26 @@ struct ServerState {
   std::unordered_map<uint64_t, std::shared_ptr<const atm::voxel::Chunk>> editedStore;
   std::vector<uint64_t> editedOrder;
   Tick nextMonsterSpawnTick = 0;
-  double snapshotAccum = 0.0;
 
-  // Interest grid (cell -> entities), rebuilt per snapshot pass.
-  std::unordered_map<uint64_t, std::vector<EntityId>> grid;
+  // Interest grid (cell -> entities), rebuilt every tick after removeDead().
+  std::unordered_map<uint64_t, std::vector<GridRef>> grid;
+  uint32_t gridCount = 0; // entities in the grid (dense indices 0..gridCount-1)
+  std::vector<GridRef> gridRefs; // by dense index
+  // EntityId -> dense index (open addressing, rebuilt with the grid): lock-free
+  // reads for the parallel snapshot pass, no Entity cache misses.
+  std::vector<std::pair<EntityId, uint32_t>> gridIds;
+  uint32_t gridLookup(EntityId id) const {
+    if (gridIds.empty()) return 0xFFFFFFFFu;
+    const size_t mask = gridIds.size() - 1;
+    for (size_t i = size_t(uint64_t(id) * 0x9E3779B97F4A7C15ull >> 40) & mask;; i = (i + 1) & mask) {
+      if (gridIds[i].first == id) return gridIds[i].second;
+      if (gridIds[i].first == kNoEntity) return 0xFFFFFFFFu;
+    }
+  }
 
   // Scratch (reused; no per-tick allocation once warmed up)
   std::vector<uint8_t> msgBuf;
-  std::vector<uint8_t> measureBuf;
   proto::InputBatch inBatch;
-  proto::SnapshotMsg snapMsg;
   std::vector<std::pair<float, EntityId>> candidates;
   std::vector<uint64_t> keyScratch;
   std::vector<EntityId> idScratch;
@@ -213,6 +373,9 @@ struct ServerState {
   std::array<float, 300> tickMs{};
   size_t tickMsCount = 0, tickMsHead = 0;
   uint32_t monsterCount = 0;
+  std::array<double, ServerStats::kPhaseCount> phaseMs{};
+  uint64_t profiledTicks = 0;
+  uint64_t snapScanned = 0, snapAppearance = 0, snapEntities = 0;
 
   // ---- ZoneServer.cpp ----
   bool start(const ServerConfig &config, std::string *error);
@@ -230,28 +393,69 @@ struct ServerState {
   void handlePickup(Player &pl, const proto::Pickup &m);
   void handleChat(Player &pl, const proto::ChatSend &m);
 
+  // ---- network shards (PeerIds held by the game are global) ----
+  PeerId toGlobal(size_t shard, PeerId local) const {
+    PeerId g;
+    g.value = (local.value & 0xFFFF0000u) | uint32_t(shard * shardPeers + local.index());
+    return g;
+  }
+  size_t shardOf(PeerId g) const { return shardPeers ? g.index() / shardPeers : 0; }
+  PeerId toLocal(PeerId g) const {
+    PeerId l;
+    l.value = (g.value & 0xFFFF0000u) | uint32_t(g.index() % std::max<uint16_t>(shardPeers, 1));
+    return l;
+  }
+  bool netSend(PeerId g, Channel channel, std::span<const uint8_t> data) {
+    const size_t k = shardOf(g);
+    return k < hosts.size() && hosts[k]->send(toLocal(g), channel, data);
+  }
+  void netDisconnect(PeerId g) {
+    if (const size_t k = shardOf(g); k < hosts.size()) hosts[k]->disconnect(toLocal(g));
+  }
+  atm::net2::PeerStats netStats(PeerId g) const {
+    const size_t k = shardOf(g);
+    return k < hosts.size() ? hosts[k]->stats(toLocal(g)) : atm::net2::PeerStats{};
+  }
+
   template <class M> bool sendTo(Player &pl, const M &msg, Channel channel) {
     atm::net2::encodeMessage(msgBuf, msg);
     if (msgBuf.empty()) return false;
-    return host->send(pl.peer, channel, msgBuf);
+    return netSend(pl.peer, channel, msgBuf);
+  }
+  // Calls fn(Entity &) for every live entity within `radius` blocks
+  // (horizontal) of `pos`, using the interest grid (rebuilt every tick, so
+  // entities spawned this tick are not in it yet). fn returns false to stop.
+  template <class F> void forEachNear(const glm::dvec3 &pos, double radius, F &&fn) {
+    const int32_t x0 = gridCellOf(pos.x - radius), x1 = gridCellOf(pos.x + radius);
+    const int32_t z0 = gridCellOf(pos.z - radius), z1 = gridCellOf(pos.z + radius);
+    const double r2 = radius * radius;
+    for (int32_t cz = z0; cz <= z1; ++cz) {
+      for (int32_t cx = x0; cx <= x1; ++cx) {
+        auto cit = grid.find(gridCellKey(cx, cz));
+        if (cit == grid.end()) continue;
+        for (const GridRef &g : cit->second) {
+          const double dx = double(g.x) - pos.x, dz = double(g.z) - pos.z;
+          if (dx * dx + dz * dz > r2 || g.e->remove) continue;
+          if (!fn(*g.e)) return;
+        }
+      }
+    }
   }
   // Sends to every welcomed player within `radius` blocks (horizontal) of `pos`.
   template <class M> void sendNear(const glm::dvec3 &pos, double radius, const M &msg, Channel channel) {
     atm::net2::encodeMessage(msgBuf, msg);
     if (msgBuf.empty()) return;
-    for (auto &[key, pl] : players) {
-      if (!pl.welcomed) continue;
-      const Entity *e = findEntity(pl.entity);
-      if (!e) continue;
-      const double dx = e->move.pos.x - pos.x, dz = e->move.pos.z - pos.z;
-      if (dx * dx + dz * dz <= radius * radius) host->send(pl.peer, channel, msgBuf);
-    }
+    forEachNear(pos, radius, [&](Entity &e) {
+      if (e.kind == EntityKind::Player)
+        if (Player *pl = playerOf(e); pl && pl->welcomed) netSend(pl->peer, channel, msgBuf);
+      return true;
+    });
   }
   template <class M> void sendAll(const M &msg, Channel channel) {
     atm::net2::encodeMessage(msgBuf, msg);
     if (msgBuf.empty()) return;
     for (auto &[key, pl] : players)
-      if (pl.welcomed) host->send(pl.peer, channel, msgBuf);
+      if (pl.welcomed) netSend(pl.peer, channel, msgBuf);
   }
 
   // ---- ServerGameplay.cpp ----
@@ -306,7 +510,8 @@ struct ServerState {
   // ---- ServerReplication.cpp ----
   void buildGrid();
   void sendSnapshots();
-  void buildSnapshot(Player &pl, Entity &self);
+  void buildSnapshot(Player &pl, Entity &self, SnapWorker &w); // thread-safe per player (outbox)
+  void flushOutbox(Player &pl);
   void onSnapshotAck(Player &pl, Tick ackTick);
   void syncChunks(Player &pl, bool force);
   void onBlockEdited(atm::voxel::BlockPos p, atm::voxel::BlockId id);

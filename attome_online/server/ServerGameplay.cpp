@@ -275,6 +275,7 @@ void ServerState::refreshAppearance(Player &pl) {
     pl.appearance.pieces[size_t(i)] = it < itemPiece.size() ? itemPiece[it] : atm::model::kNoPiece;
   }
   ++pl.appearanceVersion;
+  if (Entity *pe = findEntity(pl.entity)) pe->appearanceVersion = pl.appearanceVersion; // mirrored for replication
   if (pl.welcomed && pl.entity != kNoEntity) { // own client (others: replication)
     AppearanceMsg am;
     am.entity = pl.entity;
@@ -473,8 +474,9 @@ void ServerState::meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skil
   const Tick rewind = viewTick < tick ? std::min<Tick>(tick - viewTick, 9) : 0;
   const Tick seen = tick - rewind;
   candidates.clear();
-  for (auto &[id, m] : entities) {
-    if (m.kind != EntityKind::Monster || m.dead) continue;
+  // Grid query: generous margin for lag-compensated (rewound) positions and big hit shapes.
+  forEachNear(eye, kRange + 16.0, [&](Entity &m) {
+    if (m.kind != EntityKind::Monster || m.dead) return true;
     // Nearest point of the monster's hit capsule (big golems are reachable
     // at their full size, small slimes only where they are).
     const glm::dvec3 feet = historicPos(m, seen);
@@ -482,10 +484,11 @@ void ServerState::meleeAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Skil
     monsterHitDistance2(m.type, feet.x, feet.y, feet.z, eye.x, eye.y, eye.z, &axisY);
     const glm::dvec3 d = glm::dvec3(feet.x, axisY, feet.z) - eye;
     const double dist = glm::length(d);
-    if (dist > kRange + monsterHitShape(m.type).radius) continue;
-    if (dist > 0.5 && glm::dot(d / dist, aim) < kCosHalfCone) continue;
-    candidates.emplace_back(float(dist), id);
-  }
+    if (dist > kRange + monsterHitShape(m.type).radius) return true;
+    if (dist > 0.5 && glm::dot(d / dist, aim) < kCosHalfCone) return true;
+    candidates.emplace_back(float(dist), m.id);
+    return true;
+  });
   std::sort(candidates.begin(), candidates.end());
   const size_t n = std::min<size_t>(candidates.size(), 3); // cleave up to 3 targets
   for (size_t i = 0; i < n; ++i) {
@@ -541,8 +544,38 @@ void ServerState::rangedAttack(Player &pl, Entity &pe, const glm::vec3 &dir, Wea
 // ---------------------------------------------------------------------------
 
 void ServerState::simulatePlayers() {
-  for (auto &[key, pl] : players) {
-    if (!pl.welcomed) continue;
+  // Movement in parallel: each step reads the (unchanging this tick) world
+  // and writes only its own player and entity.
+  simOrder.clear();
+  for (auto &[key, pl] : players)
+    if (pl.welcomed) simOrder.push_back(&pl);
+  jobs.run(
+      simOrder.size(),
+      [&](size_t i, size_t) {
+        Player &pl = *simOrder[i];
+        Entity *e = findEntity(pl.entity);
+        if (!e || e->dead) return;
+        // Input budget: on average one input per tick (speed hacks gain
+        // nothing), with a small catch-up when inputs arrive in bursts.
+        pl.inputCredit = std::min(pl.inputCredit + 1.0f, 4.0f);
+        int steps = 0;
+        while (pl.inputCount > 0 && pl.inputCredit >= 1.0f && steps < 3) {
+          if (steps > 0 && pl.inputCount <= 2) break; // catch up only when behind
+          const MoveInput in = pl.inputs[size_t(pl.inputHead)];
+          pl.inputHead = (pl.inputHead + 1) % kInputQueue;
+          --pl.inputCount;
+          stepMovement(e->move, in, *world, blocks, kSimDt);
+          pl.lastAppliedSeq = in.seq;
+          pl.lastButtons = in.buttons;
+          pl.inputCredit -= 1.0f;
+          ++steps;
+        }
+      },
+      64);
+
+  // Deaths, respawns, regeneration (shared RNG, rare work): serial.
+  for (Player *pp : simOrder) {
+    Player &pl = *pp;
     Entity *e = findEntity(pl.entity);
     if (!e) continue;
 
@@ -565,22 +598,6 @@ void ServerState::simulatePlayers() {
         startAction(*e, action::None);
       }
       continue;
-    }
-
-    // Input budget: on average one input per tick (speed hacks gain nothing),
-    // with a small catch-up when inputs arrive in bursts.
-    pl.inputCredit = std::min(pl.inputCredit + 1.0f, 4.0f);
-    int steps = 0;
-    while (pl.inputCount > 0 && pl.inputCredit >= 1.0f && steps < 3) {
-      if (steps > 0 && pl.inputCount <= 2) break; // catch up only when behind
-      const MoveInput in = pl.inputs[size_t(pl.inputHead)];
-      pl.inputHead = (pl.inputHead + 1) % kInputQueue;
-      --pl.inputCount;
-      stepMovement(e->move, in, *world, blocks, kSimDt);
-      pl.lastAppliedSeq = in.seq;
-      pl.lastButtons = in.buttons;
-      pl.inputCredit -= 1.0f;
-      ++steps;
     }
 
     if (e->move.pos.y < -32.0) { // fell out of the world
@@ -665,16 +682,23 @@ void ServerState::simulateMonsters() {
     }
     double nearest2 = 1e30;
     bool anyPlayerNear = false;
-    for (auto &[key, pl] : players) {
-      Entity *pe = findEntity(pl.entity);
-      if (!pe) continue;
-      const double dx = pe->move.pos.x - m.move.pos.x, dz = pe->move.pos.z - m.move.pos.z;
-      const double d2 = dx * dx + dz * dz;
-      if (d2 < 100.0 * 100.0) anyPlayerNear = true;
-      if (!t && !pe->dead && d2 < double(def.aggroRange) * def.aggroRange && d2 < nearest2) {
-        nearest2 = d2;
-        m.target = pe->id;
-      }
+    if (!t) {
+      forEachNear(m.move.pos, double(def.aggroRange), [&](Entity &pe) {
+        if (pe.kind != EntityKind::Player || pe.dead) return true;
+        anyPlayerNear = true;
+        const double dx = pe.move.pos.x - m.move.pos.x, dz = pe.move.pos.z - m.move.pos.z;
+        if (const double d2 = dx * dx + dz * dz; d2 < nearest2) {
+          nearest2 = d2;
+          m.target = pe.id;
+        }
+        return true;
+      });
+    }
+    if (despawnCheck && !anyPlayerNear) { // only read on despawn checks
+      forEachNear(m.move.pos, 100.0, [&](Entity &pe) {
+        if (pe.kind == EntityKind::Player) anyPlayerNear = true;
+        return !anyPlayerNear;
+      });
     }
     if (!t) t = findEntity(m.target);
     // Spawner NPCs stay near their spawner: past the leash they give up the

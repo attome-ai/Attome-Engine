@@ -186,15 +186,10 @@ void ServerState::updateSpawners() {
     }
     if (tick % Tick(kSimHz / 2) != Tick(si % (kSimHz / 2))) continue; // spread the checks
     bool active = false;
-    for (auto &[key, pl] : players) {
-      const Entity *pe = pl.welcomed ? findEntity(pl.entity) : nullptr;
-      if (!pe) continue;
-      const double dx = pe->move.pos.x - sp.x, dz = pe->move.pos.z - sp.z;
-      if (dx * dx + dz * dz < kActiveRange * kActiveRange) {
-        active = true;
-        break;
-      }
-    }
+    forEachNear(glm::dvec3(sp.x, 0.0, sp.z), kActiveRange, [&](Entity &e) {
+      active = e.kind == EntityKind::Player;
+      return !active;
+    });
     if (!active) continue;
     for (SpawnerSlot &slot : spawnerSlots[si]) {
       if (slot.id != kNoEntity || tick < slot.readyTick) continue;

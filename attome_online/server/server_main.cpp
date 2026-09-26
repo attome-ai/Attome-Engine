@@ -1,6 +1,6 @@
 // ao_server: headless authoritative zone server.
 //
-//   ao_server [--config config/server.json] [--port 27015]
+//   ao_server [--config config/server.json] [--port 27015] [--max-players 10000]
 //
 // Runs until Ctrl+C; prints stats every 10 s.
 
@@ -29,14 +29,16 @@ void onSignal(int) { g_stop.store(true); }
 
 int main(int argc, char **argv) {
   std::string configPath = "config/server.json";
-  int portOverride = -1;
+  int portOverride = -1, maxPlayersOverride = -1;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
       configPath = argv[++i];
     } else if (std::strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
       portOverride = std::atoi(argv[++i]);
+    } else if (std::strcmp(argv[i], "--max-players") == 0 && i + 1 < argc) {
+      maxPlayersOverride = std::atoi(argv[++i]);
     } else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
-      std::printf("usage: ao_server [--config path] [--port n]\n");
+      std::printf("usage: ao_server [--config path] [--port n] [--max-players n]\n");
       return 0;
     } else {
       std::fprintf(stderr, "unknown argument: %s\n", argv[i]);
@@ -48,6 +50,7 @@ int main(int argc, char **argv) {
   ao::server::ServerConfig cfg = ao::server::ServerConfig::load(atm::resolve_path(configPath), &err);
   if (!err.empty()) std::fprintf(stderr, "[server] config: %s (using defaults)\n", err.c_str());
   if (portOverride >= 0 && portOverride <= 65535) cfg.port = uint16_t(portOverride);
+  if (maxPlayersOverride > 0 && maxPlayersOverride < 65535) cfg.maxPlayers = uint16_t(maxPlayersOverride);
 
   // Shared gameplay tunables (movement etc.): must match the client's values
   // or prediction and the server simulation diverge. The in-process --local
@@ -91,6 +94,18 @@ int main(int argc, char **argv) {
                   double(st.bytesSent - prev.bytesSent) / 1024.0 / secs,
                   double(st.bytesReceived - prev.bytesReceived) / 1024.0 / secs, st.loadedChunks,
                   st.editedChunks, (unsigned long long)st.malformedPackets);
+      // Tick profile: where the average tick went over this interval.
+      if (const uint64_t n = st.profiledTicks - prev.profiledTicks; n > 0) {
+        std::printf("[server] profile ms/tick:");
+        for (int i = 0; i < ao::server::ServerStats::kPhaseCount; ++i)
+          std::printf(" %s %.2f", ao::server::ServerStats::kPhaseNames[i],
+                      (st.phaseMsTotal[size_t(i)] - prev.phaseMsTotal[size_t(i)]) / double(n));
+        std::printf("\n");
+        std::printf("[server] profile work/tick: scanned %.0f | appearance msgs %.0f | entities sent %.0f | rel tracks %llu\n",
+                    double(st.snapScanned - prev.snapScanned) / double(n),
+                    double(st.snapAppearance - prev.snapAppearance) / double(n),
+                    double(st.snapEntities - prev.snapEntities) / double(n), (unsigned long long)st.relTracks);
+      }
       std::fflush(stdout);
       prev = st;
       lastStats = now;

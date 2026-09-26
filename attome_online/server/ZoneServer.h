@@ -5,6 +5,7 @@
 // mode. Single-threaded: start(), then tick() at kSimHz or run() on a thread
 // of its own (the voxel world's generation workers run in the background).
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
@@ -19,10 +20,19 @@ struct ServerConfig {
   int viewRadiusChunks = 8;        // client view radius: edited-chunk sync + block edits
   int simRadiusChunks = 3;         // chunks the server keeps loaded around each player
   int workerThreads = 0;           // voxel generation workers (0 = auto)
+  // Scaling (10k+ players): UDP port shards (ports port..port+netShards-1,
+  // each pumped on its own thread; clients may connect to any of them) and
+  // worker threads for the parallel tick phases (0 = auto).
+  int netShards = 1;
+  int jobThreads = 1;
   int monstersPerPlayer = 6;
   int maxMonsters = 300;
   uint32_t bandwidthBytesPerSec = 256u * 1024u; // per client
   uint32_t snapshotBudgetBytes = 1100;          // one unreliable packet
+  // Interest cap: each client tracks at most this many entities (nearest
+  // first). Keeps replication O(players * cap) instead of O(players^2) when
+  // crowds gather.
+  int maxRelevantEntities = 128;
   uint32_t timeoutMs = 10000;
   bool verbose = true;             // log joins/leaves
 
@@ -38,6 +48,18 @@ struct ServerStats {
   uint64_t bytesSent = 0, bytesReceived = 0;                // totals
   uint64_t malformedPackets = 0;
   size_t loadedChunks = 0, editedChunks = 0;
+  // Tick profiler: total ms spent per phase since start (diff two samples).
+  static constexpr int kPhaseCount = 17;
+  static constexpr const char *kPhaseNames[kPhaseCount] = {
+      "netIn", "players", "monsters", "otherSim", "spawn", "world", "perPlayer", "grid", "snapshots", "netOut",
+      // inside "snapshots":
+      "snap.scan", "snap.appearance", "snap.removed", "snap.select", "snap.send", // snap.*: wall ms (CPU / threads)
+      "netEvents", // inside netIn: handling received messages (serial)
+      "snap.track"}; // re-ranking the tracked set + updating per-entity state
+  // Work counters (totals): candidate entities scanned, appearance messages, entities sent.
+  uint64_t snapScanned = 0, snapAppearance = 0, snapEntities = 0, relTracks = 0;
+  std::array<double, kPhaseCount> phaseMsTotal{};
+  uint64_t profiledTicks = 0;
 };
 
 struct ServerState; // internal (ServerState.h)

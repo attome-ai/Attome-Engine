@@ -37,6 +37,7 @@ Useful options: `-DATTOME_RUNTIME_GRID=ON` (runtime-sized 2D grid),
 | `ao_server --port 27015` | Dedicated zone server (settings: `config/server.json`) |
 | `ao_client --host 1.2.3.4 --port 27015 --name Alice` | Join a server (`--host` turns off the in-process server) |
 | `ao_bots --host 127.0.0.1 --count 500 --behaviour wander` | Load test with headless bots (`wander`, `mine`, `fight`) |
+| `ao_server --max-players 12000` + `ao_bots --count 10000 --ramp 1000 --threads 10` | 10k-player load test: set `"netShards": 24, "jobThreads": 26` in the server config (clients are redirected across the shard ports); the server prints a per-phase tick profile every 10 s |
 | `ao_tests` | Unit tests (voxel, network, gameplay) |
 | `ao_client --validation` | Enable Vulkan validation layers |
 
@@ -107,7 +108,12 @@ that keeps each step small:
 ## Known limitations (demo)
 
 - No encryption / connect tokens yet (NETWORK_PLAN milestone N2).
-- Single network thread; batched I/O and multi-threading are milestone N1.
+- Network shards are separate UDP ports (`netShards`, ports port..port+n-1):
+  clients connect to the first port and are redirected to the least-loaded
+  shard during the handshake, so open all n ports in the firewall.
+- Sends are one `sendto` per datagram (no batched I/O yet): the largest
+  remaining cost at 10k players (inflated on loopback, where Windows does the
+  receiver's work inside `sendto`).
 - No LOD or Hi-Z occlusion culling yet (cave culling + frustum + per-direction culling are in).
 - Light is recomputed per chunk mesh job (no incremental light updates).
 - Server doesn't yet validate block-break time; no lag compensation for hits.

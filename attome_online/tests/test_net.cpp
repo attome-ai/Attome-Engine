@@ -312,6 +312,29 @@ template <class M> void checkRejects(const std::vector<uint8_t> &wire) {
   }
 }
 
+// The server packs snapshots with entityStateBits(): it must match the encoder exactly.
+ATM_TEST(net_entity_state_bits_match_encoder) {
+  std::mt19937 rng(7);
+  for (int i = 0; i < 2000; ++i) {
+    EntityState e;
+    e.id = EntityId(rng() >> (rng() % 32));
+    e.mask = uint16_t(rng() & field::All);
+    e.kind = EntityKind(rng() % 4);
+    e.type = uint8_t(rng());
+    e.item = uint16_t(rng());
+    e.pos = glm::dvec3(double(int(rng() % 200000)) - 100000.0, double(rng() % 300), -5.5);
+    e.vel = glm::vec3(1.0f, -2.0f, 3.0f);
+    e.yaw = float(rng() % 628) / 100.0f - 3.14f;
+    e.hp = uint16_t(rng() >> (rng() % 32));
+    e.maxHp = uint16_t(rng() >> (rng() % 32));
+    e.flags = uint8_t(rng());
+    std::vector<uint8_t> buf;
+    net::BitWriter w(buf);
+    encodeEntityState(w, e);
+    ATM_CHECK_EQ(entityStateBits(e), w.bitsWritten());
+  }
+}
+
 ATM_TEST(net_schema_messages) {
   std::vector<uint8_t> wire;
   {
@@ -700,6 +723,50 @@ ATM_TEST(net_host_protocol_mismatch) {
   ATM_CHECK(ce.back().reason == net::DisconnectReason::ProtocolMismatch);
   ATM_CHECK_EQ(server.peerCount(), size_t(0));
   ATM_CHECK_EQ(countType(se, net::EventType::Connected), size_t(0));
+}
+
+// Network shards: the first port redirects a new client to another port.
+ATM_TEST(net_host_redirect_to_shard) {
+  net::Host front(testConfig()), shard(testConfig());
+  std::string err;
+  ATM_REQUIRE(front.listen(0, &err));
+  ATM_REQUIRE(shard.listen(0, &err));
+  int asked = 0;
+  front.setRedirect([&](uint64_t) {
+    ++asked;
+    return shard.localPort();
+  });
+  net::HostConfig cc = testConfig();
+  cc.maxPeers = 1;
+  net::Host client(cc);
+  ATM_REQUIRE(client.connect("127.0.0.1", front.localPort(), &err));
+  std::vector<Received> fe, se, ce;
+  ATM_REQUIRE(pumpUntil({&front, &shard, &client}, {&fe, &se, &ce}, [&] {
+    return countType(ce, net::EventType::Connected) == 1 && countType(se, net::EventType::Connected) == 1;
+  }, 3000));
+  ATM_CHECK(asked >= 1);
+  ATM_CHECK_EQ(front.peerCount(), size_t(0));
+  ATM_CHECK_EQ(shard.peerCount(), size_t(1));
+  ATM_CHECK_EQ(countType(fe, net::EventType::Connected), size_t(0));
+
+  // A front that keeps redirecting (to itself via another shard's redirect)
+  // cannot bounce a client forever: it gives up after a few hops and times out.
+  net::Host loopA(testConfig()), loopB(testConfig());
+  ATM_REQUIRE(loopA.listen(0, &err));
+  ATM_REQUIRE(loopB.listen(0, &err));
+  int hops = 0;
+  loopA.setRedirect([&](uint64_t) { ++hops; return loopB.localPort(); });
+  loopB.setRedirect([&](uint64_t) { ++hops; return loopA.localPort(); });
+  net::HostConfig lc = cc;
+  lc.timeoutMs = 1000;
+  net::Host bounced(lc);
+  ATM_REQUIRE(bounced.connect("127.0.0.1", loopA.localPort(), &err));
+  std::vector<Received> ae, be, le;
+  ATM_REQUIRE(pumpUntil({&loopA, &loopB, &bounced}, {&ae, &be, &le}, [&] {
+    return countType(le, net::EventType::Disconnected) == 1;
+  }, 3000));
+  ATM_CHECK_EQ(countType(le, net::EventType::Connected), size_t(0));
+  ATM_CHECK(le.back().reason == net::DisconnectReason::Timeout);
 }
 
 ATM_TEST(net_host_malformed_datagrams) {
