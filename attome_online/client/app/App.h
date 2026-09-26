@@ -208,6 +208,7 @@ private:
 
   // Camera
   float camYaw_ = 0.0f, camPitch_ = -0.25f, camDistance_ = 6.0f;
+  float camDistSmooth_ = 0.0f; // camera distance after wall avoidance (smoothed)
   glm::dvec3 camPos_{0.0};
   atm::render::Camera camera_;
   float aspect_ = 16.0f / 9.0f;

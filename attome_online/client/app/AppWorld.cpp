@@ -90,22 +90,47 @@ void App::updateCamera(float dt) {
   const glm::vec3 right{std::cos(camYaw_), 0.0f, -std::sin(camYaw_)};
 
   // Over-the-shoulder offset, then pull in when blocks are in the way.
-  const glm::dvec3 shoulder = target + glm::dvec3(right) * 0.95; // over the shoulder: crosshair clears the character
-  float dist = camDistance_;
+  // Exact ray casts against solid blocks (including the invisible collision
+  // of buildings), a small bundle of rays so grazing a block corner doesn't
+  // flicker, and a smoothed distance: pull in fast, ease back out slowly.
+  // (Snapping each frame made the view shake beside walls.)
+  auto solidHit = [&](const glm::dvec3 &from, const glm::dvec3 &dir, double maxDist) {
+    if (!world_) return maxDist;
+    int x = int(std::floor(from.x)), y = int(std::floor(from.y)), z = int(std::floor(from.z));
+    const int sx = dir.x > 0 ? 1 : -1, sy = dir.y > 0 ? 1 : -1, sz = dir.z > 0 ? 1 : -1;
+    auto inv = [](double v) { return std::fabs(v) < 1e-9 ? 1e30 : std::fabs(1.0 / v); };
+    const double dx = inv(dir.x), dy = inv(dir.y), dz = inv(dir.z);
+    double tx = (sx > 0 ? std::floor(from.x) + 1.0 - from.x : from.x - std::floor(from.x)) * dx;
+    double ty = (sy > 0 ? std::floor(from.y) + 1.0 - from.y : from.y - std::floor(from.y)) * dy;
+    double tz = (sz > 0 ? std::floor(from.z) + 1.0 - from.z : from.z - std::floor(from.z)) * dz;
+    double t = 0.0;
+    if (blocks_.solid(world_->blockAt({x, y, z}))) return 0.0;
+    while (t < maxDist) {
+      if (tx <= ty && tx <= tz) t = tx, tx += dx, x += sx;
+      else if (ty <= tz) t = ty, ty += dy, y += sy;
+      else t = tz, tz += dz, z += sz;
+      if (t >= maxDist) break;
+      if (blocks_.solid(world_->blockAt({x, y, z}))) return t;
+    }
+    return maxDist;
+  };
+  // Shoulder offset: shortened if a wall is right beside us.
+  const double shoulderLen = std::max(0.0, std::min(0.95, solidHit(target, glm::dvec3(right), 0.95) - 0.3));
+  const glm::dvec3 shoulder = target + glm::dvec3(right) * shoulderLen;
+  double want = camDistance_;
   if (world_) {
     const glm::dvec3 back = -glm::dvec3(fwd);
-    const float step = 0.2f;
-    for (float t = 0.3f; t <= camDistance_; t += step) {
-      const glm::dvec3 q = shoulder + back * double(t);
-      const atm::voxel::BlockPos bp{int32_t(std::floor(q.x)), int32_t(std::floor(q.y)),
-                                    int32_t(std::floor(q.z))};
-      if (blocks_.solid(world_->blockAt(bp))) {
-        dist = std::max(0.3f, t - 0.35f);
-        break;
-      }
-    }
+    const glm::dvec3 up = glm::normalize(glm::cross(glm::dvec3(right), back));
+    constexpr double kR = 0.2; // camera "radius": probe the centre and four offsets
+    const glm::dvec3 offs[5] = {glm::dvec3(0.0), glm::dvec3(right) * kR, -glm::dvec3(right) * kR, up * kR, -up * kR};
+    for (const glm::dvec3 &o : offs) want = std::min(want, solidHit(shoulder + o, back, camDistance_) - 0.25);
+    want = std::max(0.3, want);
   }
-  camPos_ = shoulder - glm::dvec3(fwd) * double(dist);
+  if (camDistSmooth_ <= 0.0f) camDistSmooth_ = float(want);
+  const float rate = float(want) < camDistSmooth_ ? 18.0f : 3.0f; // in fast, out slow
+  camDistSmooth_ += (float(want) - camDistSmooth_) * std::min(1.0f, dt * rate);
+  camDistSmooth_ = std::min(camDistSmooth_, float(want) + 0.8f); // never deep inside a wall
+  camPos_ = shoulder - glm::dvec3(fwd) * double(camDistSmooth_);
 
   // Impact shake (hits dealt / taken): decaying, smooth pseudo-random jitter.
   if (shake_ > 0.0f) {
