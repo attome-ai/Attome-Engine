@@ -119,7 +119,7 @@ ATM_TEST(gameplay_combat_level) {
 // ---------------------------------------------------------------------------
 
 ATM_TEST(gameplay_items_and_monsters) {
-  ATM_CHECK_EQ(itemCount(), items::Count);
+  ATM_CHECK(itemCount() > items::GliderWings); // every well-known id is in the table
   ATM_CHECK_EQ(findItem("iron_sword"), items::IronSword);
   ATM_CHECK_EQ(findItem("nope"), ItemId(0));
   for (ItemId i = 1; i < itemCount(); ++i) {
@@ -132,7 +132,7 @@ ATM_TEST(gameplay_items_and_monsters) {
   ATM_CHECK_EQ(blockDropItem(atm::voxel::blocks::IronOre), items::IronOre);
   ATM_CHECK_EQ(blockDropItem(atm::voxel::blocks::Bedrock), ItemId(0));
   ATM_CHECK(itemDef(items::CookedMeat).healAmount > 0);
-  ATM_CHECK_EQ(monsterTypeCount(), monsters::Count);
+  ATM_CHECK(monsterTypeCount() > monsters::Golem);
   for (uint8_t m = 0; m < monsterTypeCount(); ++m) {
     const MonsterDef &d = monsterDef(m);
     ATM_CHECK(d.maxHp > 0 && d.speed > 0.0f && d.model != nullptr);

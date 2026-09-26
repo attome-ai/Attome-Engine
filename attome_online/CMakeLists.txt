@@ -39,7 +39,11 @@ if(ATTOME_BUILD_TESTS)
     ${CMAKE_SOURCE_DIR}/engine/tests/test_main.cpp)
   target_include_directories(ao_tests PRIVATE ${CMAKE_SOURCE_DIR}/engine/tests)
   target_link_libraries(ao_tests PRIVATE ao_serverlib)
-  add_test(NAME ao_tests COMMAND ao_tests)
+  # Tests load the same content files as the game.
+  add_custom_command(TARGET ao_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      "${CMAKE_CURRENT_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:ao_tests>/data")
+  add_test(NAME ao_tests COMMAND ao_tests WORKING_DIRECTORY $<TARGET_FILE_DIR:ao_tests>)
 endif()
 
 foreach(t ao_shared ao_serverlib ao_server ao_client ao_bots)

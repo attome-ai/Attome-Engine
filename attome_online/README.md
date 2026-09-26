@@ -76,6 +76,23 @@ attome_online/bots     headless load-test clients
 attome_online/tests    unit tests
 ```
 
+## Tests (standalone)
+
+The checks are separate programs, `atm_tests.exe` (engine) and
+`ao_tests.exe` (game rules, content data, voxel world, networking). No test
+code is compiled into the client, server or bots, so the tests never affect
+the game or its performance, and they can run while the game is open.
+
+```powershell
+.\run_tests.ps1            # from the repo root: build + run everything (exit 0 = pass)
+.\run_tests.ps1 -NoBuild   # re-run the last build
+```
+
+`attome_online/tests/test_data.cpp` loads the shipped `data/*.json` and
+checks items, NPCs, drop tables, map regions and hit shapes, so a bad edit to
+the content files is caught here before it reaches the game. Add a test with
+`ATM_TEST(name) { ATM_CHECK(...); }` in any `tests/*.cpp`.
+
 ## First build
 
 Because the code was written without compiling, the first build will likely
