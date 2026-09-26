@@ -123,7 +123,7 @@ void Renderer::Impl::buildFrameUniforms(FrameData &f) {
   // Sun shadow map: orthographic, centred a little ahead of the camera, its
   // texel grid snapped in world space so shadows do not shimmer when moving.
   // Maps camera-relative positions (like every other matrix here).
-  const double shadowTexel = 2.0 * double(kShadowRadius) / double(kShadowMapSize);
+  const double shadowTexel = 2.0 * double(kShadowRadius) / double(shadowSize);
   {
     const glm::dvec3 L(sun);
     const glm::dvec3 up = std::abs(L.y) > 0.99 ? glm::dvec3(0.0, 0.0, 1.0) : glm::dvec3(0.0, 1.0, 0.0);
@@ -157,7 +157,7 @@ void Renderer::Impl::buildFrameUniforms(FrameData &f) {
   u.fogColor = glm::vec4(srgbToLinear(env.fogColor) * dayTint, fogStart);
   u.fogParams = glm::vec4(fogEnd, 1.0f / (fogEnd - fogStart), sunI, env.underwater ? 1.0f : 0.0f);
   u.sunColor = glm::vec4(sunColor, 0.0f);
-  u.counts = glm::uvec4(visibleCount, kMaxDraws, 0u, 0u);
+  u.counts = glm::uvec4(visibleCount, kMaxDraws, shadowSize, 0u); // z: shadow map resolution in use
   u.lightViewProj = lightViewProj;
   u.shadowParams = glm::vec4(float(shadowTexel), 1.0f, 2.0f * kShadowDepthRange, env.contactShadows ? 1.0f : 0.0f);
   u.style0 = glm::vec4(env.sunStrength, env.hazeStrength, env.hazeDensity, env.shadowSoftness);
@@ -266,9 +266,17 @@ void Renderer::Impl::buildShadowList(FrameData &f) {
 uint32_t Renderer::Impl::writeModelInstances(FrameData &f) {
   modelDraws.clear();
   if (instances.empty()) return 0;
-  std::sort(instances.begin(), instances.end(), [](const PendingInstance &a, const PendingInstance &b) {
-    return a.mesh != b.mesh ? a.mesh < b.mesh : a.order < b.order;
-  });
+  // Group by mesh (one instanced draw per mesh), keeping submission order
+  // within a mesh: a stable counting sort, O(instances + meshes).
+  {
+    const size_t M = models.size();
+    meshCounts.assign(M + 1, 0u);
+    for (const PendingInstance &pi : instances) ++meshCounts[size_t(pi.mesh) + 1];
+    for (size_t i = 1; i <= M; ++i) meshCounts[i] += meshCounts[i - 1];
+    instanceScratch.resize(instances.size());
+    for (const PendingInstance &pi : instances) instanceScratch[meshCounts[size_t(pi.mesh)]++] = pi;
+    instances.swap(instanceScratch);
+  }
   auto *dst = static_cast<gpu::ModelInstanceGpu *>(f.instances.mapped);
   uint32_t n = 0;
   ModelMeshId lastMesh = kInvalidModelMesh;
@@ -358,8 +366,10 @@ void Renderer::Impl::recordShadowPass(FrameData &f, uint32_t instanceCount) {
   ri.pDepthAttachment = &da;
   vkCmdBeginRendering(cmd, &ri);
 
-  const VkViewport vp{0.0f, 0.0f, float(kShadowMapSize), float(kShadowMapSize), 0.0f, 1.0f};
-  const VkRect2D sc{{0, 0}, {kShadowMapSize, kShadowMapSize}};
+  // Quality setting: draw into the top-left shadowSize^2 of the map (the
+  // whole map is still cleared, so filter taps past the edge read "lit").
+  const VkViewport vp{0.0f, 0.0f, float(shadowSize), float(shadowSize), 0.0f, 1.0f};
+  const VkRect2D sc{{0, 0}, {shadowSize, shadowSize}};
   vkCmdSetViewport(cmd, 0, 1, &vp);
   vkCmdSetScissor(cmd, 0, 1, &sc);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, scenePipelineLayout, 0, 1,

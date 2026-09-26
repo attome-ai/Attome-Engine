@@ -7,6 +7,7 @@
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include <imgui_internal.h> // ImTextureDataQueueUpload, RegisterUserTexture
 
 #include <algorithm>
 #include <cmath>
@@ -62,20 +63,42 @@ void App::drawMinimap() {
   dl->AddCircleFilled(c, R + 4 * sc, IM_COL32(20, 24, 34, 230), 64);
   dl->AddCircleFilled(c, R, IM_COL32(28, 40, 58, 255), 64);
 
-  // Terrain cells (rotated squares), clipped to the circle.
+  // Terrain: one texture, 1 pixel per block around the player, rebuilt when
+  // we step onto another block or a few times a second (explored terrain
+  // fills in), drawn as a single rotated quad. Was ~2800 quads + map lookups
+  // every frame.
+  (void)kCell;
+  constexpr int kTex = 128, kHalf = kTex / 2;
   const int32_t px = int32_t(std::floor(me.x)), pz = int32_t(std::floor(me.z));
-  const int32_t bx = px - px % kCell, bz = pz - pz % kCell;
-  for (int32_t z = bz - kRange - kCell; z <= bz + kRange + kCell; z += kCell)
-    for (int32_t x = bx - kRange - kCell; x <= bx + kRange + kCell; x += kCell) {
-      const double ddx = x + kCell * 0.5 - me.x, ddz = z + kCell * 0.5 - me.z;
-      if (ddx * ddx + ddz * ddz > double(kRange - 1) * (kRange - 1))
-        continue;
-      const uint32_t col = mapCache_.colorAt(x, z);
-      if ((col >> 24) == 0)
-        continue;
-      dl->AddQuadFilled(toScreen(x, z), toScreen(x + kCell, z), toScreen(x + kCell, z + kCell),
-                        toScreen(x, z + kCell), toIm(col));
-    }
+  if (!miniTex_) {
+    miniTex_ = IM_NEW(ImTextureData)();
+    miniTex_->Create(ImTextureFormat_RGBA32, kTex, kTex);
+    miniTex_->UseColors = true;
+    ImGui::RegisterUserTexture(miniTex_);
+  }
+  miniAge_ += ImGui::GetIO().DeltaTime;
+  if (px != miniX_ || pz != miniZ_ || miniAge_ > 0.25f) {
+    miniX_ = px, miniZ_ = pz, miniAge_ = 0.0f;
+    uint32_t *pix = reinterpret_cast<uint32_t *>(miniTex_->Pixels);
+    const double r2 = double(kRange - 1) * (kRange - 1);
+    for (int j = 0; j < kTex; ++j)
+      for (int i = 0; i < kTex; ++i) {
+        const int32_t x = px - kHalf + i, z = pz - kHalf + j;
+        const double ddx = x + 0.5 - (px + 0.5), ddz = z + 0.5 - (pz + 0.5);
+        uint32_t col = 0;
+        if (ddx * ddx + ddz * ddz <= r2) {
+          col = mapCache_.colorAt(x, z);
+          if ((col >> 24) != 0) col |= 0xFF000000u;
+        }
+        pix[j * kTex + i] = col;
+      }
+    ImTextureDataQueueUpload(miniTex_, 0, 0, kTex, kTex);
+  }
+  {
+    const double x0 = px - kHalf, z0 = pz - kHalf, x1 = x0 + kTex, z1 = z0 + kTex;
+    dl->AddImageQuad(miniTex_->GetTexRef(), toScreen(x0, z0), toScreen(x1, z0), toScreen(x1, z1), toScreen(x0, z1),
+                     ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1));
+  }
 
   // Markers: loot (rarity), monsters (red), players (blue).
   const float renderTick = serverTickEstimate_ - 3.0f;

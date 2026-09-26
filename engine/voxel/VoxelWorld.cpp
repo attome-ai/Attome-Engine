@@ -487,6 +487,15 @@ VoxelWorld::~VoxelWorld() = default;
 
 void VoxelWorld::clearFoci() { impl_->foci.clear(); }
 
+void VoxelWorld::setViewRadius(int chunks) {
+  chunks = std::clamp(chunks, 1, 32);
+  if (chunks == impl_->cfg.viewRadiusChunks) return;
+  impl_->cfg.viewRadiusChunks = chunks;
+  impl_->lastFoci.clear(); // force a rescan
+}
+
+int VoxelWorld::viewRadius() const { return impl_->cfg.viewRadiusChunks; }
+
 void VoxelWorld::addFocus(double x, double y, double z) {
   const auto cc = [](double v) {
     const double f = std::floor(v / double(kChunkSize));

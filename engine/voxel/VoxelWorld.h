@@ -57,6 +57,10 @@ public:
   // (client) meshed; chunks beyond radius + margin are unloaded. Multiple
   // foci (server: one per player) are supported by calling addFocus each
   // update before update().
+  // Changes the streaming radius at runtime (graphics settings): loads or
+  // unloads chunks on the next update().
+  void setViewRadius(int chunks);
+  int viewRadius() const;
   void clearFoci();
   void addFocus(double x, double y, double z);
 

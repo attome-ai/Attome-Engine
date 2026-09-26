@@ -18,6 +18,8 @@ struct LookSettings {
   float decorDensity = 1.0f;    // grass tufts / flowers / pebbles multiplier
   float fov = 70.0f;            // vertical field of view (degrees)
   bool vsync = true;            // cap at the display refresh (off = uncapped FPS)
+  int shadowQuality = 0;        // 0 high (4096), 1 medium (2048), 2 low (1024)
+  int viewDistance = 8;         // chunks (32 blocks each) streamed and drawn around the player
 
   LookSettings(); // the shipped look
 

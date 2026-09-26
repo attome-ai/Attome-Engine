@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // The game client: window, renderer, audio, input, world streaming,
 // networking, prediction, entities, HUD.
@@ -33,6 +33,8 @@ struct SDL_Window;
 namespace ao::server {
 class ZoneServer;
 }
+
+struct ImTextureData;
 
 namespace ao::client {
 
@@ -248,6 +250,9 @@ private:
   void buildWorldProps();
   void drawWorldProps();
   MapCache mapCache_;                    // explored terrain colours (minimap, world map)
+  ImTextureData *miniTex_ = nullptr;     // minimap: 1 px per block, refreshed a few times a second
+  int32_t miniX_ = 1 << 30, miniZ_ = 0;  // block the minimap texture is centred on
+  float miniAge_ = 0.0f;
   bool showWorldMap_ = false;
   bool showProfiler_ = false;             // F7: frame profiler panel
   float worldMapZoom_ = 1.5f;            // pixels per block

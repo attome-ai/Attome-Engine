@@ -167,6 +167,7 @@ struct Renderer::Impl {
   VkSampler linearSampler = VK_NULL_HANDLE;
   VkSampler shadowSampler = VK_NULL_HANDLE;   // depth compare, white border
   vk::Image shadowMap;                         // D32, kShadowMapSize^2
+  uint32_t shadowSize = kShadowMapSize;        // part of the map in use (quality setting)
 
   // --- persistent GPU buffers ---------------------------------------------------
   vk::Buffer indexBuffer;       // shared quad indices
@@ -198,6 +199,8 @@ struct Renderer::Impl {
   std::vector<uint32_t> visibleSlots;
   std::vector<std::pair<float, uint32_t>> translucentOrder;
   std::vector<PendingInstance> instances;
+  std::vector<PendingInstance> instanceScratch; // counting sort by mesh (no per-frame std::sort)
+  std::vector<uint32_t> meshCounts;
   std::vector<ModelDraw> modelDraws;
   std::vector<VkBufferCopy> arenaCopies, modelCopies, metaCopies, materialCopies;
   bool highlightValid = false;

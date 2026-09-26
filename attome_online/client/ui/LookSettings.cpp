@@ -1,5 +1,6 @@
 #include "LookSettings.h"
 
+#include <algorithm>
 #include "../../../engine/ATMJson.h"
 
 namespace ao::client {
@@ -68,6 +69,10 @@ bool LookSettings::load(const std::string &path, std::string *error) {
   for (const Field &f : fields())
     if (const atm::Json *v = root.find(f.key))
       *f.value = float(v->asNumber(*f.value));
+  if (const atm::Json *v = root.find("shadowQuality"))
+    shadowQuality = std::clamp(int(v->asNumber(shadowQuality)), 0, 2);
+  if (const atm::Json *v = root.find("viewDistance"))
+    viewDistance = std::clamp(int(v->asNumber(viewDistance)), 3, 16);
   if (const atm::Json *v = root.find("vsync"))
     vsync = v->asBool(vsync);
   if (const atm::Json *v = root.find("contactShadows"))
@@ -84,6 +89,8 @@ bool LookSettings::save(const std::string &path) const {
     root[f.key] = *f.value;
   root["contactShadows"] = env.contactShadows;
   root["vsync"] = vsync;
+  root["shadowQuality"] = shadowQuality;
+  root["viewDistance"] = viewDistance;
   colorToJson(root, "skyColor", env.skyColor);
   colorToJson(root, "fogColor", env.fogColor);
   return atm::write_text_file(path, root.dump(2));

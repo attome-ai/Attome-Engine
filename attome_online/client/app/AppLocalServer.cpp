@@ -18,7 +18,7 @@ void App::startLocalServer() {
   if (!err.empty())
     SDL_Log("[client] local server config: %s (using defaults)", err.c_str());
   sc.port = 0;                                  // any free port
-  sc.viewRadiusChunks = cfg_.viewRadiusChunks;  // sync edits across the whole view
+  sc.viewRadiusChunks = std::max(cfg_.viewRadiusChunks, 16); // sync edits across any view distance (F10)
   sc.verbose = false;
 
   localServer_ = std::make_unique<server::ZoneServer>();

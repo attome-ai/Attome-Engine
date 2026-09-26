@@ -57,6 +57,16 @@ void App::drawLookPanel() {
   ImGui::Checkbox("VSync (cap FPS at the monitor refresh)", &look_.vsync);
   if (ImGui::IsItemHovered())
     ImGui::SetTooltip("On: smooth, no tearing, less heat. Off: uncapped FPS (use F7 to profile).");
+  // Performance: shadow resolution and view distance (applied immediately).
+  ImGui::PushItemWidth(170 * sc);
+  static const char *kShadowQ[] = {"High (4096)", "Medium (2048)", "Low (1024)"};
+  ImGui::Combo("Shadow quality", &look_.shadowQuality, kShadowQ, 3);
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Sun shadow map resolution. Lower = faster GPU, softer / blurrier shadow edges.");
+  ImGui::SliderInt("View distance (chunks)", &look_.viewDistance, 3, 16);
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("How far terrain is loaded and drawn (1 chunk = 32 blocks). Lower = faster, fog comes closer.");
+  ImGui::PopItemWidth();
 
   ImGui::BeginChild("##look", ImVec2(0, 0));
   ImGui::PushItemWidth(-150 * sc);

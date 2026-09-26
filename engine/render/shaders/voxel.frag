@@ -43,7 +43,10 @@ float sunShadow(vec3 p, vec3 n, float ndl) {
   float texel = frame.shadowParams.x;
   float depthRange = frame.shadowParams.z;            // blocks per unit of shadow depth
   vec4 ls = frame.lightViewProj * vec4(p + n * (texel * 2.0), 1.0);
-  vec2 uv = ls.xy * 0.5 + 0.5;
+  // Only the top-left counts.z^2 of the map is used at lower quality settings.
+  float mapSize = float(textureSize(shadowMap, 0).x);
+  float uvScale = frame.counts.z > 0u ? float(frame.counts.z) / mapSize : 1.0;
+  vec2 uv = (ls.xy * 0.5 + 0.5) * uvScale;
   float edge = max(abs(ls.x), abs(ls.y));
   if (edge >= 1.0 || ls.z >= 1.0) return 1.0;
   vec2 ts = vec2(1.0 / float(textureSize(shadowMap, 0).x));

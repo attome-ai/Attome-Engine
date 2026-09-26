@@ -889,4 +889,10 @@ void Renderer::setVsync(bool on) {
 
 bool Renderer::vsync() const { return impl_->config.vsync; }
 
+void Renderer::setShadowResolution(uint32_t size) {
+  impl_->shadowSize = std::clamp<uint32_t>(size, 512u, kShadowMapSize);
+}
+
+void Renderer::setViewDistance(float blocks) { impl_->config.viewDistanceBlocks = std::max(32.0f, blocks); }
+
 } // namespace atm::render

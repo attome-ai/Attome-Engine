@@ -168,6 +168,10 @@ public:
   const FrameStats &stats() const;
   // VSync on (FIFO, capped at the display refresh) / off (mailbox or
   // immediate, uncapped). Takes effect on the next frame (swapchain rebuild).
+  // Shadow map resolution in use: 4096 (high), 2048 (medium), 1024 (low).
+  void setShadowResolution(uint32_t size);
+  // Fog end / far culling distance in blocks (match the world view radius).
+  void setViewDistance(float blocks);
   void setVsync(bool on);
   bool vsync() const;
 

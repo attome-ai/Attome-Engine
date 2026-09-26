@@ -14,6 +14,9 @@ void App::render(float alpha, float dt) {
   // Look settings from the graphics panel (F10); sun from azimuth/elevation.
   cfg_.render.fovYDegrees = look_.fov;
   renderer_.setVsync(look_.vsync);
+  renderer_.setShadowResolution(look_.shadowQuality == 0 ? 4096u : look_.shadowQuality == 1 ? 2048u : 1024u);
+  renderer_.setViewDistance(float(look_.viewDistance * atm::voxel::kChunkSize));
+  if (world_) world_->setViewRadius(look_.viewDistance);
   decor_.setDensity(look_.decorDensity);
   atm::render::Environment env = look_.env;
   {
