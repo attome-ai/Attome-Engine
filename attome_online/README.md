@@ -35,7 +35,7 @@ Useful options: `-DATTOME_RUNTIME_GRID=ON` (runtime-sized 2D grid),
 |---|---|
 | `ao_client --local` | Single player: starts a server inside the client (default in `config/client.json`) |
 | `ao_server --port 27015` | Dedicated zone server (settings: `config/server.json`) |
-| `ao_client --host 1.2.3.4 --port 27015 --name Alice` | Join a server |
+| `ao_client --host 1.2.3.4 --port 27015 --name Alice` | Join a server (`--host` turns off the in-process server) |
 | `ao_bots --host 127.0.0.1 --count 500 --behaviour wander` | Load test with headless bots (`wander`, `mine`, `fight`) |
 | `ao_tests` | Unit tests (voxel, network, gameplay) |
 | `ao_client --validation` | Enable Vulkan validation layers |

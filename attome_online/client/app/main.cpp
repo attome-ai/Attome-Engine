@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     const char *a = argv[i];
     auto next = [&]() -> const char * { return i + 1 < argc ? argv[++i] : ""; };
     if (std::strcmp(a, "--local") == 0) cfg.local = true;
-    else if (std::strcmp(a, "--host") == 0) cfg.host = next();
+    else if (std::strcmp(a, "--host") == 0) cfg.host = next(), cfg.local = false; // join that server
     else if (std::strcmp(a, "--port") == 0) cfg.port = uint16_t(std::atoi(next()));
     else if (std::strcmp(a, "--name") == 0) cfg.name = next();
     else if (std::strcmp(a, "--validation") == 0) cfg.render.validation = true;
