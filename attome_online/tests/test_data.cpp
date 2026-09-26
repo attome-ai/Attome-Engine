@@ -12,6 +12,7 @@
 #include "../../engine/voxel/BlockRegistry.h"
 #include "../../engine/model/Character.h"
 #include "../../engine/model/VoxelCodec.h"
+#include "../../engine/model/IconRender.h"
 
 #include <algorithm>
 #include <cmath>
@@ -277,4 +278,34 @@ ATM_TEST(voxel_codec_rejects_bad_data) {
   auto badMagic = bytes;
   badMagic[0] = 'X';
   ATM_CHECK(!atm::model::decodeVoxels(badMagic, out));
+}
+
+ATM_TEST(item_icons_render_from_models) {
+  ATM_REQUIRE(g_dataLoaded);
+  atm::model::ModelLibrary lib;
+  lib.buildDefaults();
+  // Every equipment / prop / material item with a model gets a visible icon.
+  int rendered = 0;
+  for (ItemId i = 1; i < itemCount(); ++i) {
+    const ItemDef &d = itemDef(i);
+    int part = -1;
+    if (d.kind == ItemKind::Prop && d.prop) part = lib.findPart(d.prop);
+    if (part < 0) part = lib.findPart("item_" + std::string(d.name));
+    if (part < 0 && d.piece) {
+      const auto &pc = lib.piece(lib.findPiece(d.piece));
+      part = pc.socketPart;
+      for (int16_t p : pc.boneParts)
+        if (part < 0 && p >= 0) part = p;
+    }
+    if (part < 0) continue;
+    std::vector<uint32_t> px;
+    atm::model::renderVoxelIcon(lib.parts()[size_t(part)], 64, px);
+    size_t opaque = 0;
+    for (uint32_t c : px) opaque += (c >> 24) > 128 ? 1 : 0;
+    if (opaque < 200) std::printf("    icon '%s' (part %s) nearly empty: %zu px\n", std::string(d.name).c_str(),
+                                  lib.parts()[size_t(part)].name.c_str(), opaque);
+    ATM_CHECK(opaque >= 200);
+    ++rendered;
+  }
+  ATM_CHECK(rendered >= 40);
 }

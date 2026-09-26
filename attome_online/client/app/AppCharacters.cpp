@@ -4,11 +4,13 @@
 // bone (or socket) transform.
 
 #include "app/App.h"
+#include "ui/ItemIcons.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
+#include <string>
 
 namespace ao::client {
 
@@ -282,9 +284,9 @@ void App::drawItemEntity(uint16_t item, const glm::dvec3 &pos, float spin) {
     renderer_.drawModel(inst);
     return;
   }
-  // Decorations: the prop model itself, full size (it's already small).
-  if (d.kind == ItemKind::Prop && d.prop) {
-    const int part = models_.findPart(d.prop);
+  // Props and item models ("item_<name>": ores, food, logs...), full size.
+  if (d.kind == ItemKind::Prop || models_.findPart("item_" + std::string(d.name)) >= 0) {
+    const int part = ui::itemModelPart(models_, item);
     if (part >= 0 && size_t(part) < partMeshes_.size() && partMeshes_[size_t(part)] != atm::render::kInvalidModelMesh) {
       const auto &vp = models_.parts()[size_t(part)];
       inst.mesh = partMeshes_[size_t(part)];

@@ -166,18 +166,23 @@ struct ColumnInfo {
 
 ColumnInfo columnInfo(const Seeds &s, int32_t x, int32_t z) {
   const double fx = double(x), fz = double(z);
+  // Mostly flat, gently rolling land (MMO-style open fields): broad low
+  // undulation, soft wide hills, a little surface detail. Mountains only far
+  // from the spawn (the highlands), fading in from ~300 blocks out.
   const double cont = fbm2(s.cont, fx / 900.0, fz / 900.0, 3);
-  const double hills = fbm2(s.hills, fx / 160.0, fz / 160.0, 4);
-  const double detail = fbm2(s.detail, fx / 40.0, fz / 40.0, 2);
-  const double mmask = smoothstep(0.15, 0.45, fbm2(s.mountMask, fx / 700.0, fz / 700.0, 2));
+  const double hills = fbm2(s.hills, fx / 240.0, fz / 240.0, 3);
+  const double detail = fbm2(s.detail, fx / 60.0, fz / 60.0, 2);
+  const double dist = std::sqrt(fx * fx + fz * fz);
+  const double far = smoothstep(300.0, 520.0, dist);
+  const double mmask = far * smoothstep(0.15, 0.45, fbm2(s.mountMask, fx / 700.0, fz / 700.0, 2));
   double ridge = 0.0;
   if (mmask > 0.0) {
     ridge = 1.0 - std::fabs(fbm2(s.ridge, fx / 260.0, fz / 260.0, 4));
     ridge *= ridge;
   }
   const double plains = smoothstep(-0.1, 0.3, fbm2(s.plains, fx / 500.0, fz / 500.0, 2));
-  const double hh = 67.0 + cont * 30.0 + hills * 18.0 * (1.0 - 0.8 * plains) + detail * 2.5 +
-                    mmask * ridge * 90.0;
+  const double hh = 70.0 + cont * 11.0 + hills * 6.0 * (1.0 - 0.7 * plains) + detail * 1.2 +
+                    mmask * ridge * 48.0;
   ColumnInfo c;
   c.h = std::clamp(int(std::floor(hh)), kMinHeight, kMaxHeight);
   const int snowLine = 126 + int(hash2i(s.snow, x, z) & 3u);

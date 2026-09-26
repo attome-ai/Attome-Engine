@@ -1,6 +1,7 @@
 // App: client config, startup / shutdown, content upload, main loop.
 
 #include "app/AppInternal.h"
+#include "ui/ItemIcons.h"
 
 namespace ao::client {
 
@@ -105,6 +106,7 @@ bool App::init(const ClientConfig &cfg, std::string *error) {
   models_.buildDefaults();
   uploadMaterials();
   createModelMeshes();
+  ui::itemIcons().build(models_, blocks_); // inventory icons from the 3D models
 
   // Tunables (movement etc.) + live reload.
   std::string tunErr;

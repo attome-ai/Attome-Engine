@@ -244,4 +244,117 @@ void buildProps(ModelLibrary &lib) {
   }
 }
 
+// Models for items that aren't equipment or props (ores, food, materials):
+// parts "item_<name>". Used for inventory icons and dropped items.
+void buildItemModels(ModelLibrary &lib) {
+  auto item = [](const char *name, int sx, int sy, int sz) {
+    return Painter(std::string("item_") + name, sx, sy, sz, {sx * 0.5f, 0.0f, sz * 0.5f});
+  };
+  auto ore = [&](const char *name, uint32_t fleck, uint32_t fleckL, bool glowFleck) {
+    Painter p = item(name, 10, 8, 9);
+    const int rock = p.c(rgba(128, 130, 140)), rockD = p.c(rgba(96, 98, 108)), rockL = p.c(rgba(160, 162, 172));
+    const int f = glowFleck ? p.g(fleck) : p.c(fleck), fl = glowFleck ? p.g(fleckL) : p.c(fleckL);
+    for (int y = 0; y < 8; ++y)
+      for (int z = 0; z < 9; ++z)
+        for (int x = 0; x < 10; ++x) {
+          const float dx = x + 0.5f - 5.0f, dy = (y + 0.5f - 3.6f) * 1.2f, dz = z + 0.5f - 4.5f;
+          if (dx * dx + dy * dy + dz * dz <= 4.6f * 4.6f) p.set(x, y, z, rock);
+        }
+    p.speckle(0, 0, 0, 10, 8, 9, rockD, 0.3f, 3u);
+    p.speckle(0, 4, 0, 10, 8, 9, rockL, 0.2f, 5u);
+    p.speckle(0, 0, 0, 10, 8, 9, f, 0.22f, 7u);
+    p.speckle(0, 3, 0, 10, 8, 9, fl, 0.08f, 9u);
+    add(lib, p);
+  };
+  ore("copper_ore", rgba(222, 124, 64), rgba(255, 176, 110), false);
+  ore("iron_ore", rgba(196, 150, 128), rgba(236, 206, 186), false);
+  ore("gold_ore", rgba(252, 204, 60), rgba(255, 240, 150), false);
+  { // Crystal shard: faceted glowing prism.
+    Painter p = item("crystal_shard", 7, 14, 7);
+    const int c = p.g(rgba(150, 110, 255)), cl = p.g(rgba(220, 200, 255));
+    for (int y = 0; y < 14; ++y) {
+      const float r = y < 4 ? 1.5f + y * 0.6f : 3.6f * (1.0f - float(y - 4) / 10.0f) + 0.4f;
+      for (int z = 0; z < 7; ++z)
+        for (int x = 0; x < 7; ++x)
+          if (std::abs(x + 0.5f - 3.5f) + std::abs(z + 0.5f - 3.5f) <= r) p.set(x, y, z, (x + y) % 4 == 0 ? cl : c);
+    }
+    add(lib, p);
+  }
+  auto meat = [&](const char *name, uint32_t flesh, uint32_t fleshD, uint32_t fat) {
+    Painter p = item(name, 12, 6, 9);
+    const int m = p.c(flesh), md = p.c(fleshD), f = p.c(fat), bone = p.c(rgba(240, 232, 214));
+    for (int y = 0; y < 6; ++y)
+      for (int z = 0; z < 9; ++z)
+        for (int x = 0; x < 9; ++x) {
+          const float dx = (x + 0.5f - 4.5f) / 4.5f, dy = (y + 0.5f - 2.8f) / 3.0f, dz = (z + 0.5f - 4.5f) / 4.2f;
+          if (dx * dx + dy * dy + dz * dz <= 1.0f) p.set(x, y, z, m);
+        }
+    p.speckle(0, 0, 0, 9, 6, 9, md, 0.3f, 13u);
+    p.speckle(0, 3, 0, 9, 6, 9, f, 0.15f, 15u);
+    p.box(8, 2, 4, 12, 4, 5, bone);
+    p.box(10, 1, 3, 12, 5, 6, bone);
+    add(lib, p);
+  };
+  meat("raw_meat", rgba(214, 70, 70), rgba(170, 44, 50), rgba(250, 210, 200));
+  meat("cooked_meat", rgba(150, 82, 44), rgba(110, 56, 30), rgba(200, 130, 70));
+  { // Wolf pelt: folded grey fur.
+    Painter p = item("wolf_pelt", 14, 4, 11);
+    const int fur = p.c(rgba(140, 142, 150)), furD = p.c(rgba(100, 102, 112)), furL = p.c(rgba(196, 198, 204));
+    p.box(0, 0, 1, 14, 2, 10, fur);
+    p.box(2, 2, 2, 12, 4, 9, fur);
+    p.box(0, 0, 0, 3, 1, 1, furD), p.box(11, 0, 10, 14, 1, 11, furD);
+    p.speckle(0, 0, 0, 14, 4, 11, furD, 0.3f, 17u);
+    p.speckle(0, 2, 0, 14, 4, 11, furL, 0.2f, 19u);
+    add(lib, p);
+  }
+  { // Slime gel: translucent-looking green blob with highlights.
+    Painter p = item("slime_gel", 9, 7, 9);
+    const int g = p.c(rgba(110, 220, 90)), gd = p.c(rgba(70, 170, 60)), gl = p.c(rgba(200, 255, 170));
+    for (int y = 0; y < 7; ++y)
+      for (int z = 0; z < 9; ++z)
+        for (int x = 0; x < 9; ++x) {
+          const float dx = x + 0.5f - 4.5f, dy = (y + 0.5f) * 1.3f - 2.0f, dz = z + 0.5f - 4.5f;
+          if (dx * dx + dy * dy + dz * dz <= 18.0f) p.set(x, y, z, y < 2 ? gd : g);
+        }
+    p.set(3, 5, 3, gl), p.set(2, 4, 3, gl), p.set(3, 4, 2, gl);
+    add(lib, p);
+  }
+  { // Coins: a small stack and a few loose coins.
+    Painter p = item("coins", 12, 7, 10);
+    const int gold = p.c(rgba(252, 204, 60)), goldD = p.c(rgba(200, 150, 40)), goldL = p.c(rgba(255, 240, 150));
+    for (int y = 0; y < 6; ++y) disc(p, 5.0f, 5.0f, 3.2f, y, y + 1, y % 2 ? goldD : gold);
+    disc(p, 5.0f, 5.0f, 2.0f, 6, 7, goldL);
+    disc(p, 9.5f, 2.5f, 2.2f, 0, 1, gold);
+    disc(p, 9.0f, 7.5f, 2.2f, 0, 1, goldD);
+    add(lib, p);
+  }
+  { // Arrows: a bundle of three with fletching.
+    Painter p = item("arrows", 6, 5, 18);
+    const int shaft = p.c(rgba(176, 130, 80)), tip = p.c(rgba(190, 196, 210)), fl = p.c(rgba(240, 240, 240)),
+              flr = p.c(rgba(220, 60, 56));
+    for (int k = 0; k < 3; ++k) {
+      const int x = 1 + k * 2 - (k == 2 ? 3 : 0), y = k == 2 ? 3 : 1;
+      p.box(x, y, 2, x + 1, y + 1, 16, shaft);
+      p.box(x, y, 0, x + 1, y + 1, 2, tip);
+      p.box(x - 1, y, 14, x + 2, y + 1, 18, k == 1 ? flr : fl);
+    }
+    add(lib, p);
+  }
+  { // Oak log: bark with a ringed cut end.
+    Painter p = item("oak_log", 8, 8, 14);
+    const int bark = p.c(rgba(116, 82, 50)), barkD = p.c(rgba(86, 60, 36)), wood = p.c(rgba(214, 176, 116)),
+              ring = p.c(rgba(176, 136, 84));
+    for (int z = 0; z < 14; ++z)
+      for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+          const float dx = x + 0.5f - 4.0f, dy = y + 0.5f - 4.0f, r2 = dx * dx + dy * dy;
+          if (r2 > 16.0f) continue;
+          const bool end = z == 0 || z == 13;
+          p.set(x, y, z, end ? (int(std::sqrt(r2)) % 2 ? ring : wood) : bark);
+        }
+    p.speckle(0, 0, 1, 8, 8, 13, barkD, 0.3f, 21u);
+    add(lib, p);
+  }
+}
+
 } // namespace atm::model

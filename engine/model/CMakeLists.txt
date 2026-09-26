@@ -8,6 +8,7 @@ add_library(AttomeModel STATIC
   ModelMonsters.cpp
   ModelProps.cpp
   VoxelCodec.cpp
+  IconRender.cpp
 )
 target_include_directories(AttomeModel PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_compile_features(AttomeModel PUBLIC cxx_std_20)

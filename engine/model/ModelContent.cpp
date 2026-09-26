@@ -653,6 +653,7 @@ void buildWeapons(ModelLibrary &lib) {
 
 void buildMonsterModels(ModelLibrary &lib); // ModelMonsters.cpp
 void buildProps(ModelLibrary &lib);         // ModelProps.cpp
+void buildItemModels(ModelLibrary &lib);    // ModelProps.cpp
 
 void ModelLibrary::buildDefaults() {
   parts_.clear();
@@ -681,6 +682,7 @@ void ModelLibrary::buildDefaults() {
   buildWeapons(*this);
   buildMonsterModels(*this);
   buildProps(*this);
+  buildItemModels(*this);
 }
 
 } // namespace atm::model

@@ -5,6 +5,7 @@
 // equipment, RuneScape-style skills panel, debug overlay.
 
 #include "app/App.h"
+#include "ui/ItemIcons.h"
 #include "ui/UiTheme.h"
 
 #include "../../../engine/ATMConfig.h"
@@ -206,7 +207,9 @@ void drawSlot(ImDrawList *dl, ImVec2 a, float size, const ItemStack &s, bool sel
     // Soft category glow at the bottom of the slot.
     dl->AddRectFilledMultiColor(ImVec2(a.x, a.y + size * 0.55f), b, ui::withAlpha(acc, 0.0f),
                                 ui::withAlpha(acc, 0.0f), ui::withAlpha(acc, 0.22f), ui::withAlpha(acc, 0.22f));
-    itemIcon(dl, ImVec2(a.x + size * 0.5f, a.y + size * 0.48f), size * 0.56f, d, blocks);
+    // 3D-model icon (rendered from the voxel model); vector icon as fallback.
+    if (!ui::itemIcons().draw(dl, ImVec2(a.x + size * 0.5f, a.y + size * 0.47f), size * 0.86f, s.item))
+      itemIcon(dl, ImVec2(a.x + size * 0.5f, a.y + size * 0.48f), size * 0.56f, d, blocks);
     if (s.count > 1) {
       char cnt[12];
       std::snprintf(cnt, sizeof(cnt), "%u", unsigned(s.count));
