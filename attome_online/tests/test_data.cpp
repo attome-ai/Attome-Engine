@@ -309,3 +309,25 @@ ATM_TEST(item_icons_render_from_models) {
   }
   ATM_CHECK(rendered >= 40);
 }
+
+ATM_TEST(town_structures_never_overlap) {
+  // Two structures filling the same fine voxel draw coplanar faces that
+  // z-fight (flicker) — e.g. a gatehouse window against the town wall.
+  const atm::voxel::WorldGenerator gen(12345);
+  const auto &s = world::townStructures(world::homeTown(gen));
+  constexpr int K = world::kMicro;
+  size_t shared = 0;
+  for (size_t i = 0; i < s.size(); ++i)
+    for (size_t j = i + 1; j < s.size(); ++j) {
+      const auto &a = s[i], &b = s[j];
+      const int x0 = std::max(a.bx, b.bx) * K, x1 = std::min(a.bx * K + a.sx, b.bx * K + b.sx);
+      const int y0 = std::max(a.by, b.by) * K, y1 = std::min(a.by * K + a.sy, b.by * K + b.sy);
+      const int z0 = std::max(a.bz, b.bz) * K, z1 = std::min(a.bz * K + a.sz, b.bz * K + b.sz);
+      for (int y = y0; y < y1; ++y)
+        for (int z = z0; z < z1; ++z)
+          for (int x = x0; x < x1; ++x)
+            if (a.at(x - a.bx * K, y - a.by * K, z - a.bz * K) && b.at(x - b.bx * K, y - b.by * K, z - b.bz * K))
+              ++shared;
+    }
+  ATM_CHECK_EQ(shared, size_t(0));
+}

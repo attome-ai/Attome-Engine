@@ -30,7 +30,7 @@ constexpr int P = MeshInput::kPad; // 34
 constexpr int SX = 1, SZ = P, SY = P * P;
 constexpr int kBase = SY + SZ + SX; // padded (1,1,1) = local (0,0,0)
 
-constexpr uint8_t kClsAir = 0, kClsOpaque = 1, kClsCutout = 2, kClsTrans = 3;
+constexpr uint8_t kClsAir = 0, kClsOpaque = 1, kClsCutout = 2, kClsTrans = 3, kClsHide = 4; // hide: invisible solid
 
 // Per normal axis (0 = X, 1 = Y, 2 = Z): strides of normal, U and V axes.
 // Tangents follow MeshTypes.h: ±X: U=Z, V=Y; ±Y: U=X, V=Z; ±Z: U=X, V=Y.
@@ -106,7 +106,7 @@ void ChunkMesher::mesh(const MeshInput &in, const BlockRegistry &blocks, Scratch
   s.table.resize(nDefs);
   for (size_t i = 0; i < nDefs; ++i) {
     switch (blocks.renderMode(BlockId(i))) {
-    case BlockRender::None: s.table[i] = kClsAir; break;
+    case BlockRender::None: s.table[i] = blocks.solid(BlockId(i)) && i != 0 ? kClsHide : kClsAir; break;
     case BlockRender::Opaque: s.table[i] = kClsOpaque; break;
     case BlockRender::Cutout: s.table[i] = kClsCutout; break;
     case BlockRender::Translucent: s.table[i] = kClsTrans; break;
@@ -118,6 +118,7 @@ void ChunkMesher::mesh(const MeshInput &in, const BlockRegistry &blocks, Scratch
     std::fill(s.opaqueCols[a].begin(), s.opaqueCols[a].end(), 0ull);
     std::fill(s.drawCols[a].begin(), s.drawCols[a].end(), 0ull);
     std::fill(s.transCols[a].begin(), s.transCols[a].end(), 0ull);
+    std::fill(s.hideCols[a].begin(), s.hideCols[a].end(), 0ull);
   }
   uint64_t *opX = s.opaqueCols[0].data(), *opY = s.opaqueCols[1].data(), *opZ = s.opaqueCols[2].data();
   uint64_t *drX = s.drawCols[0].data(), *drY = s.drawCols[1].data(), *drZ = s.drawCols[2].data();
@@ -144,6 +145,14 @@ void ChunkMesher::mesh(const MeshInput &in, const BlockRegistry &blocks, Scratch
           continue;
         const uint64_t bx = 1ull << px, by = 1ull << py, bz = 1ull << pz;
         const int iX = py * P + pz, iY = pz * P + px, iZ = py * P + px;
+        if (c == kClsHide) {
+          cls[idx] = kClsAir; // behaves like air for everything else (AO, caves)
+          occ[idx] = 0;
+          s.hideCols[0][size_t(iX)] |= bx;
+          s.hideCols[1][size_t(iY)] |= by;
+          s.hideCols[2][size_t(iZ)] |= bz;
+          continue;
+        }
         if (c == kClsTrans) {
           trX[iX] |= bx;
           trY[iY] |= by;
@@ -207,7 +216,9 @@ void ChunkMesher::mesh(const MeshInput &in, const BlockRegistry &blocks, Scratch
         const uint64_t t = trc[ci];
         if (t) {
           const uint64_t nTrans = positive ? (t >> 1) : (t << 1);
-          uint64_t vt = t & ~nOpaque;
+          const uint64_t hd = s.hideCols[size_t(A)][size_t(ci)];
+          const uint64_t nHide = positive ? (hd >> 1) : (hd << 1);
+          uint64_t vt = t & ~nOpaque & ~nHide;
           if (!multiTrans) {
             vt &= ~nTrans; // single translucent type: same neighbour hides
           } else {

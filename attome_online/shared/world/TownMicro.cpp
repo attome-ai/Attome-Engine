@@ -229,7 +229,6 @@ MicroModel house(const HouseSpec &h) {
 
   // Plinth (one block) with a proud top course, plank floor inside.
   PB(0, 0, 0, U - 1, 3, V - 1, mc::StoneTrim);
-  m.speckle(0, 0, 0, m.sx - 1, 3, m.sz - 1, mc::StoneDark, 0.22f, h.seed);
   PB(-1, 3, -1, U, 3, V, mc::StoneShade);
   PB(2, 3, 2, U - 3, 3, V - 3, mc::WoodLight);
 
@@ -249,7 +248,7 @@ MicroModel house(const HouseSpec &h) {
       for (int a = 0; a < L; ++a)
         for (int d = 0; d < 2; ++d) {
           const int fy = (y - 4) % 14;
-          uint8_t c = rnd(a + f * 1000, y, d, h.seed) < 0.1f ? mc::PlasterShade : mc::Plaster;
+          uint8_t c = mc::Plaster;
           const bool corner = a < 3 || a > L - 4;
           const bool stud = (a % 10) < 2;
           if (corner || stud || fy >= 12 || y < 6) c = mc::WoodDark;
@@ -382,7 +381,7 @@ MicroModel house(const HouseSpec &h) {
   for (int y = 4; y <= cTop; ++y)
     for (int v = cv; v <= cv + 3; ++v)
       for (int u = cu; u <= cu + 3; ++u)
-        if (rnd(u, y, v, h.seed + 3) < 0.25f) P(u, y, v, mc::StoneDark);
+        if (y % 3 == 0) P(u, y, v, mc::StoneDark); // brick courses
   PB(cu - 1, cTop + 1, cv - 1, cu + 4, cTop + 2, cv + 4, mc::StoneDark);
   PB(cu + 1, cTop + 2, cv + 1, cu + 2, cTop + 2, cv + 2, mc::Iron);
   return m;
@@ -401,7 +400,12 @@ MicroModel plazaFloor() {
     for (int x = -RB * K; x < (RB + 1) * K; ++x) {
       const float dx = x + 0.5f - cx, dz = z + 0.5f - cz;
       const float r = std::sqrt(dx * dx + dz * dz);
-      if (r > 21.5f * K) continue;
+      // Coverage is decided per whole block (by the block's centre), so every
+      // block is either fully fine-voxel floor (collision: Barrier) or fully a
+      // world block: no half-covered cells whose faces would z-fight.
+      const int bxb = (x + 1000 * K) / K - 1000, bzb = (z + 1000 * K) / K - 1000;
+      const float rb = std::sqrt(float(bxb * bxb + bzb * bzb));
+      if (rb > 21.5f) continue;
       uint8_t top;
       bool groove = false;
       if (r <= 16.5f * K) {
@@ -426,7 +430,7 @@ MicroModel plazaFloor() {
         const int lx = (x + 1000) % 5, lz = (z + 1000) % 5;
         groove = (lx == 0 && rnd(gx, 1, gz, 6) < 0.8f) || (lz == 0 && rnd(gx, 2, gz, 6) < 0.8f);
         const float t = rnd(gx, 0, gz, 7);
-        top = t < 0.15f ? mc::StoneDark : t < 0.2f ? mc::Moss : mc::Cobble;
+        top = t < 0.15f ? mc::StoneDark : t < 0.17f ? mc::Moss : mc::Cobble;
       }
       c.box(x, 0, z, x, 2, z, mc::StoneShade);
       if (!groove) c.set(x, 3, z, top);
@@ -504,7 +508,6 @@ MicroModel castle(int T) {
 
   // Terrace: ashlar facade, mossy base, coping, balustrade.
   c.ashlar(-26 * K, K, -54 * K, 27 * K - 1, y0 - 1, -22 * K - 1, mc::StoneTrim, mc::StoneDark);
-  c.speckle(-26 * K, K, -54 * K, 27 * K - 1, K + 5, -22 * K - 1, mc::Moss, 0.35f, 41);
   c.box(-26 * K - 1, y0 - 2, -54 * K - 1, 27 * K, y0 - 1, -22 * K, mc::Stone);         // coping
   // Paving on top: big tiles.
   for (int z = -54 * K; z < -22 * K; ++z)
@@ -716,8 +719,6 @@ MicroModel wallSide(int side, int wall) {
   const int lo = std::min(inner, outer), hi = std::max(inner, outer);
   if (alongX) c.ashlar(a0, K, lo, a1, top, hi, mc::Stone, mc::StoneShade);
   else c.ashlar(lo, K, a0, hi, top, a1, mc::Stone, mc::StoneShade);
-  if (alongX) c.speckle(a0, K, lo, a1, K + 7, hi, mc::Moss, 0.3f, 51 + side);
-  else c.speckle(lo, K, a0, hi, K + 7, a1, mc::Moss, 0.3f, 51 + side);
   B(a0, K, outer - s * 1, a1, K + 3, outer + s * 1, mc::StoneTrim);            // plinth
   B(a0, top - 1, lo - 1, a1, top, hi + 1, mc::StoneTrim);                      // coping
   // Crenels on the outer edge, a low parapet inside.

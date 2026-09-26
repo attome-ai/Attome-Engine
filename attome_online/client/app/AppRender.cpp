@@ -338,7 +338,10 @@ void App::drawStructures() {
     const glm::dvec3 d = t.center - camPos_;
     const double dist2 = glm::dot(d, d);
     if (dist2 > (kRange + t.radius) * (kRange + t.radius)) continue;
-    if (glm::dot(d, fwd) < -t.radius) continue; // behind the camera
+    // Behind the camera: skip only beyond the shadow range, since nearby
+    // pieces behind us still cast shadows into view (skipping them made
+    // shadows pop on and off while moving).
+    if (dist2 > 160.0 * 160.0 && glm::dot(d, fwd) < -t.radius) continue;
     atm::render::ModelInstance inst;
     inst.mesh = t.mesh;
     inst.origin = t.origin;

@@ -80,6 +80,19 @@ struct Builder {
   // lamp and crystal voxels light their block with an invisible Light.
   // Floors (models starting at the ground layer) replace the ground there.
   void structure(MicroModel m) {
+    // Structures added earlier win where two overlap (a gatehouse on the
+    // town wall): voxels drawn by both would z-fight (coplanar faces of two
+    // meshes flicker as the camera moves).
+    for (const MicroModel &e : g.structures) {
+      const int x0 = std::max(m.bx, e.bx) * kMicro, x1 = std::min(m.bx * kMicro + m.sx, e.bx * kMicro + e.sx);
+      const int y0 = std::max(m.by, e.by) * kMicro, y1 = std::min(m.by * kMicro + m.sy, e.by * kMicro + e.sy);
+      const int z0 = std::max(m.bz, e.bz) * kMicro, z1 = std::min(m.bz * kMicro + m.sz, e.bz * kMicro + e.sz);
+      for (int y = y0; y < y1; ++y)
+        for (int z = z0; z < z1; ++z)
+          for (int x = x0; x < x1; ++x)
+            if (e.at(x - e.bx * kMicro, y - e.by * kMicro, z - e.bz * kMicro))
+              m.set(x - m.bx * kMicro, y - m.by * kMicro, z - m.bz * kMicro, mc::Empty);
+    }
     const int bw = m.sx / kMicro, bh = m.sy / kMicro, bd = m.sz / kMicro;
     for (int cy = 0; cy < bh; ++cy)
       for (int cz = 0; cz < bd; ++cz)
@@ -219,7 +232,7 @@ void buildCastle(Builder &b) {
 }
 
 void buildWalls(Builder &b) {
-  for (int side = 0; side < 4; ++side) b.structure(townmicro::wallSide(side, kWall));
+  // Towers first: they win over the wall runs where they overlap.
   for (int s : {-1, 1}) {
     b.structure(townmicro::gatehouse(s * kWall, -6, 11));
     b.structure(townmicro::gatehouse(s * kWall, 6, 11));
@@ -228,6 +241,7 @@ void buildWalls(Builder &b) {
   b.structure(townmicro::gatehouse(6, kWall, 11));
   for (int sx : {-1, 1})
     for (int sz : {-1, 1}) b.structure(townmicro::cornerTower(sx * kWall, sz * kWall));
+  for (int side = 0; side < 4; ++side) b.structure(townmicro::wallSide(side, kWall));
 }
 
 // Houses: the door faces the nearest road; a path leads to it.

@@ -111,6 +111,10 @@ struct ChunkMesher::Scratch {
                                                   std::vector<uint64_t>(kCols)};
   std::array<std::vector<uint64_t>, 3> drawCols{std::vector<uint64_t>(kCols), std::vector<uint64_t>(kCols),
                                                 std::vector<uint64_t>(kCols)};
+  // Invisible solid cells (collision of fine-voxel structures): they hide
+  // translucent faces (water against a building), nothing else.
+  std::array<std::vector<uint64_t>, 3> hideCols{std::vector<uint64_t>(kCols), std::vector<uint64_t>(kCols),
+                                                std::vector<uint64_t>(kCols)};
   std::array<std::vector<uint64_t>, 3> transCols{std::vector<uint64_t>(kCols), std::vector<uint64_t>(kCols),
                                                  std::vector<uint64_t>(kCols)};
   // Visible faces of one direction: [layer * 32 + v] bits along u.
