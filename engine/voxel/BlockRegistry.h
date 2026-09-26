@@ -107,8 +107,14 @@ inline constexpr BlockId Air = 0, Stone = 1, Dirt = 2, Grass = 3, Sand = 4,
                          MossyStone = 43, LightPlanks = 44, RoofBlueLight = 45, WindowLit = 46,
                          TownLog = 47,
                          // invisible: collision of fine-voxel structures / light of their lamps
-                         Barrier = 48, Light = 49;
-inline constexpr BlockId Count = 50;
+                         Barrier = 48, Light = 49,
+                         // tree foliage variants (all sway; all fall with a felled tree)
+                         OakLeavesDark = 50, OakLeavesLight = 51, PineLeaves = 52;
+inline constexpr BlockId Count = 53;
+// Any tree foliage block (felling, gathering rules).
+inline constexpr bool isLeaves(BlockId id) {
+  return id == OakLeaves || id == OakLeavesDark || id == OakLeavesLight || id == PineLeaves;
+}
 } // namespace blocks
 
 } // namespace atm::voxel

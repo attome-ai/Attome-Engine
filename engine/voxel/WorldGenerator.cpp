@@ -28,9 +28,10 @@ namespace {
 
 constexpr int kSeaLevel = 64; // water fills y < 64
 constexpr int kMinHeight = 40, kMaxHeight = 160;
-constexpr int kTreeCell = 6;
-constexpr int kTreeReach = 2;     // leaves extend 2 blocks from the trunk
-constexpr int kMaxTreeHeight = 9; // trunk (<= 6) + canopy above it
+constexpr int kTreeCell = 8;
+constexpr int kTreeReach = 5;     // canopy / branches extend up to 5 blocks from the trunk
+constexpr int kTreeCanopyUp = 4;  // canopy rises up to 4 blocks above the trunk top
+constexpr int kMaxTreeHeight = 15; // trunk (<= 10) + canopy above it
 constexpr int kCaveStep = 4;      // cave lattice spacing
 
 inline uint64_t mix64(uint64_t z) {
@@ -276,18 +277,25 @@ BlockId oreAt(const Seeds &s, int32_t x, int32_t y, int32_t z) {
   return unit(hash3i(s.ore ^ 0x5bd1e995u, x, y, z)) < fill ? ore : kAir;
 }
 
+// Tree kinds: a round oak with a lumpy two-tone canopy and side branches, a
+// tall layered pine, and a wide tree with several canopy clusters.
+enum class TreeKind : uint8_t { Oak, Pine, Wide };
+
 struct Tree {
   int32_t x, z;
   int base;   // first trunk block y
   int trunk;  // trunk height
   bool valid;
+  TreeKind kind = TreeKind::Oak;
+  float rx = 3.0f, ry = 2.6f; // canopy radii (oak / wide)
+  uint32_t seed = 0;
 };
 
 Tree treeInCell(const Seeds &s, int32_t cx, int32_t cz) {
   Tree t{0, 0, 0, 0, false};
   const uint32_t h = hash2i(s.tree, cx, cz);
-  t.x = cx * kTreeCell + 1 + int32_t(h % 4u);
-  t.z = cz * kTreeCell + 1 + int32_t((h >> 4) % 4u);
+  t.x = cx * kTreeCell + 2 + int32_t(h % 4u);
+  t.z = cz * kTreeCell + 2 + int32_t((h >> 4) % 4u);
   const double forest = fbm2(s.forest, double(t.x) / 300.0, double(t.z) / 300.0, 2);
   const double prob = 0.12 + 0.6 * smoothstep(-0.05, 0.35, forest);
   if (unit(hash2i(s.tree ^ 0xA511E9B3u, cx, cz)) >= prob)
@@ -298,21 +306,80 @@ Tree treeInCell(const Seeds &s, int32_t cx, int32_t cz) {
   if (caveCarves(cavePoint(s, t.x, col.h, t.z), col.h, col))
     return t; // ground under the trunk was carved away
   t.base = col.h + 1;
-  t.trunk = 4 + int((h >> 8) % 3u);
+  t.seed = hash2i(s.tree ^ 0x3C6EF372u, cx, cz);
+  // More pines in deep forest, more wide trees in the open.
+  const double k = unit(t.seed);
+  const double pine = 0.15 + 0.25 * smoothstep(0.1, 0.5, forest);
+  if (k < pine) {
+    t.kind = TreeKind::Pine;
+    t.trunk = 7 + int((h >> 8) % 4u);
+  } else if (k < pine + 0.18) {
+    t.kind = TreeKind::Wide;
+    t.trunk = 4 + int((h >> 8) % 2u);
+    t.rx = 3.2f + float(unit(t.seed >> 3)) * 0.6f;
+    t.ry = 2.2f;
+  } else {
+    t.kind = TreeKind::Oak;
+    t.trunk = 4 + int((h >> 8) % 3u);
+    t.rx = 2.6f + float(unit(t.seed >> 5)) * 1.3f;
+    t.ry = 2.3f + float(unit(t.seed >> 7)) * 0.9f;
+  }
   t.valid = true;
   return t;
 }
 
-// Leaf shape relative to the trunk top (y = top): layers top-1..top+2.
-inline bool leafAt(int dx, int dy, int dz) {
-  const int ax = std::abs(dx), az = std::abs(dz);
-  switch (dy) {
-  case -1:
-  case 0: return ax <= 2 && az <= 2 && !(ax == 2 && az == 2);
-  case 1: return ax <= 1 && az <= 1;
-  case 2: return ax + az <= 1;
-  default: return false;
+// Canopy / branch block of a tree at offset (dx, dy, dz) from the trunk top
+// (kAir = nothing). Deterministic per world position.
+BlockId treeBlockAt(const Tree &t, int dx, int dy, int dz) {
+  const uint32_t hv = hash3i(t.seed, t.x + dx, dy, t.z + dz);
+  const float jitter = float(hv & 1023u) / 1023.0f - 0.5f; // -0.5..0.5
+  auto shade = [&](float ny) { // underside dark, crown light, speckled between
+    if (ny < -0.25f) return blocks::OakLeavesDark;
+    if (ny > 0.45f + jitter * 0.3f) return blocks::OakLeavesLight;
+    return (hv >> 10) % 5u == 0 ? blocks::OakLeavesDark : blocks::OakLeaves;
+  };
+  switch (t.kind) {
+  case TreeKind::Oak: {
+    // Lumpy ellipsoid centred a little above the trunk top.
+    const float fx = dx / t.rx, fy = (dy - 1.0f) / t.ry, fz = dz / t.rx;
+    const float d = fx * fx + fy * fy + fz * fz + jitter * 0.45f;
+    if (d <= 1.0f) return shade(fy);
+    // Two short branches under the canopy.
+    const int bx = (t.seed & 1u) ? 1 : -1, bz = (t.seed & 2u) ? 1 : -1;
+    if ((dy == -1 && dx == bx && dz == 0) || (dy == 0 && dx == 2 * bx && dz == 0) || (dy == -2 && dz == bz && dx == 0))
+      return blocks::OakLog;
+    return kAir;
   }
+  case TreeKind::Wide: {
+    // Main crown plus two side clusters, flatter.
+    const int ox = (t.seed & 4u) ? 2 : -2, oz = (t.seed & 8u) ? 2 : -2;
+    const float c[3][4] = {{0.0f, 0.5f, 0.0f, 1.0f}, {float(ox), -0.5f, float(oz) * 0.5f, 0.72f},
+                           {float(-ox) * 0.6f, 0.0f, float(-oz) * 1.2f, 0.66f}};
+    for (const auto &k : c) {
+      const float r = t.rx * k[3];
+      const float fx = (dx - k[0]) / r, fy = (dy - k[1]) / (t.ry * (k[3] + 0.15f)), fz = (dz - k[2]) / r;
+      const float d = fx * fx + fy * fy + fz * fz + jitter * 0.4f;
+      if (d <= 1.0f) return shade(fy);
+    }
+    // Limbs out to the side clusters.
+    if (dy == -1 && ((dx == ox / 2 && dz == 0) || (dx == ox && dz == oz / 2))) return blocks::OakLog;
+    return kAir;
+  }
+  case TreeKind::Pine: {
+    // Stacked tiers from the lower trunk to a point, each tier wide at the
+    // bottom and narrowing; tiers step in as they go up.
+    const int bottom = -(t.trunk - 3); // first tier a few blocks above the ground
+    if (dy < bottom || dy > 2) return kAir;
+    const int fromTop = 2 - dy;
+    const float tierPhase = float(fromTop % 3) / 3.0f; // 0 at a tier's top
+    const float r = std::min(0.8f + float(fromTop) * 0.42f, 3.6f) * (0.55f + 0.45f * tierPhase) + jitter * 0.3f;
+    const float d = std::sqrt(float(dx * dx + dz * dz));
+    if (fromTop == 0) return (dx == 0 && dz == 0) ? blocks::PineLeaves : kAir;
+    if (d <= r) return (hv >> 11) % 6u == 0 ? blocks::OakLeavesDark : blocks::PineLeaves;
+    return kAir;
+  }
+  }
+  return kAir;
 }
 
 } // namespace
@@ -414,7 +481,7 @@ void WorldGenerator::generate(ChunkCoord c, Chunk &out) const {
         if (!t.valid)
           continue;
         const int top = t.base + t.trunk - 1;
-        if (top + 2 < y0 || t.base > y1)
+        if (top + kTreeCanopyUp < y0 || t.base > y1)
           continue;
         if (t.x + kTreeReach < o.x || t.x - kTreeReach >= o.x + kChunkSize || t.z + kTreeReach < o.z ||
             t.z - kTreeReach >= o.z + kChunkSize)
@@ -422,28 +489,32 @@ void WorldGenerator::generate(ChunkCoord c, Chunk &out) const {
         if (!anything) {
           anything = true; // ids already all air
         }
-        // Leaves first (only into air), then the trunk (over air/leaves):
-        // the result is independent of tree order.
-        for (int dy = -1; dy <= 2; ++dy)
-          for (int dz = -2; dz <= 2; ++dz)
-            for (int dx = -2; dx <= 2; ++dx) {
-              if (!leafAt(dx, dy, dz))
+        // Canopy first (leaves only into air; branches over leaves), then
+        // the trunk: the result is independent of tree order.
+        for (int dy = -(t.trunk - 1); dy <= kTreeCanopyUp; ++dy) {
+          const int ly = top + dy - o.y;
+          if (unsigned(ly) >= unsigned(kChunkSize))
+            continue;
+          for (int dz = -kTreeReach; dz <= kTreeReach; ++dz)
+            for (int dx = -kTreeReach; dx <= kTreeReach; ++dx) {
+              const int lx = t.x + dx - o.x, lz = t.z + dz - o.z;
+              if (unsigned(lx) >= unsigned(kChunkSize) || unsigned(lz) >= unsigned(kChunkSize))
                 continue;
-              const int lx = t.x + dx - o.x, ly = top + dy - o.y, lz = t.z + dz - o.z;
-              if (unsigned(lx) >= unsigned(kChunkSize) || unsigned(ly) >= unsigned(kChunkSize) ||
-                  unsigned(lz) >= unsigned(kChunkSize))
+              const BlockId tb = treeBlockAt(t, dx, dy, dz);
+              if (tb == kAir)
                 continue;
               BlockId &b = ids[localIndex(lx, ly, lz)];
-              if (b == kAir)
-                b = blocks::OakLeaves;
+              if (b == kAir || (tb == blocks::OakLog && blocks::isLeaves(b)))
+                b = tb;
             }
+        }
         for (int y = t.base; y <= top; ++y) {
           const int lx = t.x - o.x, ly = y - o.y, lz = t.z - o.z;
           if (unsigned(lx) >= unsigned(kChunkSize) || unsigned(ly) >= unsigned(kChunkSize) ||
               unsigned(lz) >= unsigned(kChunkSize))
             continue;
           BlockId &b = ids[localIndex(lx, ly, lz)];
-          if (b == kAir || b == blocks::OakLeaves)
+          if (b == kAir || blocks::isLeaves(b))
             b = blocks::OakLog;
         }
       }

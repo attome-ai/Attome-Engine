@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace ao::server {
 
@@ -74,13 +75,15 @@ void ServerState::depleteNode(const ResourceDef &r, vx::BlockPos p) {
   // Trees: the whole tree falls. Its logs are the connected log blocks (26
   // neighbours, near the chopped block); its leaves are the leaves within a
   // few steps of those logs. Logs standing on the ground become stumps.
-  constexpr int kMaxLogs = 96, kMaxLeaves = 600, kLeafDepth = 4;
+  constexpr int kMaxLogs = 128, kMaxLeaves = 1500, kLeafDepth = 6;
   std::vector<vx::BlockPos> logs{p}, open{p};
   auto isLoadedAt = [&](vx::BlockPos q) { return q.y >= 0 && q.y < vx::kWorldHeight && world->isLoaded(vx::chunkOf(q)); };
-  auto seen = [](const std::vector<vx::BlockPos> &v, vx::BlockPos q) {
-    return std::find_if(v.begin(), v.end(), [&](const vx::BlockPos &o) { return o.x == q.x && o.y == q.y && o.z == q.z; }) !=
-           v.end();
+  std::unordered_set<uint64_t> visited; // logs and leaves already taken
+  auto key = [](vx::BlockPos q) {
+    return (uint64_t(uint32_t(q.x) & 0x1FFFFFu) << 42) | (uint64_t(uint32_t(q.y) & 0x3FFu) << 32) | uint64_t(uint32_t(q.z));
   };
+  visited.insert(key(p));
+  auto seen = [&](const std::vector<vx::BlockPos> &, vx::BlockPos q) { return !visited.insert(key(q)).second; };
   while (!open.empty() && int(logs.size()) < kMaxLogs) {
     const vx::BlockPos c = open.back();
     open.pop_back();
@@ -103,7 +106,7 @@ void ServerState::depleteNode(const ResourceDef &r, vx::BlockPos p) {
     if (depth >= kLeafDepth) continue;
     for (const auto &n : kN) {
       const vx::BlockPos q{c.x + n[0], c.y + n[1], c.z + n[2]};
-      if (!isLoadedAt(q) || world->blockAt(q) != vx::blocks::OakLeaves || seen(leaves, q)) continue;
+      if (!isLoadedAt(q) || !vx::blocks::isLeaves(world->blockAt(q)) || seen(leaves, q)) continue;
       leaves.push_back(q);
       frontier.emplace_back(q, depth + 1);
     }
@@ -202,7 +205,7 @@ void ServerState::updateSpawners() {
       int32_t gy = 0;
       if (!findGround(x, z, gy)) continue;
       const vx::BlockId ground = world->blockAt({x, gy, z});
-      if (blocks.get(ground).liquid || ground == vx::blocks::OakLeaves) continue;
+      if (blocks.get(ground).liquid || vx::blocks::isLeaves(ground)) continue;
       const MonsterDef &def = monsterDef(sp.npc);
       Entity &m = queueSpawn(EntityKind::Monster);
       m.type = sp.npc;

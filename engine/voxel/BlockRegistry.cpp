@@ -81,6 +81,9 @@ const DefaultBlock kDefaults[blocks::Count] = {
     // invisible light source for its lamps and windows.
     {"barrier", BlockRender::None, true, false, C(214, 208, 196), C(214, 208, 196), C(214, 208, 196), 0, -1.0f, 0, 255, 0.0f},
     {"light", BlockRender::None, false, false, 0, 0, 0, 14, -1.0f, 0, 255, 0.0f},
+    {"oak_leaves_dark", BlockRender::Cutout, true, false, C(52, 146, 52), C(46, 134, 48), C(40, 118, 42), 0, 0.2f, 0, 1, 0.0f},
+    {"oak_leaves_light", BlockRender::Cutout, true, false, C(118, 206, 74), C(104, 192, 66), C(90, 172, 58), 0, 0.2f, 0, 1, 0.0f},
+    {"pine_leaves", BlockRender::Cutout, true, false, C(40, 118, 76), C(34, 104, 68), C(28, 90, 60), 0, 0.2f, 0, 1, 0.0f},
 };
 
 bool parseColor(const Json &v, uint32_t &out) {
